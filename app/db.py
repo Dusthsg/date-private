@@ -8,7 +8,15 @@ import sqlite3
 from pathlib import Path
 from datetime import date, timedelta
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Carrega .env ou .env.local se existir
+try:
+    from dotenv import load_dotenv
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    load_dotenv(BASE_DIR / ".env.local")
+    load_dotenv(BASE_DIR / ".env")
+except ImportError:
+    BASE_DIR = Path(__file__).resolve().parent.parent
+
 SQLITE_PATH = BASE_DIR / "database" / "products.db"
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 

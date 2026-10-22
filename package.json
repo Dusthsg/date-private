@@ -1,0 +1,11 @@
+{
+  "name": "datelimit-private",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "python -m compileall app"
+  },
+  "dependencies": {
+    "@neon/config": "^1.9.3",
+    "@neon/env": "^1.6.4"
+  }
+}

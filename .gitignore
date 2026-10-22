@@ -53,3 +53,5 @@ logs/
 # Temporary files
 tmp/
 temp/
+.neon
+node_modules/

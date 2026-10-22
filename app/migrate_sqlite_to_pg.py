@@ -11,7 +11,15 @@ import sqlite3
 import psycopg2
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Carrega .env ou .env.local se existir
+try:
+    from dotenv import load_dotenv
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    load_dotenv(BASE_DIR / ".env.local")
+    load_dotenv(BASE_DIR / ".env")
+except ImportError:
+    BASE_DIR = Path(__file__).resolve().parent.parent
+
 SQLITE_PATH = BASE_DIR / "database" / "products.db"
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -67,30 +75,48 @@ def migrate():
     p_cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
     p_cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
 
-    # Inserir produtos preservando id original
+    # Inserir produtos preservando id original via batch execute_values
     print("⏳ Migrando produtos...")
-    prod_inserted = 0
-    for p_id, p_name in products:
-        p_cur.execute("""
-            INSERT INTO products (id, name)
-            VALUES (%s, %s)
-            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
-        """, (p_id, p_name))
-        prod_inserted += 1
+    from psycopg2.extras import execute_values
+    
+    execute_values(
+        p_cur,
+        """
+        INSERT INTO products (id, name)
+        VALUES %s
+        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
+        """,
+        products,
+        page_size=500
+    )
+    prod_inserted = len(products)
 
     # Atualizar sequencia do Postgres
     p_cur.execute("SELECT setval(pg_get_serial_sequence('products', 'id'), COALESCE(MAX(id), 1)) FROM products;")
 
-    # Inserir lotes preservando id original
+    # Inserir lotes preservando id original via batch execute_values
     print("⏳ Migrando lotes...")
-    lots_inserted = 0
-    for l_id, p_id, quant, price, d_valid, loc, st in lots:
-        p_cur.execute("""
-            INSERT INTO product_lots (id, product_id, quant, price, date_valid, location, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
-        """, (l_id, p_id, quant, price, d_valid, loc or 'LOJA', st or 'NORMAL'))
-        lots_inserted += 1
+    lots_formatted = [
+        (l_id, p_id, quant, price, d_valid, loc or 'LOJA', st or 'NORMAL')
+        for l_id, p_id, quant, price, d_valid, loc, st in lots
+    ]
+    execute_values(
+        p_cur,
+        """
+        INSERT INTO product_lots (id, product_id, quant, price, date_valid, location, status)
+        VALUES %s
+        ON CONFLICT (id) DO UPDATE SET
+            product_id = EXCLUDED.product_id,
+            quant = EXCLUDED.quant,
+            price = EXCLUDED.price,
+            date_valid = EXCLUDED.date_valid,
+            location = EXCLUDED.location,
+            status = EXCLUDED.status
+        """,
+        lots_formatted,
+        page_size=500
+    )
+    lots_inserted = len(lots_formatted)
 
     # Atualizar sequencia do Postgres
     p_cur.execute("SELECT setval(pg_get_serial_sequence('product_lots', 'id'), COALESCE(MAX(id), 1)) FROM product_lots;")
