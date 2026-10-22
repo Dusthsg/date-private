@@ -77,8 +77,10 @@ def init_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
 
-            # Garante que a coluna 'price' existe no PostgreSQL
+            # Garante que a coluna 'price' e 'created_at' existem no PostgreSQL
             cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
+            cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS created_at DATE DEFAULT CURRENT_DATE;")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
             conn.commit()
         else:
             cur.execute("PRAGMA foreign_keys = ON;")
@@ -98,6 +100,7 @@ def init_db():
                     date_valid TEXT NOT NULL,
                     location TEXT DEFAULT 'LOJA',
                     status TEXT DEFAULT 'NORMAL',
+                    created_at TEXT DEFAULT (date('now')),
                     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
                 );
             """)
@@ -105,11 +108,14 @@ def init_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
 
-            # Garante que a coluna 'price' existe no SQLite
+            # Garante que a coluna 'price' e 'created_at' existem no SQLite
             cur.execute("PRAGMA table_info(product_lots);")
             cols = [col[1] for col in cur.fetchall()]
             if "price" not in cols:
                 cur.execute("ALTER TABLE product_lots ADD COLUMN price REAL DEFAULT 0.0;")
+            if "created_at" not in cols:
+                cur.execute("ALTER TABLE product_lots ADD COLUMN created_at TEXT DEFAULT (date('now'));")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
             conn.commit()
     finally:
         conn.close()
@@ -151,6 +157,10 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
             params.append((today + timedelta(days=30)).strftime("%Y-%m-%d"))
             params.append((today + timedelta(days=45)).strftime("%Y-%m-%d"))
 
+        elif filtro == "hoje":
+            where_clauses.append(f"l.created_at = {ph}")
+            params.append(today.strftime("%Y-%m-%d"))
+
         if busca:
             like_op = "ILIKE" if db_type == "postgres" else "LIKE"
             where_clauses.append(f"p.name {like_op} {ph}")
@@ -169,6 +179,8 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
         cur.execute(count_sql, params)
         total = cur.fetchone()[0]
 
+        order_by = "l.id DESC" if filtro == "hoje" else "l.date_valid ASC, p.name ASC"
+
         # 2. Registros
         query = f"""
             SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
@@ -178,7 +190,7 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
             FROM product_lots l
             INNER JOIN products p ON p.id = l.product_id
             WHERE {where_sql}
-            ORDER BY l.date_valid ASC, p.name ASC
+            ORDER BY {order_by}
             LIMIT {ph}
         """ if db_type == "postgres" else f"""
             SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
@@ -188,7 +200,7 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
             FROM product_lots l
             INNER JOIN products p ON p.id = l.product_id
             WHERE {where_sql}
-            ORDER BY l.date_valid ASC, p.name ASC
+            ORDER BY {order_by}
             LIMIT {ph}
         """
 
@@ -286,18 +298,18 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
                 cur.execute(f"INSERT INTO products (name) VALUES ({ph})", (name,))
                 product_id = cur.lastrowid
 
-        # 2. Cria lote
+        # 2. Cria lote com created_at = CURRENT_DATE
         if db_type == "postgres":
             cur.execute(
-                f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status)
-                    VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}) RETURNING id""",
+                f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at)
+                    VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, CURRENT_DATE) RETURNING id""",
                 (product_id, quant, price, date_valid, location, status)
             )
             lot_id = cur.fetchone()[0]
         else:
             cur.execute(
-                f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status)
-                    VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph})""",
+                f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at)
+                    VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, date('now'))""",
                 (product_id, quant, price, date_valid, location, status)
             )
             lot_id = cur.lastrowid
