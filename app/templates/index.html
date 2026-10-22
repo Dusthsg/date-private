@@ -145,10 +145,12 @@
     </table>
 </div>
 
-<!-- Lógica Client-side de WebSocket e Busca em Tempo Real -->
+<!-- Lógica Client-side de WebSocket e Busca Ultrarrápida -->
 <script>
 let socket = null;
 let searchDebounceTimer = null;
+let currentSearchSeq = 0;
+const clientCache = new Map();
 
 function initWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -170,7 +172,7 @@ function initWebSocket() {
             badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800";
             badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500"></span> WebSocket Reconectando...';
         }
-        setTimeout(initWebSocket, 2000);
+        setTimeout(initWebSocket, 1500);
     };
 
     socket.onerror = function() {
@@ -181,21 +183,21 @@ function initWebSocket() {
         try {
             const data = JSON.parse(event.data);
             if (data.type === 'lots_update') {
+                // Descarta pacotes desatualizados caso o usuário tenha continuado a digitar
+                if (data.seq !== undefined && data.seq < currentSearchSeq) return;
                 if (window.isEditingLot) return;
                 
-                const tbody = document.getElementById('lot-table-body');
-                if (tbody) {
-                    tbody.innerHTML = data.html;
-                    htmx.process(tbody);
-                }
-                const countEl = document.getElementById('lots-count');
-                if (countEl && data.total !== undefined) {
-                    countEl.innerText = data.total;
-                }
+                // Armazena no cache local do cliente
+                const cacheKey = `${data.filtro || 'todos'}|${(data.busca || '').trim().toUpperCase()}`;
+                clientCache.set(cacheKey, { html: data.html, total: data.total });
+
+                renderLotsData(data.html, data.total);
+
             } else if (data.type === 'reload') {
-                // Notificação de alteração enviada pelo servidor ou outros clientes
+                // Invalida cache local do cliente quando há qualquer alteração no banco
+                clientCache.clear();
                 if (!window.isEditingLot) {
-                    performSearch();
+                    performSearch(true);
                 }
             }
         } catch(e) {
@@ -204,15 +206,39 @@ function initWebSocket() {
     };
 }
 
-function performSearch() {
+function renderLotsData(html, total) {
+    const tbody = document.getElementById('lot-table-body');
+    if (tbody) {
+        tbody.innerHTML = html;
+        htmx.process(tbody);
+    }
+    const countEl = document.getElementById('lots-count');
+    if (countEl && total !== undefined) {
+        countEl.innerText = total;
+    }
+}
+
+function performSearch(forceServer = false) {
     const busca = document.getElementById('current-busca').value;
     const filtro = document.getElementById('current-filtro').value;
+    const cacheKey = `${filtro}|${busca.trim().toUpperCase()}`;
 
+    // 1. Resposta instantânea se estiver no cache local (0ms!)
+    if (!forceServer && clientCache.has(cacheKey)) {
+        const cached = clientCache.get(cacheKey);
+        renderLotsData(cached.html, cached.total);
+        return;
+    }
+
+    const seq = ++currentSearchSeq;
+
+    // 2. Consulta pelo WebSocket
     if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({
             action: "search",
             busca: busca,
-            filtro: filtro
+            filtro: filtro,
+            seq: seq
         }));
     } else {
         // Fallback HTMX
@@ -229,12 +255,13 @@ function onSearchInput(val) {
         clearBtn.classList.toggle('hidden', !val);
     }
     clearTimeout(searchDebounceTimer);
-    searchDebounceTimer = setTimeout(performSearch, 180);
+    // Debounce reduzido para 100ms para resposta ultra veloz
+    searchDebounceTimer = setTimeout(() => performSearch(false), 100);
 }
 
 function submitSearch() {
     clearTimeout(searchDebounceTimer);
-    performSearch();
+    performSearch(true);
 }
 
 function clearSearch() {
@@ -248,7 +275,7 @@ function setFiltro(key, evt) {
     if (evt) evt.preventDefault();
     document.getElementById('current-filtro').value = key;
     
-    // Atualiza classes ativas dos botões de filtro
+    // Atualiza visual dos botões
     document.querySelectorAll('.filter-btn').forEach(btn => {
         if (btn.getAttribute('data-filtro') === key) {
             btn.className = "filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-indigo-600 text-white shadow";
@@ -257,7 +284,7 @@ function setFiltro(key, evt) {
         }
     });
 
-    performSearch();
+    performSearch(false);
 }
 
 // Inicializa WebSocket

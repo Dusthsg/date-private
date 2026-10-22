@@ -26,6 +26,7 @@ from app.db import (
     update_lot_price,
     delete_lot as db_delete_lot,
     create_lot,
+    clear_query_cache,
     DATABASE_URL
 )
 
@@ -120,6 +121,7 @@ def ws_handler(ws):
             if action == "search":
                 filtro = msg.get("filtro", "todos")
                 busca = msg.get("busca", "").strip()
+                seq = msg.get("seq")
 
                 total, lots = query_lots(filtro=filtro, busca=busca, limit=100)
 
@@ -136,7 +138,8 @@ def ws_handler(ws):
                     "html": html,
                     "total": total,
                     "filtro": filtro,
-                    "busca": busca
+                    "busca": busca,
+                    "seq": seq
                 }))
             elif action == "ping":
                 ws.send(json.dumps({"type": "pong"}))
