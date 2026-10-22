@@ -285,9 +285,111 @@ def update_price(lot_id: int):
     return render_template("partials/price_cell.html", lot={"lot_id": lot_id, "price": price})
 
 
+@app.route("/upload-db", methods=["POST"])
+def upload_db():
+    """
+    Recebe um arquivo de banco de dados (products.db) enviado pelo celular ou navegador,
+    substitui o arquivo local com segurança e sincroniza com PostgreSQL se ativo.
+    """
+    import shutil
+    import subprocess
+    from datetime import datetime
+
+    if "db_file" not in request.files:
+        return """
+        <div id="git-status-msg" class="border border-red-400 bg-red-100 text-red-700 px-4 py-3 rounded-lg text-sm mb-3 flex items-center justify-between">
+            <span>❌ Nenhum arquivo enviado no formulário.</span>
+            <button onclick="this.parentElement.remove()" class="text-xs font-bold ml-2">✕</button>
+        </div>
+        """, 400
+
+    file = request.files["db_file"]
+    if file.filename == "":
+        return """
+        <div id="git-status-msg" class="border border-red-400 bg-red-100 text-red-700 px-4 py-3 rounded-lg text-sm mb-3 flex items-center justify-between">
+            <span>❌ Nenhum arquivo selecionado.</span>
+            <button onclick="this.parentElement.remove()" class="text-xs font-bold ml-2">✕</button>
+        </div>
+        """, 400
+
+    db_target = BASE_DIR / "database" / "products.db"
+    db_target.parent.mkdir(parents=True, exist_ok=True)
+
+    content = file.read()
+    if len(content) < 100 or not content.startswith(b"SQLite format 3\x00"):
+        return """
+        <div id="git-status-msg" class="border border-red-400 bg-red-100 text-red-700 px-4 py-3 rounded-lg text-sm mb-3 flex items-center justify-between">
+            <span>❌ O arquivo enviado não é um banco SQLite válido (cabeçalho incorreto).</span>
+            <button onclick="this.parentElement.remove()" class="text-xs font-bold ml-2">✕</button>
+        </div>
+        """, 400
+
+    # Cria cópia de segurança
+    if db_target.exists():
+        backup_path = BASE_DIR / "database" / "products.db.bak"
+        try:
+            shutil.copy2(db_target, backup_path)
+        except Exception:
+            pass
+
+    # Grava novo banco
+    try:
+        with open(db_target, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        return f"""
+        <div id="git-status-msg" class="border border-red-400 bg-red-100 text-red-700 px-4 py-3 rounded-lg text-sm mb-3 flex items-center justify-between">
+            <span>❌ Erro ao salvar banco no disco: {e}</span>
+            <button onclick="this.parentElement.remove()" class="text-xs font-bold ml-2">✕</button>
+        </div>
+        """, 500
+
+    # Se estiver com PostgreSQL configurado, migra os dados recebidos para o Neon Postgres
+    pg_msg = ""
+    if is_postgres():
+        try:
+            from app.migrate_sqlite_to_pg import migrate
+            migrate()
+            pg_msg = " e sincronizado no Neon PostgreSQL"
+        except Exception as e:
+            pg_msg = f" (aviso na sincronização Postgres: {e})"
+    else:
+        try:
+            init_db()
+        except Exception as e:
+            print("Aviso ao reinicializar SQLite após upload:", e)
+
+    # Notifica outros clientes via WebSocket
+    broadcast_reload("db_uploaded")
+
+    # Realiza commit e push automático do banco recebido
+    git_feedback = ""
+    try:
+        branch_res = subprocess.run(["git", "branch", "--show-current"], cwd=str(BASE_DIR), capture_output=True, text=True)
+        current_branch = branch_res.stdout.strip() or "main"
+        subprocess.run(["git", "add", "-f", "database/products.db"], cwd=str(BASE_DIR), check=True)
+        now_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        subprocess.run(["git", "commit", "-m", f"chore: upload do banco products.db pelo celular [{now_str}]"], cwd=str(BASE_DIR))
+        push_res = subprocess.run(["git", "push", "origin", current_branch], cwd=str(BASE_DIR), capture_output=True, text=True)
+        if push_res.returncode == 0 or "Everything up-to-date" in push_res.stderr or "Everything up-to-date" in push_res.stdout:
+            git_feedback = f" e enviado ao Git ({current_branch})"
+        else:
+            git_feedback = f" (commit local realizado, push pendente)"
+    except Exception as e:
+        git_feedback = f" (aviso git: {e})"
+
+    total, _ = query_lots(limit=1)
+    return f"""
+    <div id="git-status-msg" class="border border-green-400 bg-green-100 text-green-800 px-4 py-3 rounded-lg text-sm mb-3 flex items-center justify-between shadow-sm">
+        <span>✅ <b>Banco do celular carregado com sucesso{pg_msg}{git_feedback}!</b> Total: {total} lotes ativos.</span>
+        <button onclick="this.parentElement.remove()" class="text-xs font-bold ml-2">✕</button>
+    </div>
+    """
+
+
 @app.route("/export-git", methods=["POST"])
 def export_git():
-    """Sincroniza e envia alterações para o repositório date-private."""
+    """Sincroniza e envia alterações para o repositório remoto Git no branch atual."""
     import subprocess
     from datetime import datetime
 
@@ -296,17 +398,26 @@ def export_git():
     now_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     try:
-        subprocess.run(["git", "add", "."], cwd=str(BASE_DIR), check=True, capture_output=True, text=True)
+        branch_res = subprocess.run(["git", "branch", "--show-current"], cwd=str(BASE_DIR), capture_output=True, text=True)
+        current_branch = branch_res.stdout.strip() or "main"
 
-        commit_res = subprocess.run(
-            ["git", "commit", "-m", f"sync: atualizacao banco/codigo [{now_str}]"],
-            cwd=str(BASE_DIR),
-            capture_output=True,
-            text=True
-        )
+        subprocess.run(["git", "add", "-A"], cwd=str(BASE_DIR), check=True, capture_output=True, text=True)
+        if (BASE_DIR / "database" / "products.db").exists():
+            subprocess.run(["git", "add", "-f", "database/products.db"], cwd=str(BASE_DIR), capture_output=True, text=True)
+
+        diff_res = subprocess.run(["git", "status", "--porcelain"], cwd=str(BASE_DIR), capture_output=True, text=True)
+        has_changes = bool(diff_res.stdout.strip())
+
+        if has_changes:
+            commit_res = subprocess.run(
+                ["git", "commit", "-m", f"sync: atualizacao banco/codigo [{now_str}]"],
+                cwd=str(BASE_DIR),
+                capture_output=True,
+                text=True
+            )
 
         push_res = subprocess.run(
-            ["git", "push", "origin", "main"],
+            ["git", "push", "origin", current_branch],
             cwd=str(BASE_DIR),
             capture_output=True,
             text=True
@@ -315,13 +426,12 @@ def export_git():
         if push_res.returncode == 0:
             sucesso = True
             msg_status = f"✅ Alterações sincronizadas com o GitHub com sucesso! ({now_str})"
+        elif "Everything up-to-date" in push_res.stderr or "Everything up-to-date" in push_res.stdout:
+            sucesso = True
+            msg_status = f"✅ Tudo já estava atualizado no Git."
         else:
-            if "Everything up-to-date" in push_res.stderr or "Everything up-to-date" in push_res.stdout:
-                sucesso = True
-                msg_status = f"✅ Tudo já estava atualizado no Git."
-            else:
-                sucesso = False
-                msg_status = f"⚠️ Commit local realizado. Mensagem do push: {push_res.stderr or push_res.stdout}"
+            sucesso = False
+            msg_status = f"⚠️ Commit local realizado. Mensagem do push: {push_res.stderr or push_res.stdout}"
     except Exception as e:
         sucesso = False
         msg_status = f"❌ Erro ao sincronizar: {str(e)}"

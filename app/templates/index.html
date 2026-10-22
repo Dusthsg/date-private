@@ -123,7 +123,15 @@
         </span>
     </div>
 
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
+        <!-- Botão para abrir o Upload do Celular -->
+        <button type="button"
+                onclick="document.getElementById('modal-upload-db').classList.toggle('hidden');"
+                class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-3 py-2 rounded-lg shadow-sm transition"
+                title="Fazer upload do arquivo products.db do seu celular">
+            <span>📲 Upload Banco (Celular)</span>
+        </button>
+
         <button hx-post="/export-git"
                 hx-target="#git-status-container"
                 hx-swap="innerHTML"
@@ -136,6 +144,45 @@
             Sincronizando...
         </span>
     </div>
+</div>
+
+<!-- Modal/Painel para Upload do Banco de Dados do Celular -->
+<div id="modal-upload-db" class="hidden mb-4 p-4 bg-emerald-50 border border-emerald-200 rounded-xl shadow-sm">
+    <div class="flex items-center justify-between mb-2">
+        <h3 class="text-sm font-bold text-emerald-900 flex items-center gap-2">
+            📲 Enviar Banco de Dados do Celular (products.db)
+        </h3>
+        <button type="button" onclick="document.getElementById('modal-upload-db').classList.add('hidden');" class="text-xs text-gray-500 hover:text-gray-800 font-bold p-1">
+            ✕ Fechar
+        </button>
+    </div>
+    <p class="text-xs text-emerald-700 mb-3">
+        Selecione o arquivo <code>products.db</code> salvo no seu celular (ex: baixado do Termux ou storage local). Ao enviar, o banco do servidor é atualizado na hora, migrado para o Neon Postgres e enviado ao Git!
+    </p>
+    <form hx-post="/upload-db"
+          hx-target="#git-status-container"
+          hx-swap="innerHTML"
+          hx-encoding="multipart/form-data"
+          hx-indicator="#upload-loading"
+          hx-on::after-request="if(event.detail.successful) { document.getElementById('modal-upload-db').classList.add('hidden'); }"
+          class="flex flex-col sm:flex-row items-center gap-2">
+        
+        <input type="file"
+               name="db_file"
+               accept=".db,.sqlite,.sqlite3"
+               required
+               class="text-xs text-gray-700 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer">
+        
+        <div class="flex items-center gap-2">
+            <button type="submit"
+                    class="bg-emerald-700 hover:bg-emerald-800 active:scale-95 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition">
+                ⬆️ Enviar e Sincronizar
+            </button>
+            <span id="upload-loading" class="htmx-indicator text-xs text-emerald-700 font-medium animate-pulse">
+                Enviando banco...
+            </span>
+        </div>
+    </form>
 </div>
 
 <!-- Container para mensagens de feedback do Git -->
