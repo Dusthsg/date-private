@@ -122,6 +122,63 @@
             💾 {{ db_name }}
         </span>
     </div>
+
+    <!-- Botão de Ação: Conciliação de Planilha -->
+    <div>
+        <button type="button"
+                onclick="document.getElementById('panel-import-planilha').classList.toggle('hidden');"
+                class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg shadow-sm transition"
+                title="Conciliar estoque com planilha da retaguarda">
+            <span>📥 Importar Planilha (Excel)</span>
+        </button>
+    </div>
+</div>
+
+<!-- Painel Colapsável de Importação de Planilha com Auditoria Linha por Linha -->
+<div id="panel-import-planilha" class="hidden mb-4 bg-white border border-emerald-200 rounded-xl shadow-sm p-4">
+    <div class="flex items-center justify-between pb-2 mb-3 border-b border-gray-100">
+        <div class="flex items-center gap-2">
+            <span class="text-sm font-bold text-gray-800">📥 Conciliação e Importação de Planilha</span>
+            <span class="text-[11px] bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-semibold">Auditor Linha por Linha</span>
+        </div>
+        <button type="button" onclick="document.getElementById('panel-import-planilha').classList.add('hidden');" class="text-xs text-gray-400 hover:text-gray-600 font-bold p-1">
+            ✕ Fechar
+        </button>
+    </div>
+
+    <div class="text-xs text-gray-600 mb-3 space-y-1 bg-gray-50 p-2.5 rounded-lg border border-gray-200">
+        <div class="font-semibold text-gray-700 mb-1">Regras automáticas aplicadas ao importar:</div>
+        <div>🛡️ <b>1. Filtro de Lápide:</b> se o lote já foi baixado no chão da loja hoje, a linha é descartada (evita o item zumbi).</div>
+        <div>📦 <b>2. Remessa Nova:</b> se o lote não existe no banco, é criado direto no <b>GALPÃO</b> (deixando os mais velhos intocados na LOJA).</div>
+        <div>⚖️ <b>3. Divergência Delta:</b> se a planilha tiver excedente em relação à loja, lança apenas a diferença como reforço no <b>GALPÃO</b>.</div>
+    </div>
+
+    <form hx-post="/import-planilha"
+          hx-target="#import-result-container"
+          hx-swap="innerHTML"
+          hx-encoding="multipart/form-data"
+          hx-indicator="#import-loading"
+          class="flex flex-col sm:flex-row items-center gap-3">
+        
+        <input type="file"
+               name="file"
+               accept=".xlsx,.xls,.csv"
+               required
+               class="text-xs text-gray-700 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer">
+        
+        <div class="flex items-center gap-2">
+            <button type="submit"
+                    class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition">
+                ⚡ Processar e Conciliar
+            </button>
+            <span id="import-loading" class="htmx-indicator text-xs text-emerald-600 font-medium animate-pulse">
+                Auditor processando linhas...
+            </span>
+        </div>
+    </form>
+
+    <!-- Container do Resultado da Auditoria -->
+    <div id="import-result-container"></div>
 </div>
 
 <!-- Tabela de lotes -->

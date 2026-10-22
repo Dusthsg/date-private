@@ -288,6 +288,38 @@ def update_price(lot_id: int):
     return render_template("partials/price_cell.html", lot={"lot_id": lot_id, "price": price})
 
 
+@app.route("/import-planilha", methods=["POST"])
+def import_planilha():
+    """
+    Recebe uma planilha Excel (.xlsx, .xls) ou CSV e executa a auditoria linha por linha:
+    1. Filtro de Lápide: Evita itens zumbis (já baixados).
+    2. Remessa Nova: Cria lotes novos direto no GALPÃO.
+    3. Divergência Delta: Lança excedente da planilha no GALPÃO mantendo a LOJA intacta.
+    """
+    from app.auditor_import import audit_and_import_spreadsheet
+
+    if "file" not in request.files:
+        return '<div class="text-red-500 text-xs p-3 bg-red-50 border border-red-200 rounded-lg">❌ Nenhum arquivo enviado.</div>', 400
+
+    uploaded_file = request.files["file"]
+    if not uploaded_file.filename:
+        return '<div class="text-red-500 text-xs p-3 bg-red-50 border border-red-200 rounded-lg">❌ Nenhum arquivo selecionado.</div>', 400
+
+    try:
+        content = uploaded_file.read()
+        res = audit_and_import_spreadsheet(content, uploaded_file.filename)
+    except Exception as e:
+        return f'<div class="text-red-600 text-xs p-3 bg-red-50 border border-red-200 rounded-lg">❌ Erro ao auditar e importar planilha: {str(e)}</div>', 400
+
+    # Notifica todos os aparelhos conectados via WebSocket para atualizar a tela na hora
+    broadcast_reload("planilha_importada")
+
+    stats = res["stats"]
+    logs = res["logs"]
+
+    return render_template("partials/import_summary.html", stats=stats, logs=logs)
+
+
 @app.route("/upload-db", methods=["POST"])
 def upload_db():
     """

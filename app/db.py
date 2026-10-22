@@ -190,7 +190,23 @@ def init_db():
             # Garante colunas adicionais
             cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
             cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS created_at DATE DEFAULT CURRENT_DATE;")
+            cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
+
+            # Tabela de histórico de movimentações e baixas (Filtro de Lápide)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS stock_movements (
+                    id SERIAL PRIMARY KEY,
+                    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                    lot_id INTEGER,
+                    action TEXT NOT NULL,
+                    quant INTEGER DEFAULT 0,
+                    date_valid DATE NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_prod_valid ON stock_movements(product_id, date_valid);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at);")
 
         else:
             cur.execute("PRAGMA foreign_keys = ON;")
@@ -211,6 +227,7 @@ def init_db():
                     location TEXT DEFAULT 'LOJA',
                     status TEXT DEFAULT 'NORMAL',
                     created_at TEXT DEFAULT (date('now')),
+                    updated_at TEXT DEFAULT (datetime('now', 'localtime')),
                     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
                 );
             """)
@@ -224,7 +241,25 @@ def init_db():
                 cur.execute("ALTER TABLE product_lots ADD COLUMN price REAL DEFAULT 0.0;")
             if "created_at" not in cols:
                 cur.execute("ALTER TABLE product_lots ADD COLUMN created_at TEXT DEFAULT (date('now'));")
+            if "updated_at" not in cols:
+                cur.execute("ALTER TABLE product_lots ADD COLUMN updated_at TEXT DEFAULT (datetime('now', 'localtime'));")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
+
+            # Tabela de movimentações para SQLite
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS stock_movements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_id INTEGER NOT NULL,
+                    lot_id INTEGER,
+                    action TEXT NOT NULL,
+                    quant INTEGER DEFAULT 0,
+                    date_valid TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+                );
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_prod_valid ON stock_movements(product_id, date_valid);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at);")
 
 
 # ── Consulta Otimizada de Lotes ───────────────────────────────────────────────
@@ -359,7 +394,8 @@ def update_lot_quant(lot_id: int, quant: int) -> bool:
     clear_query_cache()
     with get_db_cursor(commit=True) as (cur, db_type):
         ph = "%s" if db_type == "postgres" else "?"
-        cur.execute(f"UPDATE product_lots SET quant = {ph} WHERE id = {ph}", (quant, lot_id))
+        now_val = "CURRENT_TIMESTAMP" if db_type == "postgres" else "datetime('now', 'localtime')"
+        cur.execute(f"UPDATE product_lots SET quant = {ph}, updated_at = {now_val} WHERE id = {ph}", (quant, lot_id))
         return True
 
 
@@ -367,14 +403,39 @@ def update_lot_price(lot_id: int, price: float) -> bool:
     clear_query_cache()
     with get_db_cursor(commit=True) as (cur, db_type):
         ph = "%s" if db_type == "postgres" else "?"
-        cur.execute(f"UPDATE product_lots SET price = {ph} WHERE id = {ph}", (price, lot_id))
+        now_val = "CURRENT_TIMESTAMP" if db_type == "postgres" else "datetime('now', 'localtime')"
+        cur.execute(f"UPDATE product_lots SET price = {ph}, updated_at = {now_val} WHERE id = {ph}", (price, lot_id))
         return True
 
 
 def delete_lot(lot_id: int) -> bool:
+    """
+    Dá baixa no lote e registra a Lápide (tombstone) em stock_movements,
+    garantindo que futuras importações de planilhas não ressuscitem esse lote (Item Zumbi).
+    """
     clear_query_cache()
     with get_db_cursor(commit=True) as (cur, db_type):
         ph = "%s" if db_type == "postgres" else "?"
+
+        # 1. Recupera dados do lote para registrar a baixa
+        cur.execute(
+            f"SELECT product_id, quant, date_valid::TEXT FROM product_lots WHERE id = {ph}" if db_type == "postgres"
+            else f"SELECT product_id, quant, date_valid FROM product_lots WHERE id = {ph}",
+            (lot_id,)
+        )
+        row = cur.fetchone()
+        if row:
+            p_id = row[0]
+            q = row[1]
+            d_valid = str(row[2])[:10]
+            # Registra baixa no histórico de auditoria
+            cur.execute(
+                f"""INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid)
+                    VALUES ({ph}, {ph}, 'BAIXA', {ph}, {ph})""",
+                (p_id, lot_id, q, d_valid)
+            )
+
+        # 2. Deleta o lote ativo
         cur.execute(f"DELETE FROM product_lots WHERE id = {ph}", (lot_id,))
         return True
 
