@@ -75,6 +75,10 @@ def migrate():
     p_cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
     p_cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
 
+    # Limpa dados antigos para sobreescrever exatamente com o banco mais atualizado
+    print("🧹 Limpando dados antigos do PostgreSQL para sobreposição completa...")
+    p_cur.execute("TRUNCATE TABLE product_lots, products RESTART IDENTITY CASCADE;")
+
     # Inserir produtos preservando id original via batch execute_values
     print("⏳ Migrando produtos...")
     from psycopg2.extras import execute_values
