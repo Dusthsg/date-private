@@ -77,12 +77,8 @@ def init_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
 
-            # Garante que a coluna 'price' existe caso o banco venha do celular
-            cur.execute("PRAGMA table_info(product_lots);")
-            cols = [col[1] for col in cur.fetchall()]
-            if "price" not in cols:
-                cur.execute("ALTER TABLE product_lots ADD COLUMN price REAL DEFAULT 0.0;")
-
+            # Garante que a coluna 'price' existe no PostgreSQL
+            cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
             conn.commit()
         else:
             cur.execute("PRAGMA foreign_keys = ON;")
@@ -109,12 +105,11 @@ def init_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
 
-            # Garante que a coluna 'price' existe caso o banco venha do celular
+            # Garante que a coluna 'price' existe no SQLite
             cur.execute("PRAGMA table_info(product_lots);")
             cols = [col[1] for col in cur.fetchall()]
             if "price" not in cols:
                 cur.execute("ALTER TABLE product_lots ADD COLUMN price REAL DEFAULT 0.0;")
-
             conn.commit()
     finally:
         conn.close()
