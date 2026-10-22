@@ -39,6 +39,28 @@ except ImportError:
 # ── Pool de Conexões PostgreSQL ───────────────────────────────────────────────
 _pg_pool = None
 _pool_lock = threading.Lock()
+_conn_last_used = {}
+_conn_used_lock = threading.Lock()
+
+
+def _mark_conn_used(conn):
+    if conn is not None:
+        with _conn_used_lock:
+            _conn_last_used[id(conn)] = time.time()
+
+
+def _remove_conn_used(conn):
+    if conn is not None:
+        with _conn_used_lock:
+            _conn_last_used.pop(id(conn), None)
+
+
+def _get_conn_last_used(conn) -> float:
+    if conn is None:
+        return 0.0
+    with _conn_used_lock:
+        return _conn_last_used.get(id(conn), 0.0)
+
 
 def get_pg_pool():
     global _pg_pool
@@ -49,7 +71,11 @@ def get_pg_pool():
                     _pg_pool = pool.ThreadedConnectionPool(
                         minconn=2,
                         maxconn=10,
-                        dsn=DATABASE_URL
+                        dsn=DATABASE_URL,
+                        keepalives=1,
+                        keepalives_idle=30,
+                        keepalives_interval=10,
+                        keepalives_count=5,
                     )
                 except Exception as e:
                     print(f"⚠️ Erro ao inicializar pool Postgres: {e}")
@@ -61,37 +87,108 @@ def is_postgres() -> bool:
     return bool(DATABASE_URL and PSYCOPG2_AVAILABLE)
 
 
+def _is_connection_healthy(conn) -> bool:
+    """Verifica se a conexão PostgreSQL ainda está ativa e responsiva."""
+    if conn is None or getattr(conn, "closed", 1) != 0:
+        return False
+    # Se foi usada há menos de 45 segundos, dispensa o roundtrip de ping
+    last_used = _get_conn_last_used(conn)
+    if time.time() - last_used < 45 and last_used > 0:
+        return True
+    try:
+        with conn.cursor() as test_cur:
+            test_cur.execute("SELECT 1;")
+        _mark_conn_used(conn)
+        return True
+    except Exception:
+        _remove_conn_used(conn)
+        return False
+
+
+def _checkout_valid_pg_conn(pool_inst, max_retries=3):
+    """Obtém uma conexão válida do pool, descartando conexões inativas ou expiradas pela nuvem."""
+    for _ in range(max_retries):
+        try:
+            conn = pool_inst.getconn()
+        except Exception:
+            break
+        if _is_connection_healthy(conn):
+            return conn, True
+        # Conexão inativa ou morta: fecha e remove do pool
+        _remove_conn_used(conn)
+        try:
+            pool_inst.putconn(conn, close=True)
+        except Exception:
+            pass
+    # Se todas as conexões do pool estavam inativas, cria uma nova diretamente
+    conn = psycopg2.connect(
+        DATABASE_URL,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=5,
+    )
+    _mark_conn_used(conn)
+    return conn, False
+
+
 @contextmanager
 def get_db_cursor(commit=False):
     """
-    Context manager de alta performance:
-    Reutiliza conexões ativas do pool, eliminando handshakes SSL demorados (~900ms -> ~0.03ms).
+    Context manager de alta performance e resiliência:
+    Reutiliza conexões ativas do pool com keepalive e auto-recuperação de timeout da nuvem.
     """
     if is_postgres():
         pool_inst = get_pg_pool()
         if pool_inst:
-            conn = pool_inst.getconn()
-            try:
-                cur = conn.cursor()
-                yield cur, "postgres"
-                if commit:
-                    conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-            finally:
-                cur.close()
-                pool_inst.putconn(conn)
+            conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
         else:
-            conn = psycopg2.connect(DATABASE_URL)
+            conn = psycopg2.connect(
+                DATABASE_URL,
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=5,
+            )
+            _mark_conn_used(conn)
+            is_from_pool = False
+
+        is_broken = False
+        try:
+            cur = conn.cursor()
+            yield cur, "postgres"
+            if commit:
+                conn.commit()
+            _mark_conn_used(conn)
+        except Exception as exc:
+            if isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError)) or getattr(conn, "closed", 0) != 0:
+                is_broken = True
+            else:
+                try:
+                    conn.rollback()
+                except Exception:
+                    is_broken = True
+            raise
+        finally:
             try:
-                cur = conn.cursor()
-                yield cur, "postgres"
-                if commit:
-                    conn.commit()
-            finally:
                 cur.close()
-                conn.close()
+            except Exception:
+                pass
+            if is_broken:
+                _remove_conn_used(conn)
+            if is_from_pool and pool_inst:
+                try:
+                    pool_inst.putconn(conn, close=is_broken)
+                except Exception:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+            else:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
     else:
         SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(SQLITE_PATH))
@@ -112,8 +209,17 @@ def get_connection():
     if is_postgres():
         p = get_pg_pool()
         if p:
-            return p.getconn(), "postgres_pool"
-        return psycopg2.connect(DATABASE_URL), "postgres"
+            conn, _ = _checkout_valid_pg_conn(p)
+            return conn, "postgres_pool"
+        conn = psycopg2.connect(
+            DATABASE_URL,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5,
+        )
+        _mark_conn_used(conn)
+        return conn, "postgres"
     else:
         SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(SQLITE_PATH))
@@ -126,10 +232,20 @@ def release_connection(conn, db_type):
     """Libera a conexão de volta ao pool."""
     if db_type == "postgres_pool" and _pg_pool:
         try:
-            _pg_pool.putconn(conn)
+            is_broken = getattr(conn, "closed", 0) != 0
+            if is_broken:
+                _remove_conn_used(conn)
+            else:
+                _mark_conn_used(conn)
+            _pg_pool.putconn(conn, close=is_broken)
         except Exception:
-            pass
+            _remove_conn_used(conn)
+            try:
+                conn.close()
+            except Exception:
+                pass
     else:
+        _remove_conn_used(conn)
         try:
             conn.close()
         except Exception:
@@ -282,110 +398,118 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
             if now - entry_time < CACHE_TTL_SECONDS:
                 return cached_total, cached_lots
 
-    # 2. Executa no banco com single query
-    with get_db_cursor() as (cur, db_type):
-        where_clauses = ["1=1"]
-        params = []
-        today = date.today()
-        ph = "%s" if db_type == "postgres" else "?"
+    # 2. Executa no banco com single query e auto-retry resiliente
+    for attempt in range(2):
+        try:
+            with get_db_cursor() as (cur, db_type):
+                where_clauses = ["1=1"]
+                params = []
+                today = date.today()
+                ph = "%s" if db_type == "postgres" else "?"
 
-        if filtro == "vencidos":
-            where_clauses.append(f"l.date_valid < {ph}")
-            params.append(today.strftime("%Y-%m-%d"))
+                if filtro == "vencidos":
+                    where_clauses.append(f"l.date_valid < {ph}")
+                    params.append(today.strftime("%Y-%m-%d"))
 
-        elif filtro == "critico":
-            where_clauses.append(f"l.date_valid BETWEEN {ph} AND {ph}")
-            params.append(today.strftime("%Y-%m-%d"))
-            params.append((today + timedelta(days=7)).strftime("%Y-%m-%d"))
+                elif filtro == "critico":
+                    where_clauses.append(f"l.date_valid BETWEEN {ph} AND {ph}")
+                    params.append(today.strftime("%Y-%m-%d"))
+                    params.append((today + timedelta(days=7)).strftime("%Y-%m-%d"))
 
-        elif filtro == "atencao":
-            where_clauses.append(f"l.date_valid BETWEEN {ph} AND {ph}")
-            params.append((today + timedelta(days=8)).strftime("%Y-%m-%d"))
-            params.append((today + timedelta(days=29)).strftime("%Y-%m-%d"))
+                elif filtro == "atencao":
+                    where_clauses.append(f"l.date_valid BETWEEN {ph} AND {ph}")
+                    params.append((today + timedelta(days=8)).strftime("%Y-%m-%d"))
+                    params.append((today + timedelta(days=29)).strftime("%Y-%m-%d"))
 
-        elif filtro == "alerta":
-            where_clauses.append(f"l.date_valid BETWEEN {ph} AND {ph}")
-            params.append((today + timedelta(days=30)).strftime("%Y-%m-%d"))
-            params.append((today + timedelta(days=45)).strftime("%Y-%m-%d"))
+                elif filtro == "alerta":
+                    where_clauses.append(f"l.date_valid BETWEEN {ph} AND {ph}")
+                    params.append((today + timedelta(days=30)).strftime("%Y-%m-%d"))
+                    params.append((today + timedelta(days=45)).strftime("%Y-%m-%d"))
 
-        elif filtro == "hoje":
-            where_clauses.append(f"l.created_at = {ph}")
-            params.append(today.strftime("%Y-%m-%d"))
+                elif filtro == "hoje":
+                    where_clauses.append(f"l.created_at = {ph}")
+                    params.append(today.strftime("%Y-%m-%d"))
 
-        if clean_busca:
-            like_op = "ILIKE" if db_type == "postgres" else "LIKE"
-            where_clauses.append(f"p.name {like_op} {ph}")
-            params.append(f"%{clean_busca}%")
+                if clean_busca:
+                    like_op = "ILIKE" if db_type == "postgres" else "LIKE"
+                    where_clauses.append(f"p.name {like_op} {ph}")
+                    params.append(f"%{clean_busca}%")
 
-        where_sql = " AND ".join(where_clauses)
-        order_by = "l.id DESC" if filtro == "hoje" else "l.date_valid ASC, p.name ASC"
+                where_sql = " AND ".join(where_clauses)
+                order_by = "l.id DESC" if filtro == "hoje" else "l.date_valid ASC, p.name ASC"
 
-        # Query única combinando dados e contagem total via window function
-        query = f"""
-            SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
-                   l.quant, l.price,
-                   l.date_valid::TEXT AS date_valid_str,
-                   l.location, l.status,
-                   COUNT(*) OVER() AS full_count
-            FROM product_lots l
-            INNER JOIN products p ON p.id = l.product_id
-            WHERE {where_sql}
-            ORDER BY {order_by}
-            LIMIT {ph}
-        """ if db_type == "postgres" else f"""
-            SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
-                   l.quant, l.price,
-                   l.date_valid AS date_valid_str,
-                   l.location, l.status,
-                   COUNT(*) OVER() AS full_count
-            FROM product_lots l
-            INNER JOIN products p ON p.id = l.product_id
-            WHERE {where_sql}
-            ORDER BY {order_by}
-            LIMIT {ph}
-        """
+                # Query única combinando dados e contagem total via window function
+                query = f"""
+                    SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
+                           l.quant, l.price,
+                           l.date_valid::TEXT AS date_valid_str,
+                           l.location, l.status,
+                           COUNT(*) OVER() AS full_count
+                    FROM product_lots l
+                    INNER JOIN products p ON p.id = l.product_id
+                    WHERE {where_sql}
+                    ORDER BY {order_by}
+                    LIMIT {ph}
+                """ if db_type == "postgres" else f"""
+                    SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
+                           l.quant, l.price,
+                           l.date_valid AS date_valid_str,
+                           l.location, l.status,
+                           COUNT(*) OVER() AS full_count
+                    FROM product_lots l
+                    INNER JOIN products p ON p.id = l.product_id
+                    WHERE {where_sql}
+                    ORDER BY {order_by}
+                    LIMIT {ph}
+                """
 
-        cur.execute(query, params + [limit])
-        raw_rows = cur.fetchall()
+                cur.execute(query, params + [limit])
+                raw_rows = cur.fetchall()
 
-        if not raw_rows:
-            # Se não retornou linhas, verifica se o total é zero
-            total = 0
-            lots = []
-        else:
-            first_row = raw_rows[0]
-            total = first_row[-1] if db_type == "postgres" else first_row["full_count"]
-
-            lots = []
-            for r in raw_rows:
-                if db_type == "postgres":
-                    lot_id, p_name, p_id, quant, price, d_valid, loc, st, _ = r
+                if not raw_rows:
+                    total = 0
+                    lots = []
                 else:
-                    lot_id = r["lot_id"]
-                    p_name = r["product_name"]
-                    p_id = r["product_id"]
-                    quant = r["quant"]
-                    price = r["price"]
-                    d_valid = str(r["date_valid_str"])
-                    loc = r["location"]
-                    st = r["status"]
+                    first_row = raw_rows[0]
+                    total = first_row[-1] if db_type == "postgres" else first_row["full_count"]
 
-                lots.append({
-                    "lot_id": lot_id,
-                    "product_name": p_name,
-                    "product_id": p_id,
-                    "quant": quant,
-                    "price": price,
-                    "date_valid": str(d_valid)[:10],
-                    "location": loc,
-                    "status": st,
-                })
+                    lots = []
+                    for r in raw_rows:
+                        if db_type == "postgres":
+                            lot_id, p_name, p_id, quant, price, d_valid, loc, st, _ = r
+                        else:
+                            lot_id = r["lot_id"]
+                            p_name = r["product_name"]
+                            p_id = r["product_id"]
+                            quant = r["quant"]
+                            price = r["price"]
+                            d_valid = str(r["date_valid_str"])
+                            loc = r["location"]
+                            st = r["status"]
 
-    # 3. Salva no cache em memória
-    with _cache_lock:
-        _query_cache[cache_key] = (now, total, lots)
+                        lots.append({
+                            "lot_id": lot_id,
+                            "product_name": p_name,
+                            "product_id": p_id,
+                            "quant": quant,
+                            "price": price,
+                            "date_valid": str(d_valid)[:10],
+                            "location": loc,
+                            "status": st,
+                        })
 
-    return total, lots
+                # Salva no cache em memória
+                with _cache_lock:
+                    _query_cache[cache_key] = (now, total, lots)
+
+                return total, lots
+
+        except Exception as e:
+            if attempt == 0 and is_postgres() and ("closed" in str(e).lower() or "ssl" in str(e).lower() or "terminat" in str(e).lower()):
+                clear_query_cache()
+                time.sleep(0.15)
+                continue
+            raise
 
 
 # ── Mutações (Com Invalidação Instantânea de Cache) ─────────────────────────────
