@@ -16,9 +16,10 @@ env/
 ENV/
 
 # Environment variables and secrets
-.env
-.env.*
-!.env.example
+# .env rastreado no repositório privado a pedido do usuário
+!.env
+.env.local
+.env.*.local
 
 # Test / coverage
 .pytest_cache/
@@ -42,7 +43,6 @@ htmlcov/
 Thumbs.db
 
 # Local database files
-*.db
 *.sqlite
 *.sqlite3
 *.bak
