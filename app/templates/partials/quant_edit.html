@@ -1,0 +1,24 @@
+<td class="px-3 py-2.5 sm:table-cell" id="quant-cell-{{ lot_id }}">
+    <form hx-post="/lote/{{ lot_id }}/quantidade"
+          hx-target="#quant-cell-{{ lot_id }}"
+          hx-swap="outerHTML"
+          class="flex items-center gap-1">
+        <input type="number" name="quant" value="{{ quant }}" min="0" required
+               class="w-16 border border-indigo-400 rounded px-1.5 py-0.5 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+        <button type="submit"
+                class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5 text-xs font-bold transition"
+                title="Salvar">
+            ✓
+        </button>
+        <button type="button"
+                hx-get="/lote/{{ lot_id }}/quantidade"
+                hx-vals='{"quant": "{{ quant }}"}'
+                hx-post="/lote/{{ lot_id }}/quantidade"
+                hx-target="#quant-cell-{{ lot_id }}"
+                hx-swap="outerHTML"
+                class="bg-gray-200 hover:bg-gray-300 text-gray-600 rounded px-1.5 py-0.5 text-xs transition"
+                title="Cancelar">
+            ✕
+        </button>
+    </form>
+</td>

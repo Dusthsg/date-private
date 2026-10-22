@@ -1,0 +1,27 @@
+{# Partial: botões de filtro atualizáveis via OOB ou direto #}
+<div class="flex flex-wrap gap-2" id="filtros" hx-swap-oob="true">
+    {% set filtros = [
+        ('todos',    '📋 Todos'),
+        ('vencidos', '🔴 Vencidos'),
+        ('critico',  '🟠 Crítico (7d)'),
+        ('atencao',  '🟡 Atenção (8-29d)'),
+        ('alerta',   '🟢 Alerta (30-45d)')
+    ] %}
+    {% for key, label in filtros %}
+        <button
+            type="button"
+            hx-get="/?filtro={{ key }}"
+            hx-target="#lot-table-body"
+            hx-include="#current-busca, #current-modo"
+            hx-push-url="true"
+            onclick="document.getElementById('current-filtro').value = '{{ key }}';"
+            class="px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition
+                   {% if filtro == key %}
+                       bg-indigo-600 text-white shadow
+                   {% else %}
+                       bg-gray-200 text-gray-700 hover:bg-gray-300
+                   {% endif %}">
+            {{ label }}
+        </button>
+    {% endfor %}
+</div>

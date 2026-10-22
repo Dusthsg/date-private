@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<!-- Painel de Adição Rápida (Colapsável) -->
+<div class="bg-white rounded-xl shadow-sm p-3 sm:p-4 mb-4 border-l-4 border-emerald-500">
+    <div class="flex items-center justify-between cursor-pointer select-none"
+         onclick="document.getElementById('form-add-lot').classList.toggle('hidden'); document.getElementById('icon-add-toggle').classList.toggle('rotate-180');">
+        <div class="flex items-center gap-2">
+            <span class="text-base font-bold text-gray-800">➕ Cadastrar Novo Lote</span>
+            <span class="text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-medium">Rápido</span>
+        </div>
+        <button type="button" class="text-gray-400 hover:text-gray-600 transition p-1" id="icon-add-toggle">
+            ▼
+        </button>
+    </div>
+
+    <!-- Formulário inline com HTMX -->
+    <form id="form-add-lot"
+          hx-post="/lote"
+          hx-target="#lot-table-body"
+          hx-include="#current-filtro, #current-busca, #current-modo"
+          hx-on::after-request="if(event.detail.successful) { this.reset(); document.getElementById('form-add-msg').innerHTML = '<span class=\'text-emerald-600 text-xs font-semibold\'>✅ Lote cadastrado com sucesso!</span>'; setTimeout(() => document.getElementById('form-add-msg').innerHTML='', 4000); }"
+          class="hidden mt-3 pt-3 border-t border-gray-100">
+        
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2.5">
+            <div class="md:col-span-2">
+                <label class="block text-xs font-semibold text-gray-600 mb-1">Nome do Produto *</label>
+                <input type="text" name="name" required placeholder="Ex: LEITE INTEGRAL 1L"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm uppercase focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-1">Quantidade *</label>
+                <input type="number" name="quant" value="0" min="0" required
+                       class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-1">Preço (R$)</label>
+                <input type="number" step="0.01" name="price" value="0.00" min="0"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-1">Validade *</label>
+                <input type="date" name="date_valid" required
+                       class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+            </div>
+        </div>
+
+        <div class="flex items-center justify-between mt-3">
+            <div id="form-add-msg"></div>
+            <button type="submit"
+                    class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs sm:text-sm font-semibold px-5 py-2 rounded-lg shadow-sm transition">
+                ✓ Salvar Lote
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- Filtros + Busca -->
+<div class="bg-white rounded-xl shadow-sm p-3 sm:p-4 mb-4">
+
+    <!-- Inputs globais de estado mantidos sincronizados com o polling -->
+    <input type="hidden" id="current-filtro" name="filtro" value="{{ filtro }}">
+
+    <!-- Barra de busca com seleção Parcial / Exata -->
+    <form class="mb-3"
+          hx-get="/"
+          hx-target="#lot-table-body"
+          hx-push-url="true"
+          hx-include="#current-filtro, #current-busca, #current-modo">
+        
+        <div class="flex flex-col sm:flex-row gap-2">
+            <input type="text" id="current-busca" name="busca" value="{{ busca }}"
+                   placeholder="🔍  Buscar produto pelo nome..."
+                   class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+
+            <!-- Seletor de Modo de Busca: Parcial vs Exata -->
+            <select id="current-modo" name="modo_busca"
+                    class="border border-gray-300 rounded-lg px-3 py-2 text-xs sm:text-sm bg-gray-50 text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <option value="parcial" {% if modo_busca == 'parcial' %}selected{% endif %}>🔎 Busca Parcial</option>
+                <option value="exata" {% if modo_busca == 'exata' %}selected{% endif %}>🎯 Busca Exata</option>
+            </select>
+
+            <button type="submit"
+                    class="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm">
+                Buscar
+            </button>
+        </div>
+    </form>
+
+    <!-- Filtros por categoria -->
+    {% include "partials/filter_buttons.html" %}
+</div>
+
+<!-- Contador e Status do Banco -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2 px-1">
+    <div class="flex flex-wrap items-center gap-2">
+        <p class="text-sm text-gray-500">
+            <span id="lots-count" class="font-semibold text-gray-700">{{ total }}</span> lote(s) encontrado(s)
+        </p>
+        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800" title="Atualizando em tempo real a cada 5s">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+            Tempo Real
+        </span>
+        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold {% if is_postgres %}bg-blue-100 text-blue-800{% else %}bg-amber-100 text-amber-800{% endif %}"
+              title="Banco de dados em uso">
+            💾 {{ db_name }}
+        </span>
+    </div>
+
+    <div class="flex items-center gap-2">
+        <button hx-post="/export-git"
+                hx-target="#git-status-container"
+                hx-swap="innerHTML"
+                hx-indicator="#git-loading"
+                hx-confirm="Deseja sincronizar o repositório agora?"
+                class="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-semibold px-3 py-2 rounded-lg shadow-sm transition">
+            <span>💾 Sincronizar com Git</span>
+        </button>
+        <span id="git-loading" class="htmx-indicator text-xs text-indigo-600 font-medium animate-pulse">
+            Sincronizando...
+        </span>
+    </div>
+</div>
+
+<!-- Container para mensagens de feedback do Git -->
+<div id="git-status-container"></div>
+
+<!-- Tabela de lotes -->
+<div class="bg-white rounded-xl shadow-sm overflow-x-auto">
+    <table class="w-full text-left text-sm">
+        <thead class="bg-gray-50 text-gray-600 uppercase text-xs tracking-wider">
+            <tr>
+                <th class="px-3 py-3">Lote</th>
+                <th class="px-3 py-3">Produto</th>
+                <th class="px-3 py-3">Qtd</th>
+                <th class="px-3 py-3">Preço</th>
+                <th class="px-3 py-3">Validade</th>
+                <th class="px-3 py-3 hidden md:table-cell">Local</th>
+                <th class="px-3 py-3 hidden md:table-cell">Status</th>
+                <th class="px-3 py-3 text-center">Ação</th>
+            </tr>
+        </thead>
+        <tbody id="lot-table-body"
+               hx-get="/"
+               hx-trigger="every 5s"
+               hx-include="#current-filtro, #current-busca, #current-modo"
+               hx-swap="innerHTML">
+            {% include "partials/lot_rows.html" %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}
