@@ -15,11 +15,10 @@ venv/
 env/
 ENV/
 
-# Environment variables and secrets
-# .env rastreado no repositório privado a pedido do usuário
-!.env
-.env.local
-.env.*.local
+# Environment variables and secrets (protegidos localmente)
+.env
+.env.*
+!.env.example
 
 # Test / coverage
 .pytest_cache/
