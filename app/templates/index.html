@@ -117,10 +117,21 @@
             <span class="w-2 h-2 rounded-full bg-amber-500"></span>
             WebSocket Conectando...
         </span>
-        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold {% if is_postgres %}bg-blue-100 text-blue-800{% else %}bg-amber-100 text-amber-800{% endif %}"
+        <span id="db-badge" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold {% if is_postgres %}bg-blue-100 text-blue-800 border border-blue-200{% else %}bg-amber-100 text-amber-800 border border-amber-200{% endif %}"
               title="Banco de dados em uso">
-            💾 {{ db_name }}
+            💾 <span id="db-label">{{ db_name }}</span>
         </span>
+
+        <!-- Botão Puxar Conexão / Atualizar Cópia Local -->
+        <button type="button"
+                id="btn-pull-db"
+                onclick="triggerPullConnection()"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-white hover:bg-gray-50 active:scale-95 text-gray-700 transition border border-gray-300 shadow-xs cursor-pointer"
+                title="Puxar dados do PostgreSQL para o SQLite local e testar ligação">
+            <span id="pull-spinner" class="hidden animate-spin">⏳</span>
+            <span id="pull-icon">🔄</span>
+            <span id="pull-text">Puxar Conexão</span>
+        </button>
     </div>
 
     <!-- Botão de Ação: Conciliação de Planilha -->
@@ -256,6 +267,20 @@ function initWebSocket() {
                 if (!window.isEditingLot) {
                     performSearch(true);
                 }
+                // Atualiza status do badge de conexão se mudou (reconectou ou puxou cópia)
+                fetch('/api/connection/status').then(r => r.json()).then(st => {
+                    const dbBadge = document.getElementById('db-badge');
+                    const dbLabel = document.getElementById('db-label');
+                    if (dbBadge && dbLabel) {
+                        if (st.postgres_online) {
+                            dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
+                            dbLabel.innerText = "PostgreSQL";
+                        } else {
+                            dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200";
+                            dbLabel.innerText = "SQLite (Cópia Local)";
+                        }
+                    }
+                }).catch(() => {});
             }
         } catch(e) {
             console.error("Erro no processamento do WebSocket:", e);
@@ -342,6 +367,63 @@ function setFiltro(key, evt) {
     });
 
     performSearch(false);
+}
+
+async function triggerPullConnection() {
+    const btn = document.getElementById('btn-pull-db');
+    const spinner = document.getElementById('pull-spinner');
+    const icon = document.getElementById('pull-icon');
+    const text = document.getElementById('pull-text');
+    const dbBadge = document.getElementById('db-badge');
+    const dbLabel = document.getElementById('db-label');
+
+    if (spinner) spinner.classList.remove('hidden');
+    if (icon) icon.classList.add('hidden');
+    if (text) text.innerText = 'Puxando...';
+    if (btn) btn.disabled = true;
+
+    try {
+        const resp = await fetch('/api/connection/pull', { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+            if (text) text.innerText = 'Cópia Puxada!';
+            if (dbBadge && dbLabel) {
+                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
+                dbLabel.innerText = "PostgreSQL";
+            }
+            clientCache.clear();
+            performSearch(true);
+            setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
+        } else {
+            // Se falhou ao puxar, tenta reconectar
+            const reconResp = await fetch('/api/connection/reconnect', { method: 'POST' });
+            const reconData = await reconResp.json();
+            if (reconData.postgres_online) {
+                if (text) text.innerText = 'Reconectado!';
+                if (dbBadge && dbLabel) {
+                    dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
+                    dbLabel.innerText = "PostgreSQL";
+                }
+                clientCache.clear();
+                performSearch(true);
+                setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
+            } else {
+                if (text) text.innerText = 'Modo Local (SQLite)';
+                if (dbBadge && dbLabel) {
+                    dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200";
+                    dbLabel.innerText = "SQLite (Cópia Local)";
+                }
+                setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3500);
+            }
+        }
+    } catch (err) {
+        if (text) text.innerText = 'Erro ao puxar';
+        setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
+    } finally {
+        if (spinner) spinner.classList.add('hidden');
+        if (icon) icon.classList.remove('hidden');
+        if (btn) btn.disabled = false;
+    }
 }
 
 // Inicializa WebSocket

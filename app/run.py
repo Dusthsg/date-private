@@ -21,6 +21,11 @@ from flask_sock import Sock
 from app.db import (
     init_db,
     is_postgres,
+    is_postgres_configured,
+    get_db_status,
+    pull_cloud_to_sqlite,
+    reconnect_postgres,
+    set_on_reconnect_callback,
     query_lots,
     update_lot_quant,
     update_lot_price,
@@ -71,11 +76,14 @@ def broadcast_reload(reason="change"):
                 connected_clients.discard(d)
 
 
-# Inicializa o banco de dados (PostgreSQL ou SQLite)
+# Inicializa o banco de dados (SQLite local primeiro, depois ligação com PostgreSQL)
 try:
     init_db()
 except Exception as e:
     print(f"⚠️ Aviso na inicialização do banco: {e}")
+
+# Registra callback de recarregamento automático nos clientes quando o PostgreSQL reconectar
+set_on_reconnect_callback(lambda: broadcast_reload("reconnected"))
 
 
 @app.context_processor
@@ -84,6 +92,7 @@ def inject_context():
     today = date.today()
     local_ip = get_local_ip()
     port = 5000
+    st = get_db_status()
     return {
         "now_date": today.strftime("%Y-%m-%d"),
         "critico_date": (today + timedelta(days=7)).strftime("%Y-%m-%d"),
@@ -92,8 +101,9 @@ def inject_context():
         "port": port,
         "network_url": f"http://{local_ip}:{port}",
         "local_url": f"http://localhost:{port}",
-        "is_postgres": is_postgres(),
-        "db_name": "PostgreSQL" if is_postgres() else "SQLite",
+        "is_postgres": st["postgres_online"],
+        "db_name": st["db_name"],
+        "last_sync": st["last_sync"],
     }
 
 
@@ -478,6 +488,34 @@ def export_git():
         <button onclick="this.parentElement.remove()" class="text-xs font-bold ml-2">✕</button>
     </div>
     """
+
+
+# ── Rotas de Controle de Conexão e Cópia Local (Pull) ─────────────────────────
+
+@app.route("/api/connection/status", methods=["GET"])
+def connection_status():
+    """Retorna o estado da conexão (PostgreSQL vs cópia local SQLite)."""
+    return jsonify(get_db_status())
+
+
+@app.route("/api/connection/pull", methods=["POST"])
+def connection_pull():
+    """Puxa a cópia mais atualizada do PostgreSQL para o SQLite local e testa conexão."""
+    result = pull_cloud_to_sqlite()
+    if result.get("success"):
+        broadcast_reload("pulled")
+    return jsonify(result)
+
+
+@app.route("/api/connection/reconnect", methods=["POST"])
+def connection_reconnect():
+    """Tenta forçar a reconexão imediata com o PostgreSQL."""
+    ok = reconnect_postgres()
+    st = get_db_status()
+    st["reconnected"] = ok
+    if ok:
+        broadcast_reload("reconnected")
+    return jsonify(st)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

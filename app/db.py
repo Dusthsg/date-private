@@ -42,6 +42,53 @@ _pool_lock = threading.Lock()
 _conn_last_used = {}
 _conn_used_lock = threading.Lock()
 
+# ── Estado de Conexão e Auto-Failover Dual (PostgreSQL <-> SQLite) ─────────────
+_db_status = {
+    "postgres_online": False,
+    "last_sync": None,
+    "last_error": None,
+    "total_products": 0,
+    "total_lots": 0,
+}
+_status_lock = threading.Lock()
+_reconnect_thread = None
+_reconnect_lock = threading.Lock()
+_on_reconnect_callback = None
+
+
+def set_on_reconnect_callback(callback):
+    """Permite que o Flask/WebSocket registre uma função para ser chamada quando o Postgres voltar."""
+    global _on_reconnect_callback
+    _on_reconnect_callback = callback
+
+
+def is_postgres_configured() -> bool:
+    """Verifica se as configurações para PostgreSQL estão presentes no ambiente."""
+    return bool(DATABASE_URL and PSYCOPG2_AVAILABLE)
+
+
+def is_postgres() -> bool:
+    """Retorna True apenas se o PostgreSQL estiver configurado E atualmente online."""
+    if not is_postgres_configured():
+        return False
+    with _status_lock:
+        return _db_status["postgres_online"]
+
+
+def get_db_status() -> dict:
+    """Retorna o snapshot completo de integridade e conectividade do banco."""
+    with _status_lock:
+        online = _db_status["postgres_online"]
+        return {
+            "postgres_configured": is_postgres_configured(),
+            "postgres_online": online,
+            "db_name": "PostgreSQL" if online else "SQLite (Cópia Local)",
+            "last_sync": _db_status["last_sync"],
+            "last_error": _db_status["last_error"],
+            "total_products": _db_status["total_products"],
+            "total_lots": _db_status["total_lots"],
+        }
+
 
 def _mark_conn_used(conn):
     if conn is not None:
@@ -81,10 +128,6 @@ def get_pg_pool():
                     print(f"⚠️ Erro ao inicializar pool Postgres: {e}")
                     _pg_pool = None
     return _pg_pool
-
-
-def is_postgres() -> bool:
-    return bool(DATABASE_URL and PSYCOPG2_AVAILABLE)
 
 
 def _is_connection_healthy(conn) -> bool:
@@ -127,32 +170,134 @@ def _checkout_valid_pg_conn(pool_inst, max_retries=3):
         keepalives_idle=30,
         keepalives_interval=10,
         keepalives_count=5,
+        connect_timeout=8,
     )
     _mark_conn_used(conn)
     return conn, False
 
 
-@contextmanager
-def get_db_cursor(commit=False):
-    """
-    Context manager de alta performance e resiliência:
-    Reutiliza conexões ativas do pool com keepalive e auto-recuperação de timeout da nuvem.
-    """
-    if is_postgres():
-        pool_inst = get_pg_pool()
-        if pool_inst:
-            conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
-        else:
-            conn = psycopg2.connect(
+def trigger_auto_reconnect():
+    """Inicia thread em background para monitorar e religar a conexão com o PostgreSQL assim que acordar."""
+    global _reconnect_thread
+    with _reconnect_lock:
+        if _reconnect_thread is None or not _reconnect_thread.is_alive():
+            _reconnect_thread = threading.Thread(target=_auto_reconnect_worker, daemon=True)
+            _reconnect_thread.start()
+
+
+def _auto_reconnect_worker():
+    """Tenta periodicamente religar com o PostgreSQL até que o servidor volte a responder."""
+    while is_postgres_configured():
+        with _status_lock:
+            if _db_status["postgres_online"]:
+                break
+        time.sleep(12)
+        try:
+            test_conn = psycopg2.connect(
                 DATABASE_URL,
                 keepalives=1,
                 keepalives_idle=30,
                 keepalives_interval=10,
                 keepalives_count=5,
+                connect_timeout=8,
             )
-            _mark_conn_used(conn)
-            is_from_pool = False
+            test_cur = test_conn.cursor()
+            test_cur.execute("SELECT 1;")
+            test_cur.close()
+            test_conn.close()
 
+            print("🟢 PostgreSQL voltou a responder! Restabelecendo conexão e atualizando cópia local...")
+            with _status_lock:
+                _db_status["postgres_online"] = True
+                _db_status["last_error"] = None
+
+            # Atualiza o pool e espelha a cópia para o SQLite
+            get_pg_pool()
+            pull_cloud_to_sqlite()
+            clear_query_cache()
+
+            if _on_reconnect_callback:
+                try:
+                    _on_reconnect_callback()
+                except Exception:
+                    pass
+            break
+        except Exception as e:
+            with _status_lock:
+                _db_status["last_error"] = str(e)
+
+
+def reconnect_postgres() -> bool:
+    """Tenta forçar uma reconexão síncrona com o PostgreSQL."""
+    if not is_postgres_configured():
+        return False
+    try:
+        test_conn = psycopg2.connect(
+            DATABASE_URL,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5,
+            connect_timeout=8,
+        )
+        test_cur = test_conn.cursor()
+        test_cur.execute("SELECT 1;")
+        test_cur.close()
+        test_conn.close()
+
+        with _status_lock:
+            _db_status["postgres_online"] = True
+            _db_status["last_error"] = None
+
+        get_pg_pool()
+        pull_cloud_to_sqlite()
+        clear_query_cache()
+        return True
+    except Exception as e:
+        with _status_lock:
+            _db_status["postgres_online"] = False
+            _db_status["last_error"] = str(e)
+        trigger_auto_reconnect()
+        return False
+
+
+@contextmanager
+def get_db_cursor(commit=False):
+    """
+    Context manager de alta performance, resiliência e auto-failover:
+    Tenta PostgreSQL quando online; se falhar ou estiver offline, cai suavemente para o SQLite local!
+    """
+    use_pg = is_postgres()
+    conn = None
+    is_from_pool = False
+    pool_inst = None
+
+    if use_pg:
+        try:
+            pool_inst = get_pg_pool()
+            if pool_inst:
+                conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
+            else:
+                conn = psycopg2.connect(
+                    DATABASE_URL,
+                    keepalives=1,
+                    keepalives_idle=30,
+                    keepalives_interval=10,
+                    keepalives_count=5,
+                    connect_timeout=8,
+                )
+                _mark_conn_used(conn)
+                is_from_pool = False
+        except Exception as e:
+            print(f"⚠️ PostgreSQL inacessível ({e}), alternando automaticamente para SQLite local...")
+            with _status_lock:
+                _db_status["postgres_online"] = False
+                _db_status["last_error"] = str(e)
+            trigger_auto_reconnect()
+            use_pg = False
+            conn = None
+
+    if use_pg and conn:
         is_broken = False
         try:
             cur = conn.cursor()
@@ -163,6 +308,9 @@ def get_db_cursor(commit=False):
         except Exception as exc:
             if isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError)) or getattr(conn, "closed", 0) != 0:
                 is_broken = True
+                with _status_lock:
+                    _db_status["postgres_online"] = False
+                trigger_auto_reconnect()
             else:
                 try:
                     conn.rollback()
@@ -190,6 +338,7 @@ def get_db_cursor(commit=False):
                 except Exception:
                     pass
     else:
+        # Modo SQLite Local (Offline-first resiliente)
         SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(SQLITE_PATH))
         conn.row_factory = sqlite3.Row
@@ -263,119 +412,287 @@ def clear_query_cache():
         _query_cache.clear()
 
 
-# ── Inicialização do Banco e Índices ──────────────────────────────────────────
-def init_db():
-    """Cria tabelas, extensões e índices otimizados se ainda não existirem."""
-    with get_db_cursor(commit=True) as (cur, db_type):
-        if db_type == "postgres":
-            # Extensão pg_trgm para buscas LIKE/ILIKE em tempo logarítmico
-            try:
-                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
-            except Exception:
-                pass
+# ── Inicialização do Banco, Migrações e Sincronização Dual ────────────────────
 
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS products (
-                    id SERIAL PRIMARY KEY,
-                    name TEXT UNIQUE NOT NULL,
-                    bar_code TEXT UNIQUE
-                );
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS product_lots (
-                    id SERIAL PRIMARY KEY,
-                    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-                    quant INTEGER DEFAULT 0,
-                    price REAL DEFAULT 0.0,
-                    date_valid DATE NOT NULL,
-                    location TEXT DEFAULT 'LOJA',
-                    status TEXT DEFAULT 'NORMAL',
-                    created_at DATE DEFAULT CURRENT_DATE
-                );
-            """)
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid ON product_lots(date_valid);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
+def init_sqlite_db():
+    """Garante que a base SQLite local esteja 100% íntegra, com todas as tabelas e colunas."""
+    SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(SQLITE_PATH))
+    conn.execute("PRAGMA foreign_keys = ON;")
+    cur = conn.cursor()
 
-            # Índice GIN Trigram para acelerar LIKE '%termo%'
-            try:
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name_trgm ON products USING gin (name gin_trgm_ops);")
-            except Exception:
-                pass
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            bar_code TEXT UNIQUE
+        );
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS product_lots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL,
+            quant INTEGER DEFAULT 0,
+            price REAL DEFAULT 0.0,
+            date_valid TEXT NOT NULL,
+            location TEXT DEFAULT 'LOJA',
+            status TEXT DEFAULT 'NORMAL',
+            created_at TEXT DEFAULT (date('now')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid ON product_lots(date_valid);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
 
-            # Garante colunas adicionais
-            cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
-            cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS created_at DATE DEFAULT CURRENT_DATE;")
-            cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
+    # Migrações seguras de colunas em SQLite
+    cur.execute("PRAGMA table_info(products);")
+    p_cols = [col[1] for col in cur.fetchall()]
+    if "bar_code" not in p_cols:
+        cur.execute("ALTER TABLE products ADD COLUMN bar_code TEXT;")
 
-            # Tabela de histórico de movimentações e baixas (Filtro de Lápide)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS stock_movements (
-                    id SERIAL PRIMARY KEY,
-                    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-                    lot_id INTEGER,
-                    action TEXT NOT NULL,
-                    quant INTEGER DEFAULT 0,
-                    date_valid DATE NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_prod_valid ON stock_movements(product_id, date_valid);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at);")
+    cur.execute("PRAGMA table_info(product_lots);")
+    l_cols = [col[1] for col in cur.fetchall()]
+    if "price" not in l_cols:
+        cur.execute("ALTER TABLE product_lots ADD COLUMN price REAL DEFAULT 0.0;")
+    if "created_at" not in l_cols:
+        cur.execute("ALTER TABLE product_lots ADD COLUMN created_at TEXT;")
+        cur.execute("UPDATE product_lots SET created_at = date('now') WHERE created_at IS NULL;")
+    if "updated_at" not in l_cols:
+        cur.execute("ALTER TABLE product_lots ADD COLUMN updated_at TEXT;")
+        cur.execute("UPDATE product_lots SET updated_at = datetime('now', 'localtime') WHERE updated_at IS NULL;")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
 
+    # Tabela de movimentações e filtro de lápide para SQLite
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS stock_movements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL,
+            lot_id INTEGER,
+            action TEXT NOT NULL,
+            quant INTEGER DEFAULT 0,
+            date_valid TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_prod_valid ON stock_movements(product_id, date_valid);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at);")
+
+    conn.commit()
+    conn.close()
+
+
+def init_pg_db():
+    """Garante que a base PostgreSQL remota esteja íntegra com extensões e índices otimizados."""
+    if not is_postgres_configured():
+        return False
+    pool_inst = get_pg_pool()
+    if not pool_inst:
+        return False
+    conn = None
+    try:
+        conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
+        cur = conn.cursor()
+
+        try:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+        except Exception:
+            conn.rollback()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS products (
+                id SERIAL PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                bar_code TEXT UNIQUE
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS product_lots (
+                id SERIAL PRIMARY KEY,
+                product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                quant INTEGER DEFAULT 0,
+                price REAL DEFAULT 0.0,
+                date_valid DATE NOT NULL,
+                location TEXT DEFAULT 'LOJA',
+                status TEXT DEFAULT 'NORMAL',
+                created_at DATE DEFAULT CURRENT_DATE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid ON product_lots(date_valid);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
+
+        try:
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name_trgm ON products USING gin (name gin_trgm_ops);")
+        except Exception:
+            conn.rollback()
+
+        cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
+        cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS created_at DATE DEFAULT CURRENT_DATE;")
+        cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS stock_movements (
+                id SERIAL PRIMARY KEY,
+                product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                lot_id INTEGER,
+                action TEXT NOT NULL,
+                quant INTEGER DEFAULT 0,
+                date_valid DATE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_prod_valid ON stock_movements(product_id, date_valid);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at);")
+
+        conn.commit()
+        cur.close()
+        if is_from_pool and pool_inst:
+            pool_inst.putconn(conn)
         else:
-            cur.execute("PRAGMA foreign_keys = ON;")
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS products (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE NOT NULL,
-                    bar_code TEXT UNIQUE
-                );
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS product_lots (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    product_id INTEGER NOT NULL,
-                    quant INTEGER DEFAULT 0,
-                    price REAL DEFAULT 0.0,
-                    date_valid TEXT NOT NULL,
-                    location TEXT DEFAULT 'LOJA',
-                    status TEXT DEFAULT 'NORMAL',
-                    created_at TEXT DEFAULT (date('now')),
-                    updated_at TEXT DEFAULT (datetime('now', 'localtime')),
-                    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-                );
-            """)
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid ON product_lots(date_valid);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
+            conn.close()
+        return True
+    except Exception as e:
+        print(f"⚠️ Erro ao inicializar PostgreSQL: {e}")
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return False
 
-            cur.execute("PRAGMA table_info(product_lots);")
-            cols = [col[1] for col in cur.fetchall()]
-            if "price" not in cols:
-                cur.execute("ALTER TABLE product_lots ADD COLUMN price REAL DEFAULT 0.0;")
-            if "created_at" not in cols:
-                cur.execute("ALTER TABLE product_lots ADD COLUMN created_at TEXT DEFAULT (date('now'));")
-            if "updated_at" not in cols:
-                cur.execute("ALTER TABLE product_lots ADD COLUMN updated_at TEXT DEFAULT (datetime('now', 'localtime'));")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
 
-            # Tabela de movimentações para SQLite
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS stock_movements (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    product_id INTEGER NOT NULL,
-                    lot_id INTEGER,
-                    action TEXT NOT NULL,
-                    quant INTEGER DEFAULT 0,
-                    date_valid TEXT NOT NULL,
-                    created_at TEXT DEFAULT (datetime('now', 'localtime')),
-                    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-                );
-            """)
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_prod_valid ON stock_movements(product_id, date_valid);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at);")
+def pull_cloud_to_sqlite() -> dict:
+    """
+    Puxa uma cópia integral dos dados do PostgreSQL na nuvem para o SQLite local.
+    Garante que o banco local tenha um espelho idêntico para o servidor rodar offline.
+    """
+    t0 = time.time()
+    if not is_postgres_configured():
+        return {"success": False, "error": "PostgreSQL não configurado no .env"}
+
+    # 1. Garante schema SQLite
+    init_sqlite_db()
+
+    # 2. Busca todos os dados do PostgreSQL
+    try:
+        pool_inst = get_pg_pool()
+        if pool_inst:
+            pg_conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
+        else:
+            pg_conn = psycopg2.connect(
+                DATABASE_URL,
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=5,
+                connect_timeout=8,
+            )
+            is_from_pool = False
+
+        pg_cur = pg_conn.cursor()
+        pg_cur.execute("SELECT id, name, bar_code FROM products;")
+        products = pg_cur.fetchall()
+
+        pg_cur.execute("SELECT id, product_id, quant, price, date_valid::TEXT, location, status, created_at::TEXT, updated_at::TEXT FROM product_lots;")
+        lots = pg_cur.fetchall()
+
+        pg_cur.execute("SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements;")
+        movements = pg_cur.fetchall()
+
+        pg_cur.close()
+        if is_from_pool and pool_inst:
+            pool_inst.putconn(pg_conn)
+        else:
+            pg_conn.close()
+
+    except Exception as e:
+        with _status_lock:
+            _db_status["postgres_online"] = False
+            _db_status["last_error"] = str(e)
+        return {"success": False, "error": f"Falha ao conectar no PostgreSQL: {e}"}
+
+    # 3. Grava atomicamente no SQLite local
+    try:
+        sqlite_conn = sqlite3.connect(str(SQLITE_PATH))
+        sqlite_cur = sqlite_conn.cursor()
+        sqlite_cur.execute("PRAGMA foreign_keys = OFF;")
+        sqlite_cur.execute("BEGIN TRANSACTION;")
+
+        sqlite_cur.execute("DELETE FROM products;")
+        sqlite_cur.executemany("INSERT INTO products (id, name, bar_code) VALUES (?, ?, ?);", products)
+
+        sqlite_cur.execute("DELETE FROM product_lots;")
+        sqlite_cur.executemany("""
+            INSERT INTO product_lots (id, product_id, quant, price, date_valid, location, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, lots)
+
+        sqlite_cur.execute("DELETE FROM stock_movements;")
+        sqlite_cur.executemany("""
+            INSERT INTO stock_movements (id, product_id, lot_id, action, quant, date_valid, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+        """, movements)
+
+        sqlite_conn.commit()
+        sqlite_cur.execute("PRAGMA foreign_keys = ON;")
+        sqlite_conn.close()
+
+        duration = round(time.time() - t0, 2)
+        sync_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        with _status_lock:
+            _db_status["postgres_online"] = True
+            _db_status["last_sync"] = sync_time
+            _db_status["last_error"] = None
+            _db_status["total_products"] = len(products)
+            _db_status["total_lots"] = len(lots)
+
+        clear_query_cache()
+        return {
+            "success": True,
+            "products_count": len(products),
+            "lots_count": len(lots),
+            "movements_count": len(movements),
+            "duration_s": duration,
+            "timestamp": sync_time,
+        }
+    except Exception as e:
+        return {"success": False, "error": f"Falha ao gravar no SQLite local: {e}"}
+
+
+def init_db():
+    """
+    Inicialização resiliente em 2 etapas:
+    1. Primeiro: Garante a base SQLite local íntegra para o servidor poder rodar imediatamente.
+    2. Em seguida: Faz a ligação com o PostgreSQL. Se estiver online, ativa e sincroniza cópia local.
+       Se não estiver online, ativa o auto-reconnect e o servidor roda liso com o SQLite local!
+    """
+    # 1. Primeiro a cópia dos dados em SQL local para o servidor poder rodar
+    init_sqlite_db()
+
+    # 2. Em seguida tenta fazer a ligação com o PostgreSQL
+    if is_postgres_configured():
+        success = False
+        try:
+            success = init_pg_db()
+        except Exception as e:
+            print(f"⚠️ PostgreSQL offline na inicialização: {e}")
+
+        if success:
+            with _status_lock:
+                _db_status["postgres_online"] = True
+            print("🚀 PostgreSQL conectado com sucesso!")
+            # Puxa a cópia mais recente do Postgres para o SQLite em background thread
+            threading.Thread(target=pull_cloud_to_sqlite, daemon=True).start()
+        else:
+            with _status_lock:
+                _db_status["postgres_online"] = False
+            print("⚡ PostgreSQL offline. Servidor rodando com cópia local SQLite (Offline-first).")
+            trigger_auto_reconnect()
 
 
 # ── Consulta Otimizada de Lotes ───────────────────────────────────────────────
