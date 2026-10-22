@@ -106,11 +106,11 @@ def init_db():
         conn.close()
 
 
-def query_lots(filtro: str = "todos", busca: str = "", modo_busca: str = "parcial", limit: int = 100):
+def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwargs):
     """
     Consulta os lotes com suporte a:
     - filtro de data (vencidos, critico, atencao, alerta, todos)
-    - busca por nome (parcial = LIKE %termo%, exata = termo exato)
+    - busca por nome única usando LIKE (%termo%)
     - limite de registros para máxima fluidez
     Retorna: (total_count, lista_de_dicionarios)
     """
@@ -143,20 +143,9 @@ def query_lots(filtro: str = "todos", busca: str = "", modo_busca: str = "parcia
             params.append((today + timedelta(days=45)).strftime("%Y-%m-%d"))
 
         if busca:
-            if db_type == "postgres":
-                if modo_busca == "exata":
-                    where_clauses.append(f"p.name ILIKE {ph}")
-                    params.append(busca)
-                else:
-                    where_clauses.append(f"p.name ILIKE {ph}")
-                    params.append(f"%{busca}%")
-            else:
-                if modo_busca == "exata":
-                    where_clauses.append(f"p.name LIKE {ph}")
-                    params.append(busca)
-                else:
-                    where_clauses.append(f"p.name LIKE {ph}")
-                    params.append(f"%{busca}%")
+            like_op = "ILIKE" if db_type == "postgres" else "LIKE"
+            where_clauses.append(f"p.name {like_op} {ph}")
+            params.append(f"%{busca}%")
 
         where_sql = " AND ".join(where_clauses)
 

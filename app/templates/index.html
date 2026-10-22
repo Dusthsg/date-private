@@ -19,7 +19,7 @@
     <form id="form-add-lot"
           hx-post="/lote"
           hx-target="#lot-table-body"
-          hx-include="#current-filtro, #current-busca, #current-modo"
+          hx-include="#current-filtro, #current-busca"
           hx-on::after-request="if(event.detail.successful) { this.reset(); document.getElementById('form-add-msg').innerHTML = '<span class=\'text-emerald-600 text-xs font-semibold\'>✅ Lote cadastrado com sucesso!</span>'; setTimeout(() => document.getElementById('form-add-msg').innerHTML='', 4000); }"
           class="hidden mt-3 pt-3 border-t border-gray-100">
         
@@ -62,32 +62,44 @@
 <!-- Filtros + Busca -->
 <div class="bg-white rounded-xl shadow-sm p-3 sm:p-4 mb-4">
 
-    <!-- Inputs globais de estado mantidos sincronizados com o polling -->
+    <!-- Inputs globais de estado mantidos sincronizados -->
     <input type="hidden" id="current-filtro" name="filtro" value="{{ filtro }}">
 
-    <!-- Barra de busca com seleção Parcial / Exata -->
+    <!-- Barra de busca única (usando LIKE) -->
     <form class="mb-3"
+          id="search-form"
           hx-get="/"
           hx-target="#lot-table-body"
           hx-push-url="true"
-          hx-include="#current-filtro, #current-busca, #current-modo">
+          hx-include="#current-filtro, #current-busca"
+          onsubmit="event.preventDefault(); submitSearch();">
         
-        <div class="flex flex-col sm:flex-row gap-2">
-            <input type="text" id="current-busca" name="busca" value="{{ busca }}"
-                   placeholder="🔍  Buscar produto pelo nome..."
-                   class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
-
-            <!-- Seletor de Modo de Busca: Parcial vs Exata -->
-            <select id="current-modo" name="modo_busca"
-                    class="border border-gray-300 rounded-lg px-3 py-2 text-xs sm:text-sm bg-gray-50 text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-indigo-400">
-                <option value="parcial" {% if modo_busca == 'parcial' %}selected{% endif %}>🔎 Busca Parcial</option>
-                <option value="exata" {% if modo_busca == 'exata' %}selected{% endif %}>🎯 Busca Exata</option>
-            </select>
-
-            <button type="submit"
-                    class="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm">
-                Buscar
-            </button>
+        <div class="relative flex items-center">
+            <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-gray-400">
+                🔍
+            </span>
+            <input type="text"
+                   id="current-busca"
+                   name="busca"
+                   value="{{ busca }}"
+                   autocomplete="off"
+                   oninput="onSearchInput(this.value)"
+                   placeholder="Buscar produto pelo nome (busca instantânea via LIKE)..."
+                   class="w-full pl-10 pr-24 border border-gray-300 rounded-lg py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 shadow-inner">
+            
+            <div class="absolute inset-y-0 right-0 flex items-center pr-2 gap-1.5">
+                <button type="button"
+                        id="clear-search-btn"
+                        onclick="clearSearch()"
+                        class="text-gray-400 hover:text-gray-600 {% if not busca %}hidden{% endif %} text-xs px-2 py-1 rounded font-bold"
+                        title="Limpar busca">
+                    ✕
+                </button>
+                <button type="submit"
+                        class="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white px-3.5 py-1.5 rounded-md text-xs font-medium transition shadow-sm">
+                    Buscar
+                </button>
+            </div>
         </div>
     </form>
 
@@ -95,15 +107,15 @@
     {% include "partials/filter_buttons.html" %}
 </div>
 
-<!-- Contador e Status do Banco -->
+<!-- Contador e Status do Banco + WebSocket -->
 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2 px-1">
     <div class="flex flex-wrap items-center gap-2">
         <p class="text-sm text-gray-500">
             <span id="lots-count" class="font-semibold text-gray-700">{{ total }}</span> lote(s) encontrado(s)
         </p>
-        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800" title="Atualizando em tempo real a cada 5s">
-            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-            Tempo Real
+        <span id="ws-badge" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800" title="Status da conexão WebSocket">
+            <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+            WebSocket Conectando...
         </span>
         <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold {% if is_postgres %}bg-blue-100 text-blue-800{% else %}bg-amber-100 text-amber-800{% endif %}"
               title="Banco de dados em uso">
@@ -144,14 +156,133 @@
                 <th class="px-3 py-3 text-center">Ação</th>
             </tr>
         </thead>
-        <tbody id="lot-table-body"
-               hx-get="/"
-               hx-trigger="every 5s"
-               hx-include="#current-filtro, #current-busca, #current-modo"
-               hx-swap="innerHTML">
+        <tbody id="lot-table-body">
             {% include "partials/lot_rows.html" %}
         </tbody>
     </table>
 </div>
+
+<!-- Lógica Client-side de WebSocket e Busca em Tempo Real -->
+<script>
+let socket = null;
+let searchDebounceTimer = null;
+
+function initWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    
+    socket = new WebSocket(wsUrl);
+
+    socket.onopen = function() {
+        const badge = document.getElementById('ws-badge');
+        if (badge) {
+            badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800";
+            badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span> ⚡ WebSocket Ativo';
+        }
+    };
+
+    socket.onclose = function() {
+        const badge = document.getElementById('ws-badge');
+        if (badge) {
+            badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800";
+            badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500"></span> WebSocket Reconectando...';
+        }
+        setTimeout(initWebSocket, 2000);
+    };
+
+    socket.onerror = function() {
+        if (socket) socket.close();
+    };
+
+    socket.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'lots_update') {
+                if (window.isEditingLot) return;
+                
+                const tbody = document.getElementById('lot-table-body');
+                if (tbody) {
+                    tbody.innerHTML = data.html;
+                    htmx.process(tbody);
+                }
+                const countEl = document.getElementById('lots-count');
+                if (countEl && data.total !== undefined) {
+                    countEl.innerText = data.total;
+                }
+            } else if (data.type === 'reload') {
+                // Notificação de alteração enviada pelo servidor ou outros clientes
+                if (!window.isEditingLot) {
+                    performSearch();
+                }
+            }
+        } catch(e) {
+            console.error("Erro no processamento do WebSocket:", e);
+        }
+    };
+}
+
+function performSearch() {
+    const busca = document.getElementById('current-busca').value;
+    const filtro = document.getElementById('current-filtro').value;
+
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({
+            action: "search",
+            busca: busca,
+            filtro: filtro
+        }));
+    } else {
+        // Fallback HTMX
+        htmx.ajax('GET', `/?busca=${encodeURIComponent(busca)}&filtro=${encodeURIComponent(filtro)}`, {
+            target: '#lot-table-body',
+            swap: 'innerHTML'
+        });
+    }
+}
+
+function onSearchInput(val) {
+    const clearBtn = document.getElementById('clear-search-btn');
+    if (clearBtn) {
+        clearBtn.classList.toggle('hidden', !val);
+    }
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(performSearch, 180);
+}
+
+function submitSearch() {
+    clearTimeout(searchDebounceTimer);
+    performSearch();
+}
+
+function clearSearch() {
+    const input = document.getElementById('current-busca');
+    input.value = '';
+    onSearchInput('');
+    input.focus();
+}
+
+function setFiltro(key, evt) {
+    if (evt) evt.preventDefault();
+    document.getElementById('current-filtro').value = key;
+    
+    // Atualiza classes ativas dos botões de filtro
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        if (btn.getAttribute('data-filtro') === key) {
+            btn.className = "filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-indigo-600 text-white shadow";
+        } else {
+            btn.className = "filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-gray-200 text-gray-700 hover:bg-gray-300";
+        }
+    });
+
+    performSearch();
+}
+
+// Inicializa WebSocket
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initWebSocket);
+} else {
+    initWebSocket();
+}
+</script>
 
 {% endblock %}

@@ -1,20 +1,22 @@
 """
-Interface web — DateLimit (Edição Privada com Suporte a PostgreSQL e SQLite)
-Flask + HTMX + TailwindCSS.
+Interface web — DateLimit (Edição Privada com Suporte a WebSocket, PostgreSQL e SQLite)
+Flask + WebSocket + HTMX + TailwindCSS.
 
 Como rodar:
     # Com SQLite:
     python -m app.run
 
     # Com PostgreSQL:
-    $env:DATABASE_URL = "postgresql://user:pass@host:5432/dbname"
-    python -m app.run
+    python -m app.run  (carrega automaticamente DATABASE_URL de .env ou .env.local)
 """
 
+import json
 import socket
+import threading
 from pathlib import Path
 from datetime import date, timedelta
 from flask import Flask, render_template, request, jsonify
+from flask_sock import Sock
 
 from app.db import (
     init_db,
@@ -41,8 +43,32 @@ def get_local_ip():
         return "127.0.0.1"
 
 
-# ── App Flask ─────────────────────────────────────────────────────────────────
+# ── App Flask e WebSocket ─────────────────────────────────────────────────────
 app = Flask(__name__)
+sock = Sock(app)
+
+# Clientes WebSocket conectados
+connected_clients = set()
+clients_lock = threading.Lock()
+
+
+def broadcast_reload(reason="change"):
+    """Notifica todos os clientes WebSocket conectados para atualizarem suas telas."""
+    dead_clients = []
+    with clients_lock:
+        clients_copy = list(connected_clients)
+
+    for client in clients_copy:
+        try:
+            client.send(json.dumps({"type": "reload", "reason": reason}))
+        except Exception:
+            dead_clients.append(client)
+
+    if dead_clients:
+        with clients_lock:
+            for d in dead_clients:
+                connected_clients.discard(d)
+
 
 # Inicializa o banco de dados (PostgreSQL ou SQLite)
 try:
@@ -70,26 +96,75 @@ def inject_context():
     }
 
 
-# ── Rotas ─────────────────────────────────────────────────────────────────────
+# ── Canal WebSocket ───────────────────────────────────────────────────────────
+
+@sock.route("/ws")
+def ws_handler(ws):
+    """
+    Canal WebSocket para busca instantânea e sincronização em tempo real entre dispositivos.
+    """
+    with clients_lock:
+        connected_clients.add(ws)
+    try:
+        while True:
+            raw = ws.receive()
+            if raw is None:
+                break
+
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+
+            action = msg.get("action")
+            if action == "search":
+                filtro = msg.get("filtro", "todos")
+                busca = msg.get("busca", "").strip()
+
+                total, lots = query_lots(filtro=filtro, busca=busca, limit=100)
+
+                html = render_template(
+                    "partials/lot_rows.html",
+                    lots=lots,
+                    total=total,
+                    filtro=filtro,
+                    busca=busca
+                )
+
+                ws.send(json.dumps({
+                    "type": "lots_update",
+                    "html": html,
+                    "total": total,
+                    "filtro": filtro,
+                    "busca": busca
+                }))
+            elif action == "ping":
+                ws.send(json.dumps({"type": "pong"}))
+    except Exception:
+        pass
+    finally:
+        with clients_lock:
+            connected_clients.discard(ws)
+
+
+# ── Rotas HTTP (Render inicial + Fallback HTMX) ────────────────────────────────
 
 @app.route("/")
 def index():
-    """Página principal — renderiza a lista com resposta rápida."""
+    """Página principal — renderiza a lista inicial com resposta rápida."""
     filtro = request.args.get("filtro", "todos")
     busca = request.args.get("busca", "").strip()
-    modo_busca = request.args.get("modo_busca", "parcial").strip()  # "parcial" ou "exata"
 
-    total, lots = query_lots(filtro=filtro, busca=busca, modo_busca=modo_busca, limit=100)
+    total, lots = query_lots(filtro=filtro, busca=busca, limit=100)
 
-    # Se for HTMX pedindo só as linhas (partial update)
+    # Se for requisição HTMX pedindo só as linhas
     if request.headers.get("HX-Request"):
         return render_template(
             "partials/lot_rows.html",
             lots=lots,
             total=total,
             filtro=filtro,
-            busca=busca,
-            modo_busca=modo_busca
+            busca=busca
         )
 
     return render_template(
@@ -97,8 +172,7 @@ def index():
         lots=lots,
         total=total,
         filtro=filtro,
-        busca=busca,
-        modo_busca=modo_busca
+        busca=busca
     )
 
 
@@ -135,20 +209,20 @@ def add_lot():
     except Exception as e:
         return f'<div class="text-red-500 text-xs p-2">Erro ao cadastrar lote: {str(e)}</div>', 500
 
-    # Recarrega a tabela e atualiza contadores
+    # Notifica outros clientes via WebSocket em tempo real
+    broadcast_reload("create_lot")
+
+    # Recarrega a tabela para quem enviou o formulário
     filtro = request.form.get("filtro", "todos")
     busca = request.form.get("busca", "").strip()
-    modo_busca = request.form.get("modo_busca", "parcial").strip()
-    total, lots = query_lots(filtro=filtro, busca=busca, modo_busca=modo_busca, limit=100)
+    total, lots = query_lots(filtro=filtro, busca=busca, limit=100)
 
-    # Retorna as novas linhas da tabela
     return render_template(
         "partials/lot_rows.html",
         lots=lots,
         total=total,
         filtro=filtro,
-        busca=busca,
-        modo_busca=modo_busca
+        busca=busca
     )
 
 
@@ -160,7 +234,10 @@ def delete_lot(lot_id: int):
     except Exception as e:
         return f"Erro ao deletar: {str(e)}", 500
 
-    # Retorna string vazia — o HTMX vai remover a <tr> do DOM
+    # Notifica outros clientes conectados via WebSocket
+    broadcast_reload("delete_lot")
+
+    # Retorna string vazia — o HTMX vai remover a <tr> do DOM do cliente atual
     return ""
 
 
@@ -180,6 +257,9 @@ def update_quant(lot_id: int):
     except Exception as e:
         return f"Erro ao salvar: {str(e)}", 500
 
+    # Notifica outros clientes
+    broadcast_reload("update_quant")
+
     return render_template("partials/quant_cell.html", lot={"lot_id": lot_id, "quant": quant})
 
 
@@ -198,6 +278,9 @@ def update_price(lot_id: int):
         update_lot_price(lot_id, price)
     except Exception as e:
         return f"Erro ao salvar: {str(e)}", 500
+
+    # Notifica outros clientes
+    broadcast_reload("update_price")
 
     return render_template("partials/price_cell.html", lot={"lot_id": lot_id, "price": price})
 
@@ -258,7 +341,7 @@ if __name__ == "__main__":
     port = 5000
     db_label = "PostgreSQL" if is_postgres() else "SQLite"
     print("\n" + "=" * 60)
-    print(f"🚀 DateLimit Web rodando com banco [{db_label}]!")
+    print(f"🚀 DateLimit Web rodando com WebSocket e banco [{db_label}]!")
     print(f"👉 Local:   http://localhost:{port}")
     print(f"📱 Celular / Outro dispositivo na rede:")
     print(f"   http://{ip}:{port}")

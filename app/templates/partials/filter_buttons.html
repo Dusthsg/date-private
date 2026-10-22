@@ -10,12 +10,13 @@
     {% for key, label in filtros %}
         <button
             type="button"
+            data-filtro="{{ key }}"
             hx-get="/?filtro={{ key }}"
             hx-target="#lot-table-body"
-            hx-include="#current-busca, #current-modo"
+            hx-include="#current-busca"
             hx-push-url="true"
-            onclick="document.getElementById('current-filtro').value = '{{ key }}';"
-            class="px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition
+            onclick="setFiltro('{{ key }}', event);"
+            class="filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition
                    {% if filtro == key %}
                        bg-indigo-600 text-white shadow
                    {% else %}
