@@ -217,6 +217,7 @@
 <script>
 let socket = null;
 let searchDebounceTimer = null;
+let reloadDebounceTimer = null;
 let currentSearchSeq = 0;
 const clientCache = new Map();
 
@@ -231,6 +232,14 @@ function initWebSocket() {
         if (badge) {
             badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800";
             badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span> ⚡ WebSocket Ativo';
+        }
+        // Heartbeat periódico (a cada 20s) para manter a conexão WebSocket viva no celular / Termux
+        if (!window._wsHeartbeat) {
+            window._wsHeartbeat = setInterval(() => {
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ action: "ping" }));
+                }
+            }, 20000);
         }
     };
 
@@ -262,25 +271,28 @@ function initWebSocket() {
                 renderLotsData(data.html, data.total);
 
             } else if (data.type === 'reload') {
-                // Invalida cache local do cliente quando há qualquer alteração no banco
+                // Invalida cache local do cliente e recarrega com debounce inteligente
                 clientCache.clear();
-                if (!window.isEditingLot) {
-                    performSearch(true);
-                }
-                // Atualiza status do badge de conexão se mudou (reconectou ou puxou cópia)
-                fetch('/api/connection/status').then(r => r.json()).then(st => {
-                    const dbBadge = document.getElementById('db-badge');
-                    const dbLabel = document.getElementById('db-label');
-                    if (dbBadge && dbLabel) {
-                        if (st.postgres_online) {
-                            dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
-                            dbLabel.innerText = "PostgreSQL";
-                        } else {
-                            dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200";
-                            dbLabel.innerText = "SQLite (Cópia Local)";
-                        }
+                clearTimeout(reloadDebounceTimer);
+                reloadDebounceTimer = setTimeout(() => {
+                    if (!window.isEditingLot) {
+                        performSearch(true);
                     }
-                }).catch(() => {});
+                    // Atualiza status do badge de conexão se mudou (reconectou ou puxou cópia)
+                    fetch('/api/connection/status').then(r => r.json()).then(st => {
+                        const dbBadge = document.getElementById('db-badge');
+                        const dbLabel = document.getElementById('db-label');
+                        if (dbBadge && dbLabel) {
+                            if (st.postgres_online) {
+                                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
+                                dbLabel.innerText = "PostgreSQL";
+                            } else {
+                                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200";
+                                dbLabel.innerText = "SQLite (Cópia Local)";
+                            }
+                        }
+                    }).catch(() => {});
+                }, 120);
             }
         } catch(e) {
             console.error("Erro no processamento do WebSocket:", e);
@@ -336,9 +348,22 @@ function onSearchInput(val) {
     if (clearBtn) {
         clearBtn.classList.toggle('hidden', !val);
     }
+
+    // Feedback visual instantâneo (0ms) nas linhas já carregadas na tela
+    const q = val.trim().toUpperCase();
+    const rows = document.querySelectorAll('#lot-table-body tr');
+    if (rows.length > 0 && q) {
+        rows.forEach(tr => {
+            const text = tr.innerText.toUpperCase();
+            tr.style.display = text.includes(q) ? '' : 'none';
+        });
+    } else if (!q) {
+        rows.forEach(tr => tr.style.display = '');
+    }
+
     clearTimeout(searchDebounceTimer);
-    // Debounce reduzido para 100ms para resposta ultra veloz
-    searchDebounceTimer = setTimeout(() => performSearch(false), 100);
+    // Debounce balanceado (220ms) para resposta ágil sem sobrecarregar a rede
+    searchDebounceTimer = setTimeout(() => performSearch(false), 220);
 }
 
 function submitSearch() {
