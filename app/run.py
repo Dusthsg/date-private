@@ -309,17 +309,17 @@ def import_planilha():
     from app.auditor_import import audit_and_import_spreadsheet
 
     if "file" not in request.files:
-        return '<div class="text-red-500 text-xs p-3 bg-red-50 border border-red-200 rounded-lg">❌ Nenhum arquivo enviado.</div>', 400
+        return '<div class="text-red-600 text-sm font-semibold p-4 bg-red-50 border border-red-300 rounded-xl shadow-sm">❌ Nenhum arquivo enviado. Selecione uma planilha (.xlsx, .xls ou .csv).</div>', 200
 
     uploaded_file = request.files["file"]
     if not uploaded_file.filename:
-        return '<div class="text-red-500 text-xs p-3 bg-red-50 border border-red-200 rounded-lg">❌ Nenhum arquivo selecionado.</div>', 400
+        return '<div class="text-red-600 text-sm font-semibold p-4 bg-red-50 border border-red-300 rounded-xl shadow-sm">❌ Nenhum arquivo selecionado. Escolha um arquivo para importar.</div>', 200
 
     try:
         content = uploaded_file.read()
         res = audit_and_import_spreadsheet(content, uploaded_file.filename)
     except Exception as e:
-        return f'<div class="text-red-600 text-xs p-3 bg-red-50 border border-red-200 rounded-lg">❌ Erro ao auditar e importar planilha: {str(e)}</div>', 400
+        return f'<div class="text-red-700 text-sm p-4 bg-red-50 border border-red-300 rounded-xl shadow-sm leading-relaxed"><strong>❌ Falha na importação:</strong><br><span class="text-xs font-mono mt-1 block">{str(e)}</span></div>', 200
 
     # Notifica todos os aparelhos conectados via WebSocket para atualizar a tela na hora
     broadcast_reload("planilha_importada")

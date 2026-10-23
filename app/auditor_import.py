@@ -37,43 +37,137 @@ def find_column(df, candidates):
     return None
 
 
+PROD_CANDIDATES = [
+    "Produto", "Descricao", "Nome", "Item", "Mercadoria", "Desc",
+    "Descricao do Produto", "Nome do Produto", "Prod", "Produto Descricao",
+    "Descricao Reduzida", "Descricao_Produto", "Desc_Produto", "Dsc_Produto",
+    "Produto/Descricao", "Descricao Produto"
+]
+
+VALID_CANDIDATES = [
+    "Validade", "Vencimento", "Data Validade", "Dt Validade", "Data",
+    "Vencto", "Dt Vencto", "Dt_Vencto", "Dt_Validade", "Data Vencimento",
+    "Data_Vencimento", "Dt.Validade", "Dt.Vencimento", "Val", "Data_Val",
+    "Data_Vencto", "Dt. Vencto"
+]
+
+CODE_CANDIDATES = [
+    "Codigo", "Cod", "EAN", "Codigo Barras", "Bar_code", "Cod Produto",
+    "Cod_Produto", "Cod Barra", "Cod_Barra", "CodBar", "GTIN",
+    "Codigo de Barras", "Plu", "Cod.Barra", "Cod_Barras"
+]
+
+QUANT_CANDIDATES = [
+    "Quantidade", "Qtd", "Qtde", "Estoque", "Saldo", "Fisico", "Quant",
+    "Qtd Estoque", "Saldo Atual", "Qtd_Estoque", "Qtd_Loja", "Loja",
+    "Galpao", "Qtd_Fisica"
+]
+
+
+def read_spreadsheet_dataframe(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """
+    Lê com tolerância máxima arquivos .xlsx, .xls legados, CSVs e exportações de ERP
+    (que frequentemente exportam tabelas HTML ou CSV com extensão .xls).
+    """
+    filename_lower = filename.lower()
+    file_io = io.BytesIO(file_bytes)
+
+    # 1. Se o arquivo terminar com .csv
+    if filename_lower.endswith(".csv"):
+        for sep in [";", ",", "\t", "|"]:
+            for enc in ["utf-8-sig", "utf-8", "latin1", "cp1252"]:
+                try:
+                    file_io.seek(0)
+                    df = pd.read_csv(file_io, sep=sep, encoding=enc)
+                    if len(df.columns) > 1 and len(df) > 0:
+                        return df
+                except Exception:
+                    pass
+        file_io.seek(0)
+        return pd.read_csv(file_io, sep=None, engine="python", encoding="latin1")
+
+    # 2. Arquivos Excel (.xlsx ou .xls)
+    last_error = None
+
+    # Tentativa A: leitura padrão do Pandas
+    try:
+        file_io.seek(0)
+        return pd.read_excel(file_io)
+    except Exception as e:
+        last_error = e
+
+    # Tentativa B: se for .xls antigo, força a engine xlrd
+    if filename_lower.endswith(".xls"):
+        try:
+            file_io.seek(0)
+            import xlrd
+            return pd.read_excel(file_io, engine="xlrd")
+        except Exception as e:
+            last_error = e
+
+    # Tentativa C: Tabela HTML salva como .xls (muito comum em ERPs de supermercado)
+    try:
+        file_io.seek(0)
+        tables = pd.read_html(file_io)
+        if tables and len(tables[0]) > 0:
+            return tables[0]
+    except Exception:
+        pass
+
+    # Tentativa D: Texto delimitado / CSV salvo com extensão .xls
+    for sep in [";", ",", "\t"]:
+        for enc in ["utf-8-sig", "utf-8", "latin1", "cp1252"]:
+            try:
+                file_io.seek(0)
+                df = pd.read_csv(file_io, sep=sep, encoding=enc)
+                if len(df.columns) > 1 and len(df) > 0:
+                    return df
+            except Exception:
+                pass
+
+    raise ValueError(
+        f"Não foi possível abrir o arquivo '{filename}'. "
+        f"Caso seja um .xls antigo, você pode salvá-lo como Pasta de Trabalho do Excel (.xlsx) ou CSV. "
+        f"(Detalhe técnico: {last_error})"
+    )
+
+
 def audit_and_import_spreadsheet(file_bytes: bytes, filename: str) -> dict:
     """
     Executa a conciliação linha por linha da planilha enviada.
     Retorna estatísticas detalhadas e log dos itens auditados.
     """
-    filename_lower = filename.lower()
-    file_io = io.BytesIO(file_bytes)
-
-    # 1. Leitura do arquivo (Excel ou CSV)
-    try:
-        if filename_lower.endswith(".csv"):
-            try:
-                df = pd.read_csv(file_io, sep=";", encoding="utf-8")
-                if len(df.columns) <= 1:
-                    file_io.seek(0)
-                    df = pd.read_csv(file_io, sep=",", encoding="utf-8")
-            except UnicodeDecodeError:
-                file_io.seek(0)
-                df = pd.read_csv(file_io, sep=";", encoding="latin1")
-        else:
-            df = pd.read_excel(file_io)
-    except Exception as e:
-        raise ValueError(f"Não foi possível ler o arquivo de planilha: {str(e)}")
+    df = read_spreadsheet_dataframe(file_bytes, filename)
 
     if df.empty:
         raise ValueError("A planilha enviada está vazia.")
 
     # 2. Identificação de colunas essenciais
-    col_prod = find_column(df, ["Produto", "Descricao", "Nome", "Item", "Descricao do Produto"])
-    col_valid = find_column(df, ["Validade", "Vencimento", "Data Validade", "Dt Validade", "Data"])
-    col_code = find_column(df, ["Codigo", "Cod", "EAN", "Codigo Barras", "Bar_code", "Cod Produto"])
-    col_quant = find_column(df, ["Quantidade", "Qtd", "Estoque", "Saldo", "Fisico", "Quant"])
+    col_prod = find_column(df, PROD_CANDIDATES)
+    col_valid = find_column(df, VALID_CANDIDATES)
+
+    # Se não localizou, tenta detectar se o cabeçalho real está em alguma linha abaixo
+    if not col_prod or not col_valid:
+        for i in range(min(15, len(df))):
+            row_str = " ".join([normalize_col_name(v) for v in df.iloc[i].dropna().astype(str)])
+            has_p = any(c in row_str for c in ["PRODUT", "DESCRIC", "NOME", "MERCAD", "ITEM"])
+            has_v = any(c in row_str for c in ["VALID", "VENCT", "VENCIM", "DATA"])
+            if has_p and has_v:
+                df.columns = df.iloc[i].astype(str).str.strip()
+                df = df.iloc[i + 1:].reset_index(drop=True)
+                col_prod = find_column(df, PROD_CANDIDATES)
+                col_valid = find_column(df, VALID_CANDIDATES)
+                break
+
+    col_code = find_column(df, CODE_CANDIDATES)
+    col_quant = find_column(df, QUANT_CANDIDATES)
 
     if not col_prod:
-        raise ValueError("Coluna de Produto/Descrição não encontrada na planilha. Verifique o cabeçalho.")
+        cols_found = ", ".join([str(c) for c in df.columns[:8]])
+        raise ValueError(f"Coluna de Produto/Descrição não identificada. Colunas encontradas: [{cols_found}]")
     if not col_valid:
-        raise ValueError("Coluna de Validade/Vencimento não encontrada na planilha. Verifique o cabeçalho.")
+        cols_found = ", ".join([str(c) for c in df.columns[:8]])
+        raise ValueError(f"Coluna de Validade/Vencimento não identificada. Colunas encontradas: [{cols_found}]")
 
     # 3. Limpeza inicial de linhas nulas
     df_clean = df.dropna(subset=[col_prod, col_valid]).copy()

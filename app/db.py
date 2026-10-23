@@ -33,7 +33,60 @@ try:
     from psycopg2 import pool
     PSYCOPG2_AVAILABLE = True
 except ImportError:
+    psycopg2 = None
+    pool = None
     PSYCOPG2_AVAILABLE = False
+
+try:
+    import pg8000.dbapi
+    import ssl
+    import urllib.parse
+    import json
+    PG8000_AVAILABLE = True
+except ImportError:
+    pg8000 = None
+    PG8000_AVAILABLE = False
+
+
+def _connect_pg_direct(timeout=8):
+    """
+    Estabelece uma conexão direta com o PostgreSQL.
+    Usa psycopg2 se disponível; fallback para pg8000 (driver 100% Python para Android/Termux).
+    """
+    if PSYCOPG2_AVAILABLE:
+        return psycopg2.connect(
+            DATABASE_URL,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5,
+            connect_timeout=timeout,
+        )
+    elif PG8000_AVAILABLE:
+        p = urllib.parse.urlparse(DATABASE_URL)
+        ssl_ctx = ssl.create_default_context()
+        return pg8000.dbapi.connect(
+            user=p.username,
+            password=p.password,
+            host=p.hostname,
+            port=p.port or 5432,
+            database=p.path.lstrip("/"),
+            ssl_context=ssl_ctx,
+            timeout=timeout,
+        )
+    else:
+        raise RuntimeError("Nenhum driver PostgreSQL (psycopg2 ou pg8000) disponível.")
+
+
+def _is_pg_conn_closed(conn) -> bool:
+    """Verifica se o objeto de conexão do PostgreSQL (psycopg2 ou pg8000) está fechado."""
+    if conn is None:
+        return True
+    if hasattr(conn, "closed"):
+        return conn.closed != 0
+    if hasattr(conn, "_sock"):
+        return conn._sock is None
+    return False
 
 
 # ── Pool de Conexões PostgreSQL ───────────────────────────────────────────────
@@ -64,7 +117,7 @@ def set_on_reconnect_callback(callback):
 
 def is_postgres_configured() -> bool:
     """Verifica se as configurações para PostgreSQL estão presentes no ambiente."""
-    return bool(DATABASE_URL and PSYCOPG2_AVAILABLE)
+    return bool(DATABASE_URL and (PSYCOPG2_AVAILABLE or PG8000_AVAILABLE))
 
 
 def is_postgres() -> bool:
@@ -135,7 +188,7 @@ _sync_lock = threading.Lock()
 
 def _is_connection_healthy(conn) -> bool:
     """Verifica se a conexão PostgreSQL ainda está ativa e responsiva sem atrasar requisições."""
-    if conn is None or getattr(conn, "closed", 1) != 0:
+    if conn is None or _is_pg_conn_closed(conn):
         return False
     # Conexões usadas nos últimos 3 minutos (180s) dispensam ping (keepalive TCP mantém o túnel ativo)
     last_used = _get_conn_last_used(conn)
@@ -167,14 +220,7 @@ def _checkout_valid_pg_conn(pool_inst, max_retries=3):
         except Exception:
             pass
     # Se todas as conexões do pool estavam inativas, cria uma nova diretamente
-    conn = psycopg2.connect(
-        DATABASE_URL,
-        keepalives=1,
-        keepalives_idle=30,
-        keepalives_interval=10,
-        keepalives_count=5,
-        connect_timeout=8,
-    )
+    conn = _connect_pg_direct(timeout=8)
     _mark_conn_used(conn)
     return conn, False
 
@@ -196,14 +242,7 @@ def _auto_reconnect_worker():
                 break
         time.sleep(12)
         try:
-            test_conn = psycopg2.connect(
-                DATABASE_URL,
-                keepalives=1,
-                keepalives_idle=30,
-                keepalives_interval=10,
-                keepalives_count=5,
-                connect_timeout=8,
-            )
+            test_conn = _connect_pg_direct(timeout=8)
             test_cur = test_conn.cursor()
             test_cur.execute("SELECT 1;")
             test_cur.close()
@@ -235,14 +274,7 @@ def reconnect_postgres() -> bool:
     if not is_postgres_configured():
         return False
     try:
-        test_conn = psycopg2.connect(
-            DATABASE_URL,
-            keepalives=1,
-            keepalives_idle=30,
-            keepalives_interval=10,
-            keepalives_count=5,
-            connect_timeout=8,
-        )
+        test_conn = _connect_pg_direct(timeout=8)
         test_cur = test_conn.cursor()
         test_cur.execute("SELECT 1;")
         test_cur.close()
@@ -281,14 +313,7 @@ def get_db_cursor(commit=False):
             if pool_inst:
                 conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
             else:
-                conn = psycopg2.connect(
-                    DATABASE_URL,
-                    keepalives=1,
-                    keepalives_idle=30,
-                    keepalives_interval=10,
-                    keepalives_count=5,
-                    connect_timeout=8,
-                )
+                conn = _connect_pg_direct(timeout=8)
                 _mark_conn_used(conn)
                 is_from_pool = False
         except Exception as e:
@@ -309,7 +334,13 @@ def get_db_cursor(commit=False):
                 conn.commit()
             _mark_conn_used(conn)
         except Exception as exc:
-            if isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError)) or getattr(conn, "closed", 0) != 0:
+            is_conn_err = _is_pg_conn_closed(conn)
+            if PSYCOPG2_AVAILABLE and isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+                is_conn_err = True
+            if PG8000_AVAILABLE and isinstance(exc, (pg8000.dbapi.OperationalError, pg8000.dbapi.InterfaceError)):
+                is_conn_err = True
+
+            if is_conn_err:
                 is_broken = True
                 with _status_lock:
                     _db_status["postgres_online"] = False
@@ -367,13 +398,7 @@ def get_connection():
         if p:
             conn, _ = _checkout_valid_pg_conn(p)
             return conn, "postgres_pool"
-        conn = psycopg2.connect(
-            DATABASE_URL,
-            keepalives=1,
-            keepalives_idle=30,
-            keepalives_interval=10,
-            keepalives_count=5,
-        )
+        conn = _connect_pg_direct(timeout=8)
         _mark_conn_used(conn)
         return conn, "postgres"
     else:
@@ -500,11 +525,14 @@ def init_pg_db():
     if not is_postgres_configured():
         return False
     pool_inst = get_pg_pool()
-    if not pool_inst:
-        return False
     conn = None
+    is_from_pool = False
     try:
-        conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
+        if pool_inst:
+            conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
+        else:
+            conn = _connect_pg_direct(timeout=8)
+            is_from_pool = False
         cur = conn.cursor()
 
         try:
@@ -607,14 +635,7 @@ def pull_cloud_to_sqlite() -> dict:
         if pool_inst:
             pg_conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
         else:
-            pg_conn = psycopg2.connect(
-                DATABASE_URL,
-                keepalives=1,
-                keepalives_idle=30,
-                keepalives_interval=10,
-                keepalives_count=5,
-                connect_timeout=8,
-            )
+            pg_conn = _connect_pg_direct(timeout=8)
             is_from_pool = False
 
         pg_cur = pg_conn.cursor()
@@ -625,9 +646,23 @@ def pull_cloud_to_sqlite() -> dict:
                 COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves;
         """)
         raw_row = pg_cur.fetchone()
-        products = raw_row[0] if raw_row else []
-        lots = raw_row[1] if raw_row else []
-        movements = raw_row[2] if raw_row else []
+
+        def _parse_json_col(col_val):
+            if not col_val:
+                return []
+            if isinstance(col_val, str):
+                try:
+                    import json
+                    return json.loads(col_val)
+                except Exception:
+                    return []
+            if isinstance(col_val, list):
+                return col_val
+            return []
+
+        products = _parse_json_col(raw_row[0]) if raw_row else []
+        lots = _parse_json_col(raw_row[1]) if raw_row else []
+        movements = _parse_json_col(raw_row[2]) if raw_row else []
 
         pg_cur.close()
         if is_from_pool and pool_inst:
