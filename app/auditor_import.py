@@ -9,6 +9,7 @@ Implementa a conciliação linha por linha com base no raciocínio em 3 pergunta
 
 import io
 import re
+import time
 from datetime import datetime, date
 import pandas as pd
 
@@ -222,18 +223,70 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
         with get_db_cursor(commit=True) as (cur, db_type):
             ph = "%s" if db_type == "postgres" else "?"
 
+            yield {
+                "type": "progress",
+                "percent": 15,
+                "stage": "Carregando catálogo e lotes para reconciliação ultrarrápida em memória...",
+                "current": 0,
+                "total": total_rows,
+                "stats": dict(stats),
+            }
+
+            # ── 1 ÚNICO roundtrip: Carrega todos os produtos, lápides e lotes em memória ──
+            cur.execute("SELECT id, name, bar_code FROM products;")
+            all_products = cur.fetchall()
+
+            cur.execute(
+                "SELECT product_id, date_valid::TEXT FROM stock_movements WHERE action = 'BAIXA';" if db_type == "postgres"
+                else "SELECT product_id, date_valid FROM stock_movements WHERE action = 'BAIXA';"
+            )
+            all_tombstones = cur.fetchall()
+
+            cur.execute(
+                "SELECT id, product_id, quant, location, date_valid::TEXT FROM product_lots;" if db_type == "postgres"
+                else "SELECT id, product_id, quant, location, date_valid FROM product_lots;"
+            )
+            all_lots = cur.fetchall()
+
+            # Mapeamentos O(1) de altíssima velocidade
+            prod_by_code = {}
+            prod_by_name = {}
+            for p in all_products:
+                p_id = p[0]
+                p_name = str(p[1]).strip().upper()
+                p_code = str(p[2]).strip() if p[2] else None
+                prod_by_name[p_name] = p_id
+                if p_code:
+                    prod_by_code[p_code] = p_id
+
+            tombstone_set = set()
+            for t in all_tombstones:
+                tombstone_set.add((t[0], str(t[1])[:10]))
+
+            lots_by_key = {}
+            for l in all_lots:
+                key = (l[1], str(l[4])[:10])
+                if key not in lots_by_key:
+                    lots_by_key[key] = []
+                lots_by_key[key].append({
+                    "id": l[0],
+                    "quant": l[2] or 0,
+                    "location": str(l[3] or "LOJA").upper()
+                })
+
+            last_emit_time = 0
+            last_emit_pct = -1
+
             for idx, (_, row) in enumerate(df_clean.iterrows(), start=1):
                 raw_prod = str(row[col_prod]).strip()
                 raw_valid = row[col_valid]
                 raw_code = str(row[col_code]).strip() if col_code and pd.notna(row[col_code]) else None
-                
-                # Limpa código de barras removendo decimais (ex: 7000646.0 -> 7000646)
+
                 if raw_code and raw_code.endswith(".0"):
                     raw_code = raw_code[:-2]
                 if raw_code == "nan" or raw_code == "":
                     raw_code = None
 
-                # Converte data de validade com segurança (suporte nativo ao padrão brasileiro DD/MM/AAAA)
                 try:
                     date_parsed = pd.to_datetime(raw_valid, errors="coerce", dayfirst=True)
                     if pd.isna(date_parsed):
@@ -246,7 +299,6 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
                     stats["erros"] += 1
                     continue
 
-                # Quantidade da planilha (default 0)
                 sheet_quant = 0
                 if col_quant and pd.notna(row[col_quant]):
                     try:
@@ -254,44 +306,37 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
                     except (ValueError, TypeError):
                         sheet_quant = 0
 
-                # ── Passo A: Localiza ou Cadastra o Produto ────────────────────────
+                # ── Passo A: Localiza ou Cadastra o Produto via Hashmap O(1) ──────
+                prod_key = raw_prod.upper()
                 product_id = None
-                if raw_code:
-                    cur.execute(f"SELECT id, name FROM products WHERE bar_code = {ph} LIMIT 1", (raw_code,))
-                    p_match = cur.fetchone()
-                    if p_match:
-                        product_id = p_match[0]
+                if raw_code and raw_code in prod_by_code:
+                    product_id = prod_by_code[raw_code]
+                elif prod_key in prod_by_name:
+                    product_id = prod_by_name[prod_key]
+                    if raw_code and raw_code not in prod_by_code:
+                        cur.execute(f"UPDATE products SET bar_code = {ph} WHERE id = {ph}", (raw_code, product_id))
+                        prod_by_code[raw_code] = product_id
 
                 if not product_id:
-                    cur.execute(f"SELECT id FROM products WHERE name = {ph} LIMIT 1", (raw_prod,))
-                    p_match = cur.fetchone()
-                    if p_match:
-                        product_id = p_match[0]
-                        if raw_code:
-                            cur.execute(f"UPDATE products SET bar_code = {ph} WHERE id = {ph}", (raw_code, product_id))
+                    if db_type == "postgres":
+                        cur.execute(
+                            f"INSERT INTO products (name, bar_code) VALUES ({ph}, {ph}) RETURNING id",
+                            (raw_prod, raw_code)
+                        )
+                        product_id = cur.fetchone()[0]
                     else:
-                        if db_type == "postgres":
-                            cur.execute(
-                                f"INSERT INTO products (name, bar_code) VALUES ({ph}, {ph}) RETURNING id",
-                                (raw_prod, raw_code)
-                            )
-                            product_id = cur.fetchone()[0]
-                        else:
-                            cur.execute(
-                                f"INSERT INTO products (name, bar_code) VALUES ({ph}, {ph})",
-                                (raw_prod, raw_code)
-                            )
-                            product_id = cur.lastrowid
+                        cur.execute(
+                            f"INSERT INTO products (name, bar_code) VALUES ({ph}, {ph})",
+                            (raw_prod, raw_code)
+                        )
+                        product_id = cur.lastrowid
 
-                # ── Pergunta 1: Esse lote já foi baixado no chão? (Filtro de Lápide) ─
-                cur.execute(
-                    f"""SELECT id, created_at FROM stock_movements 
-                        WHERE product_id = {ph} AND date_valid = {ph} AND action = 'BAIXA' 
-                        LIMIT 1""",
-                    (product_id, valid_str)
-                )
-                foi_baixado = cur.fetchone()
-                if foi_baixado:
+                    prod_by_name[prod_key] = product_id
+                    if raw_code:
+                        prod_by_code[raw_code] = product_id
+
+                # ── Pergunta 1: Filtro de Lápide via Set O(1) ─────────────────────
+                if (product_id, valid_str) in tombstone_set:
                     stats["bloqueados_zumbi"] += 1
                     audit_logs.append({
                         "produto": raw_prod,
@@ -300,17 +345,12 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
                         "detalhe": "Item Zumbi bloqueado: já havia sido baixado no chão da loja."
                     })
                 else:
-                    # ── Pergunta 2: Esse lote já existe no meu banco local? ────────────
-                    cur.execute(
-                        f"""SELECT id, quant, location FROM product_lots 
-                            WHERE product_id = {ph} AND date_valid = {ph} 
-                            ORDER BY id ASC""",
-                        (product_id, valid_str)
-                    )
-                    lotes_locais = cur.fetchall()
+                    # ── Pergunta 2: Esse lote já existe no banco? via Hashmap O(1) ───
+                    lot_key = (product_id, valid_str)
+                    lotes_locais = lots_by_key.get(lot_key, [])
 
                     if not lotes_locais:
-                        # NÃO EXISTE -> Remessa Nova (Entra direto no GALPÃO)
+                        # Remessa Nova no GALPÃO
                         if db_type == "postgres":
                             cur.execute(
                                 f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at, updated_at)
@@ -333,6 +373,15 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
                             (product_id, novo_id, sheet_quant, valid_str)
                         )
 
+                        # Atualiza hashmap em memória para próximas linhas com mesmo lote
+                        if lot_key not in lots_by_key:
+                            lots_by_key[lot_key] = []
+                        lots_by_key[lot_key].append({
+                            "id": novo_id,
+                            "quant": sheet_quant,
+                            "location": "GALPAO"
+                        })
+
                         stats["novos_lotes"] += 1
                         audit_logs.append({
                             "produto": raw_prod,
@@ -343,20 +392,21 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
 
                     else:
                         # JÁ EXISTE NO BANCO LOCAL
-                        total_local_quant = sum((r[1] or 0) for r in lotes_locais)
+                        total_local_quant = sum((item["quant"] or 0) for item in lotes_locais)
 
                         # ── Pergunta 3: A quantidade mudou? ───────────────────────────
                         if sheet_quant > total_local_quant:
                             delta = sheet_quant - total_local_quant
-                            lote_galpao = next((r for r in lotes_locais if str(r[2]).upper() == "GALPAO"), None)
+                            lote_galpao = next((item for item in lotes_locais if item["location"] == "GALPAO"), None)
 
                             if lote_galpao:
-                                galpao_id = lote_galpao[0]
+                                galpao_id = lote_galpao["id"]
                                 now_val = "CURRENT_TIMESTAMP" if db_type == "postgres" else "datetime('now', 'localtime')"
                                 cur.execute(
                                     f"UPDATE product_lots SET quant = quant + {ph}, updated_at = {now_val} WHERE id = {ph}",
                                     (delta, galpao_id)
                                 )
+                                lote_galpao["quant"] += delta
                                 target_lot_id = galpao_id
                             else:
                                 if db_type == "postgres":
@@ -375,6 +425,12 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
                                     )
                                     target_lot_id = cur.lastrowid
 
+                                lotes_locais.append({
+                                    "id": target_lot_id,
+                                    "quant": delta,
+                                    "location": "GALPAO"
+                                })
+
                             cur.execute(
                                 f"""INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid)
                                     VALUES ({ph}, {ph}, 'AJUSTE_DELTA', {ph}, {ph})""",
@@ -388,16 +444,18 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
                                 "tipo": "AJUSTE_DELTA",
                                 "detalhe": f"Divergência (Planilha {sheet_quant} > Loja {total_local_quant}): reforço de +{delta} un no GALPÃO."
                             })
-
                         else:
                             stats["inalterados"] += 1
 
-                # Emissão de progresso proporcional (12% a 95%)
-                percent = int(12 + (idx / total_rows) * 83)
-                if total_rows <= 150 or idx % max(1, total_rows // 80) == 0 or idx == total_rows:
+                # Emissão de progresso com throttle inteligente (máx 25 updates/segundo para suavidade total)
+                pct = int(18 + (idx / total_rows) * 78)
+                now_ts = time.time()
+                if (now_ts - last_emit_time >= 0.04 and pct > last_emit_pct) or idx == total_rows or idx == 1:
+                    last_emit_time = now_ts
+                    last_emit_pct = pct
                     yield {
                         "type": "progress",
-                        "percent": percent,
+                        "percent": pct,
                         "stage": f"Linha {idx} de {total_rows}: {raw_prod[:24]}",
                         "current": idx,
                         "total": total_rows,
