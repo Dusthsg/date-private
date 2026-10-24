@@ -306,7 +306,7 @@ def api_search_products():
 @app.route("/lote", methods=["POST"])
 def add_lot():
     """Cadastra um novo produto/lote."""
-    name = request.form.get("name", "").strip()
+    name = request.form.get("name", "").strip().upper()
     quant_raw = request.form.get("quant", "0").strip()
     price_raw = request.form.get("price", "0.0").strip().replace(",", ".")
     date_valid = request.form.get("date_valid", "").strip()

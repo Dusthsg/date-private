@@ -986,12 +986,12 @@ def delete_lot(lot_id: int) -> bool:
 
 def create_lot(name: str, quant: int, price: float, date_valid: str, location: str = "LOJA", status: str = "NORMAL"):
     clear_query_cache()
-    name = name.strip()
+    name = name.strip().upper()
     with get_db_cursor(commit=True) as (cur, db_type):
         ph = "%s" if db_type == "postgres" else "?"
 
-        # 1. Encontra ou cria produto
-        cur.execute(f"SELECT id FROM products WHERE name = {ph}", (name,))
+        # 1. Encontra ou cria produto (sempre normalizado em UPPERCASE)
+        cur.execute(f"SELECT id FROM products WHERE UPPER(name) = {ph}", (name,))
         row = cur.fetchone()
         if row:
             product_id = row[0]
@@ -1026,7 +1026,7 @@ def search_products(term: str, limit: int = 10) -> list[dict]:
     """
     Busca produtos cadastrados no catálogo por nome ou código de barras para autocomplete instantâneo.
     """
-    term = term.strip()
+    term = term.strip().upper()
     if not term:
         return []
 
