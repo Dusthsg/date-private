@@ -65,6 +65,45 @@ QUANT_CANDIDATES = [
 ]
 
 
+def parse_date_value(raw_val) -> str | None:
+    """
+    Converte com precisão qualquer formato de data em string YYYY-MM-DD:
+    - Suporta números seriais de data do Excel (ex: 46284.0 -> 2026-09-19)
+    - Suporta formato brasileiro DD/MM/AAAA
+    - Suporta formato ISO AAAA-MM-DD
+    """
+    if raw_val is None or pd.isna(raw_val):
+        return None
+
+    # 1. Número serial do Excel (dias desde 1899-12-30)
+    # Números entre 30000 e 65000 cobrem os anos de 1982 a 2077
+    try:
+        f_val = float(raw_val)
+        if 30000 <= f_val <= 65000:
+            dt = pd.to_datetime(f_val, unit="D", origin="1899-12-30")
+            return dt.strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        pass
+
+    # 2. String com data em formato brasileiro ou ISO
+    s_val = str(raw_val).strip()
+    try:
+        dt = pd.to_datetime(s_val, errors="coerce", dayfirst=True)
+        if pd.notna(dt) and dt.year >= 2000:
+            return dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+
+    try:
+        dt = pd.to_datetime(s_val, errors="coerce", dayfirst=False)
+        if pd.notna(dt) and dt.year >= 2000:
+            return dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+
+    return None
+
+
 def read_spreadsheet_dataframe(file_bytes: bytes, filename: str) -> pd.DataFrame:
     """
     Lê com tolerância máxima arquivos .xlsx, .xls legados, CSVs e exportações de ERP
@@ -183,6 +222,7 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
 
     col_code = find_column(df, CODE_CANDIDATES)
     col_quant = find_column(df, QUANT_CANDIDATES)
+    has_quant_col = col_quant is not None
 
     if not col_prod:
         cols_found = ", ".join([str(c) for c in df.columns[:8]])
@@ -287,20 +327,15 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
                 if raw_code == "nan" or raw_code == "":
                     raw_code = None
 
-                try:
-                    date_parsed = pd.to_datetime(raw_valid, errors="coerce", dayfirst=True)
-                    if pd.isna(date_parsed):
-                        date_parsed = pd.to_datetime(raw_valid, errors="coerce", dayfirst=False)
-                    if pd.isna(date_parsed):
-                        stats["erros"] += 1
-                        continue
-                    valid_str = date_parsed.strftime("%Y-%m-%d")
-                except Exception:
+                # Converte data de validade com suporte a serial do Excel, BR (DD/MM/AAAA) e ISO
+                valid_str = parse_date_value(raw_valid)
+                if not valid_str:
                     stats["erros"] += 1
                     continue
 
-                sheet_quant = 0
-                if col_quant and pd.notna(row[col_quant]):
+                # Quantidade da planilha (None se a planilha não possui coluna de quantidade)
+                sheet_quant = None
+                if has_quant_col and pd.notna(row[col_quant]):
                     try:
                         sheet_quant = max(0, int(round(float(row[col_quant]))))
                     except (ValueError, TypeError):
@@ -350,52 +385,59 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
                     lotes_locais = lots_by_key.get(lot_key, [])
 
                     if not lotes_locais:
-                        # Remessa Nova no GALPÃO
-                        if db_type == "postgres":
+                        # O lote NÃO existe no banco.
+                        # REGRA DE PROTEÇÃO: Só cria lote novo se a planilha tiver coluna de quantidade E quant > 0!
+                        # Se for uma lista de presença/relatório sem quantidade, ou quant <= 0,
+                        # NUNCA cria novo lote (evita ressuscitar itens que já foram eliminados/baixados da loja)!
+                        if has_quant_col and sheet_quant is not None and sheet_quant > 0:
+                            if db_type == "postgres":
+                                cur.execute(
+                                    f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at, updated_at)
+                                        VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', CURRENT_DATE, CURRENT_TIMESTAMP)
+                                        RETURNING id""",
+                                    (product_id, sheet_quant, valid_str)
+                                )
+                                novo_id = cur.fetchone()[0]
+                            else:
+                                cur.execute(
+                                    f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at, updated_at)
+                                        VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', date('now'), datetime('now', 'localtime'))""",
+                                    (product_id, sheet_quant, valid_str)
+                                )
+                                novo_id = cur.lastrowid
+
                             cur.execute(
-                                f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at, updated_at)
-                                    VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', CURRENT_DATE, CURRENT_TIMESTAMP)
-                                    RETURNING id""",
-                                (product_id, sheet_quant, valid_str)
+                                f"""INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid)
+                                    VALUES ({ph}, {ph}, 'ENTRADA', {ph}, {ph})""",
+                                (product_id, novo_id, sheet_quant, valid_str)
                             )
-                            novo_id = cur.fetchone()[0]
+
+                            # Atualiza hashmap em memória para próximas linhas com mesmo lote
+                            if lot_key not in lots_by_key:
+                                lots_by_key[lot_key] = []
+                            lots_by_key[lot_key].append({
+                                "id": novo_id,
+                                "quant": sheet_quant,
+                                "location": "GALPAO"
+                            })
+
+                            stats["novos_lotes"] += 1
+                            audit_logs.append({
+                                "produto": raw_prod,
+                                "validade": valid_str,
+                                "tipo": "NOVO_GALPAO",
+                                "detalhe": f"Remessa nova inserida no GALPÃO ({sheet_quant} un)."
+                            })
                         else:
-                            cur.execute(
-                                f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at, updated_at)
-                                    VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', date('now'), datetime('now', 'localtime'))""",
-                                (product_id, sheet_quant, valid_str)
-                            )
-                            novo_id = cur.lastrowid
-
-                        cur.execute(
-                            f"""INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid)
-                                VALUES ({ph}, {ph}, 'ENTRADA', {ph}, {ph})""",
-                            (product_id, novo_id, sheet_quant, valid_str)
-                        )
-
-                        # Atualiza hashmap em memória para próximas linhas com mesmo lote
-                        if lot_key not in lots_by_key:
-                            lots_by_key[lot_key] = []
-                        lots_by_key[lot_key].append({
-                            "id": novo_id,
-                            "quant": sheet_quant,
-                            "location": "GALPAO"
-                        })
-
-                        stats["novos_lotes"] += 1
-                        audit_logs.append({
-                            "produto": raw_prod,
-                            "validade": valid_str,
-                            "tipo": "NOVO_GALPAO",
-                            "detalhe": f"Remessa nova inserida no GALPÃO ({sheet_quant} un)."
-                        })
+                            # Sem coluna de quantidade ou item eliminado -> Mantém inalterado, sem criar lote fantasma!
+                            stats["inalterados"] += 1
 
                     else:
                         # JÁ EXISTE NO BANCO LOCAL
                         total_local_quant = sum((item["quant"] or 0) for item in lotes_locais)
 
                         # ── Pergunta 3: A quantidade mudou? ───────────────────────────
-                        if sheet_quant > total_local_quant:
+                        if has_quant_col and sheet_quant is not None and sheet_quant > total_local_quant:
                             delta = sheet_quant - total_local_quant
                             lote_galpao = next((item for item in lotes_locais if item["location"] == "GALPAO"), None)
 
