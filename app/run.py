@@ -298,7 +298,7 @@ def update_price(lot_id: int):
     return render_template("partials/price_cell.html", lot={"lot_id": lot_id, "price": price})
 
 
-@app.route("/import-planilha", methods=["POST"])
+@app.route("/import-planilha", methods=["GET", "POST"])
 def import_planilha():
     """
     Recebe uma planilha Excel (.xlsx, .xls) ou CSV e executa a auditoria linha por linha:
@@ -306,6 +306,9 @@ def import_planilha():
     2. Remessa Nova: Cria lotes novos direto no GALPÃO.
     3. Divergência Delta: Lança excedente da planilha no GALPÃO mantendo a LOJA intacta.
     """
+    if request.method == "GET":
+        from flask import redirect
+        return redirect("/")
     from app.auditor_import import audit_and_import_spreadsheet
 
     if "file" not in request.files:

@@ -164,26 +164,28 @@
         <div>⚖️ <b>3. Divergência Delta:</b> se a planilha tiver excedente em relação à loja, lança apenas a diferença como reforço no <b>GALPÃO</b>.</div>
     </div>
 
-    <form hx-post="/import-planilha"
-          hx-target="#import-result-container"
-          hx-swap="innerHTML"
-          hx-encoding="multipart/form-data"
-          hx-indicator="#import-loading"
+    <form id="form-import-planilha"
+          onsubmit="submitImportPlanilha(event)"
+          action="/import-planilha"
+          method="POST"
+          enctype="multipart/form-data"
           class="flex flex-col sm:flex-row items-center gap-3">
         
         <input type="file"
+               id="input-spreadsheet-file"
                name="file"
-               accept=".xlsx,.xls,.csv"
+               accept=".xlsx,.xls,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,*/*"
                required
                class="text-xs text-gray-700 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer">
         
         <div class="flex items-center gap-2">
             <button type="submit"
-                    class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition">
-                ⚡ Processar e Conciliar
+                    id="btn-import-submit"
+                    class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition inline-flex items-center gap-2 cursor-pointer">
+                <span>⚡ Processar e Conciliar</span>
             </button>
-            <span id="import-loading" class="htmx-indicator text-xs text-emerald-600 font-medium animate-pulse">
-                Auditor processando linhas...
+            <span id="import-loading" class="hidden text-xs text-emerald-600 font-semibold animate-pulse">
+                ⏳ Enviando e auditando linhas...
             </span>
         </div>
     </form>
@@ -448,6 +450,59 @@ async function triggerPullConnection() {
         if (spinner) spinner.classList.add('hidden');
         if (icon) icon.classList.remove('hidden');
         if (btn) btn.disabled = false;
+    }
+}
+
+async function submitImportPlanilha(event) {
+    if (event) event.preventDefault();
+
+    const fileInput = document.getElementById('input-spreadsheet-file');
+    const resultContainer = document.getElementById('import-result-container');
+    const loading = document.getElementById('import-loading');
+    const btn = document.getElementById('btn-import-submit');
+
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+        resultContainer.innerHTML = '<div class="text-amber-700 text-xs p-3 bg-amber-50 border border-amber-300 rounded-lg mt-3">⚠️ Por favor, selecione um arquivo de planilha (.xlsx, .xls ou .csv) antes de processar.</div>';
+        return;
+    }
+
+    const file = fileInput.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+
+    if (loading) loading.classList.remove('hidden');
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-60', 'cursor-not-allowed');
+    }
+    resultContainer.innerHTML = `<div class="text-emerald-700 text-xs p-3 bg-emerald-50 border border-emerald-200 rounded-lg mt-3 animate-pulse">⏳ Enviando <b>${file.name}</b> (${(file.size / 1024).toFixed(1)} KB) e executando conciliação inteligente... Aguarde.</div>`;
+
+    try {
+        const response = await fetch('/import-planilha', {
+            method: 'POST',
+            body: formData
+        });
+
+        const html = await response.text();
+        resultContainer.innerHTML = html;
+
+        if (window.htmx) {
+            htmx.process(resultContainer);
+        }
+
+        if (response.ok && html.includes('import-summary-card')) {
+            clientCache.clear();
+            performSearch(true);
+            fileInput.value = '';
+        }
+    } catch (err) {
+        resultContainer.innerHTML = `<div class="text-red-700 text-xs p-3 bg-red-50 border border-red-300 rounded-lg mt-3">❌ Erro de comunicação com o servidor: ${err.message}</div>`;
+    } finally {
+        if (loading) loading.classList.add('hidden');
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
     }
 }
 

@@ -199,9 +199,11 @@ def audit_and_import_spreadsheet(file_bytes: bytes, filename: str) -> dict:
             if raw_code == "nan" or raw_code == "":
                 raw_code = None
 
-            # Converte data de validade com segurança
+            # Converte data de validade com segurança (suporte nativo ao padrão brasileiro DD/MM/AAAA)
             try:
-                date_parsed = pd.to_datetime(raw_valid, errors="coerce")
+                date_parsed = pd.to_datetime(raw_valid, errors="coerce", dayfirst=True)
+                if pd.isna(date_parsed):
+                    date_parsed = pd.to_datetime(raw_valid, errors="coerce", dayfirst=False)
                 if pd.isna(date_parsed):
                     stats["erros"] += 1
                     continue
@@ -312,8 +314,8 @@ def audit_and_import_spreadsheet(file_bytes: bytes, filename: str) -> dict:
 
             else:
                 # JÁ EXISTE NO BANCO LOCAL
-                # Calcula total local contado fisicamente
-                total_local_quant = sum(r[1] for r in lotes_locais)
+                # Calcula total local contado fisicamente com proteção contra None
+                total_local_quant = sum((r[1] or 0) for r in lotes_locais)
 
                 # ── Pergunta 3: A quantidade mudou? ───────────────────────────
                 if sheet_quant > total_local_quant:
