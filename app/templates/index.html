@@ -20,6 +20,7 @@
           hx-post="/lote"
           hx-target="#lot-table-body"
           hx-include="#current-filtro, #current-busca"
+          hx-on::before-request="const ni = document.getElementById('input-add-lot-name'); if(ni) ni.value = ni.value.trim().toUpperCase();"
           hx-on::after-request="if(event.detail.successful) { this.reset(); clearAddLotSelection(); document.getElementById('form-add-msg').innerHTML = '<span class=\'text-emerald-600 text-xs font-semibold\'>✅ Lote cadastrado com sucesso!</span>'; setTimeout(() => document.getElementById('form-add-msg').innerHTML='', 4000); }"
           class="hidden mt-3 pt-3 border-t border-gray-100">
         
@@ -36,7 +37,7 @@
                            required
                            autocomplete="off"
                            placeholder="Digite para buscar no catálogo ou cadastrar novo..."
-                           oninput="onAddLotSearch(this.value)"
+                           oninput="onAddLotInput(this)"
                            class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm uppercase focus:ring-2 focus:ring-emerald-400 focus:outline-none">
                 </div>
 
@@ -595,8 +596,19 @@ async function submitImportPlanilha(event) {
 // ── Autocomplete e Seleção do Catálogo no Cadastro de Lotes ──────────────────
 let addLotDebounceTimer = null;
 
+function onAddLotInput(el) {
+    if (!el) return;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    el.value = el.value.toUpperCase();
+    if (start !== null && end !== null) {
+        try { el.setSelectionRange(start, end); } catch(e) {}
+    }
+    onAddLotSearch(el.value);
+}
+
 function onAddLotSearch(val) {
-    const q = val.trim();
+    const q = val.trim().toUpperCase();
     const dropdown = document.getElementById('dropdown-add-lot-results');
     const badge = document.getElementById('badge-catalog-selected');
     if (badge) badge.classList.add('hidden');
@@ -663,7 +675,7 @@ function selectProductToAdd(name) {
     const badge = document.getElementById('badge-catalog-selected');
     const quantInput = document.getElementById('input-add-lot-quant');
 
-    if (input) input.value = name;
+    if (input) input.value = (name || '').toUpperCase();
     if (dropdown) dropdown.classList.add('hidden');
     if (badge) badge.classList.remove('hidden');
 
