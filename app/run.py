@@ -134,14 +134,19 @@ def ws_handler(ws):
                 busca = msg.get("busca", "").strip()
                 seq = msg.get("seq")
 
-                total, lots = query_lots(filtro=filtro, busca=busca, limit=100)
+                limit = 50
+                total, lots = query_lots(filtro=filtro, busca=busca, limit=limit, offset=0)
+                has_more = len(lots) < total
 
                 html = render_template(
                     "partials/lot_rows.html",
                     lots=lots,
                     total=total,
                     filtro=filtro,
-                    busca=busca
+                    busca=busca,
+                    page=1,
+                    has_more=has_more,
+                    next_page=2
                 )
 
                 ws.send(json.dumps({
@@ -161,24 +166,45 @@ def ws_handler(ws):
             connected_clients.discard(ws)
 
 
-# ── Rotas HTTP (Render inicial + Fallback HTMX) ────────────────────────────────
+# ── Rotas HTTP (Render inicial + Fallback HTMX + Chunks) ────────────────────────
 
 @app.route("/")
 def index():
-    """Página principal — renderiza a lista inicial com resposta rápida."""
+    """Página principal — renderiza a lista inicial em chunks de 50 itens."""
     filtro = request.args.get("filtro", "todos")
     busca = request.args.get("busca", "").strip()
+    page = request.args.get("page", 1, type=int)
+    limit = 50
+    offset = max(0, (page - 1) * limit)
 
-    total, lots = query_lots(filtro=filtro, busca=busca, limit=100)
+    total, lots = query_lots(filtro=filtro, busca=busca, limit=limit, offset=offset)
+    has_more = (offset + len(lots)) < total
+    next_page = page + 1
 
-    # Se for requisição HTMX pedindo só as linhas
+    # Se for página subsequente solicitada (chunk)
+    if page > 1:
+        return render_template(
+            "partials/lot_rows_chunk.html",
+            lots=lots,
+            total=total,
+            filtro=filtro,
+            busca=busca,
+            page=page,
+            has_more=has_more,
+            next_page=next_page
+        )
+
+    # Se for requisição HTMX pedindo só as linhas (ex: troca de filtro via fallback)
     if request.headers.get("HX-Request"):
         return render_template(
             "partials/lot_rows.html",
             lots=lots,
             total=total,
             filtro=filtro,
-            busca=busca
+            busca=busca,
+            page=1,
+            has_more=has_more,
+            next_page=next_page
         )
 
     return render_template(
@@ -186,7 +212,35 @@ def index():
         lots=lots,
         total=total,
         filtro=filtro,
-        busca=busca
+        busca=busca,
+        page=1,
+        has_more=has_more,
+        next_page=next_page
+    )
+
+
+@app.route("/lots/page")
+def lots_page():
+    """Rota para chunks de paginação / rolagem infinita via HTMX."""
+    filtro = request.args.get("filtro", "todos")
+    busca = request.args.get("busca", "").strip()
+    page = request.args.get("page", 2, type=int)
+    limit = 50
+    offset = max(0, (page - 1) * limit)
+
+    total, lots = query_lots(filtro=filtro, busca=busca, limit=limit, offset=offset)
+    has_more = (offset + len(lots)) < total
+    next_page = page + 1
+
+    return render_template(
+        "partials/lot_rows_chunk.html",
+        lots=lots,
+        total=total,
+        filtro=filtro,
+        busca=busca,
+        page=page,
+        has_more=has_more,
+        next_page=next_page
     )
 
 
@@ -242,14 +296,19 @@ def add_lot():
     # Recarrega a tabela para quem enviou o formulário
     filtro = request.form.get("filtro", "todos")
     busca = request.form.get("busca", "").strip()
-    total, lots = query_lots(filtro=filtro, busca=busca, limit=100)
+    limit = 50
+    total, lots = query_lots(filtro=filtro, busca=busca, limit=limit, offset=0)
+    has_more = len(lots) < total
 
     return render_template(
         "partials/lot_rows.html",
         lots=lots,
         total=total,
         filtro=filtro,
-        busca=busca
+        busca=busca,
+        page=1,
+        has_more=has_more,
+        next_page=2
     )
 
 

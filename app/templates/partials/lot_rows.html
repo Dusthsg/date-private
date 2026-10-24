@@ -1,53 +1,11 @@
-{# Partial: linhas da tabela de lotes (renderizado pelo HTMX) #}
+{# Partial: linhas da tabela de lotes (renderizado pelo HTMX e WebSocket) #}
 <tr style="display:none;"><td colspan="8">
     <span id="lots-count" hx-swap-oob="true" class="font-semibold text-gray-700">{{ total }}</span>
     {% include "partials/filter_buttons.html" %}
 </td></tr>
+
 {% for lot in lots %}
-<tr class="border-b border-gray-100 hover:bg-indigo-50 transition
-           {% if loop.index is odd %}bg-white{% else %}bg-gray-50{% endif %}"
-    id="lot-{{ lot['lot_id'] }}">
-
-    <td class="px-3 py-2.5 font-mono text-gray-500 whitespace-nowrap">#{{ lot['lot_id'] }}</td>
-
-    <td class="px-3 py-2.5 font-medium text-gray-800 min-w-[280px] max-w-[55ch] truncate"
-        title="{{ lot['product_name'] }}">
-        {{ lot['product_name'] }}
-    </td>
-
-    {% include "partials/quant_cell.html" %}
-
-    {% include "partials/price_cell.html" %}
-
-    <td class="px-3 py-2.5 whitespace-nowrap">
-        <span class="inline-block px-2 py-0.5 rounded-full text-xs font-semibold
-            {% if lot['date_valid'] < now_date %}
-                bg-red-100 text-red-700
-            {% elif lot['date_valid'] <= critico_date %}
-                bg-orange-100 text-orange-700
-            {% elif lot['date_valid'] <= atencao_date %}
-                bg-yellow-100 text-yellow-700
-            {% else %}
-                bg-green-100 text-green-700
-            {% endif %}">
-            {{ lot['date_valid'][8:] }}/{{ lot['date_valid'][5:7] }}/{{ lot['date_valid'][:4] }}
-        </span>
-    </td>
-
-    <td class="px-3 py-2.5 hidden md:table-cell text-gray-500 whitespace-nowrap">{{ lot['location'] }}</td>
-    <td class="px-3 py-2.5 hidden md:table-cell text-gray-500 whitespace-nowrap">{{ lot['status'] }}</td>
-
-    <td class="px-3 py-2.5 text-center whitespace-nowrap">
-        <button hx-delete="/lote/{{ lot['lot_id'] }}"
-                hx-target="#lot-{{ lot['lot_id'] }}"
-                hx-swap="outerHTML swap:0.4s"
-                hx-confirm="Tem certeza que deseja dar baixa no lote #{{ lot['lot_id'] }} — {{ lot['product_name'] }}?"
-                class="inline-flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition shadow-sm active:scale-95"
-                title="Dar baixa (deletar lote)">
-            ✕ <span class="hidden sm:inline">Baixa</span>
-        </button>
-    </td>
-</tr>
+    {% include "partials/lot_row_item.html" %}
 {% else %}
 <tr>
     <td colspan="8" class="px-4 py-12 text-center text-gray-400">
@@ -56,10 +14,29 @@
     </td>
 </tr>
 {% endfor %}
-{% if total > 100 %}
-<tr id="limit-note">
-    <td colspan="8" class="px-4 py-2 text-center text-xs text-gray-400 bg-gray-50 italic border-t">
-        Exibindo os primeiros 100 de {{ total }} lotes ordenados por data de validade. Use a busca ou filtros para refinar.
+
+{% if has_more %}
+<tr id="infinite-scroll-trigger"
+    hx-get="/lots/page?filtro={{ filtro }}&busca={{ busca }}&page={{ next_page }}"
+    hx-trigger="revealed"
+    hx-swap="outerHTML"
+    class="bg-gray-50/50 hover:bg-gray-100 transition">
+    <td colspan="8" class="py-3 text-center text-gray-500 text-xs">
+        <div class="inline-flex items-center gap-2 font-medium">
+            <svg class="animate-spin h-4 w-4 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+            </svg>
+            <span>Carregando mais lotes... (lotes {{ lots|length }} de {{ total }})</span>
+        </div>
     </td>
 </tr>
+{% else %}
+{% if total > 50 %}
+<tr id="limit-note">
+    <td colspan="8" class="px-4 py-3 text-center text-xs text-gray-400 bg-gray-50 italic border-t">
+        ✓ Todos os {{ total }} lotes foram carregados.
+    </td>
+</tr>
+{% endif %}
 {% endif %}

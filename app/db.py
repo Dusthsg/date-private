@@ -795,16 +795,17 @@ def init_db():
 
 
 # ── Consulta Otimizada de Lotes ───────────────────────────────────────────────
-def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwargs):
+def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: int = 0, **kwargs):
     """
     Consulta os lotes com:
     - Verificação em cache ultrarrápido (0.005ms)
     - 1 único roundtrip de banco com COUNT(*) OVER() (elimina query de count separada)
+    - Suporte a paginação com chunks (LIMIT e OFFSET)
     - Conexão reaproveitada via ThreadedConnectionPool
     Retorna: (total_count, lista_de_dicionarios)
     """
     clean_busca = busca.strip()
-    cache_key = (filtro, clean_busca.upper(), limit)
+    cache_key = (filtro, clean_busca.upper(), limit, offset)
 
     # 1. Checa cache em memória
     now = time.time()
@@ -857,7 +858,7 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
                 where_sql = " AND ".join(where_clauses)
                 order_by = "l.created_at DESC, l.id DESC" if filtro in ("recentes", "recente", "hoje") else "l.date_valid ASC, p.name ASC"
 
-                # Query única combinando dados e contagem total via window function
+                # Query única combinando dados e contagem total via window function com LIMIT e OFFSET
                 query = f"""
                     SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
                            l.quant, l.price,
@@ -868,7 +869,7 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
                     INNER JOIN products p ON p.id = l.product_id
                     WHERE {where_sql}
                     ORDER BY {order_by}
-                    LIMIT {ph}
+                    LIMIT {ph} OFFSET {ph}
                 """ if db_type == "postgres" else f"""
                     SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
                            l.quant, l.price,
@@ -879,10 +880,10 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
                     INNER JOIN products p ON p.id = l.product_id
                     WHERE {where_sql}
                     ORDER BY {order_by}
-                    LIMIT {ph}
+                    LIMIT {ph} OFFSET {ph}
                 """
 
-                cur.execute(query, params + [limit])
+                cur.execute(query, params + [limit, offset])
                 raw_rows = cur.fetchall()
 
                 if not raw_rows:

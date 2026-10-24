@@ -373,6 +373,10 @@ function onSearchInput(val) {
     const rows = document.querySelectorAll('#lot-table-body tr');
     if (rows.length > 0 && q) {
         rows.forEach(tr => {
+            if (tr.id === 'infinite-scroll-trigger') {
+                tr.style.display = 'none';
+                return;
+            }
             const text = tr.innerText.toUpperCase();
             tr.style.display = text.includes(q) ? '' : 'none';
         });
