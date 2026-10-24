@@ -308,46 +308,34 @@ def import_planilha():
         from flask import redirect
         return redirect("/")
 
-    from app.auditor_import import audit_and_import_spreadsheet_stream
+    from app.auditor_import import audit_and_import_spreadsheet
 
     if "file" not in request.files:
-        return jsonify({"type": "error", "error": "Nenhum arquivo enviado. Selecione uma planilha (.xlsx, .xls ou .csv)."}), 200
+        return jsonify({"success": False, "error": "Nenhum arquivo enviado. Selecione uma planilha (.xlsx, .xls ou .csv)."}), 400
 
     uploaded_file = request.files["file"]
     if not uploaded_file.filename:
-        return jsonify({"type": "error", "error": "Nenhum arquivo selecionado. Escolha um arquivo para importar."}), 200
+        return jsonify({"success": False, "error": "Nenhum arquivo selecionado. Escolha um arquivo para importar."}), 400
 
     filename = uploaded_file.filename
     content = uploaded_file.read()
 
-    def generate_events():
-        last_stats = None
-        # Preamble de 1KB para forçar o navegador e a rede a descarregarem o buffer imediatamente (0ms de latência percebida)
-        yield ": " + (" " * 1024) + "\n"
-        for update in audit_and_import_spreadsheet_stream(content, filename):
-            if update.get("type") == "done":
-                # Renderiza HTML do resumo para exibição direta
-                html_summary = render_template(
-                    "partials/import_summary.html",
-                    stats=update["stats"],
-                    logs=update.get("logs", [])
-                )
-                update["html"] = html_summary
-                last_stats = update["stats"]
-
-            yield json.dumps(update, ensure_ascii=False) + "\n"
-
-        if last_stats is not None:
-            broadcast_reload("planilha_importada")
-
-    return Response(
-        stream_with_context(generate_events()),
-        mimetype="application/x-ndjson",
-        headers={
-            "X-Accel-Buffering": "no",
-            "Cache-Control": "no-cache",
-        }
-    )
+    try:
+        result = audit_and_import_spreadsheet(content, filename)
+        html_summary = render_template(
+            "partials/import_summary.html",
+            stats=result["stats"],
+            logs=result.get("logs", [])
+        )
+        broadcast_reload("planilha_importada")
+        return jsonify({
+            "success": True,
+            "stats": result["stats"],
+            "logs": result.get("logs", []),
+            "html": html_summary
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
 
 
 @app.route("/upload-db", methods=["POST"])

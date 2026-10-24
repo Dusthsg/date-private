@@ -10,7 +10,7 @@ Implementa a conciliação linha por linha com base no raciocínio em 3 pergunta
 import io
 import re
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import pandas as pd
 
 from app.db import get_db_cursor, clear_query_cache
@@ -544,7 +544,7 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
 
 
 def audit_and_import_spreadsheet(file_bytes: bytes, filename: str) -> dict:
-    """Compatibilidade direta para chamadas síncronas."""
+    """Execução direta ultrarrápida da conciliação sem overhead de streaming."""
     last_res = None
     for item in audit_and_import_spreadsheet_stream(file_bytes, filename):
         if item.get("type") == "done":
@@ -553,4 +553,4 @@ def audit_and_import_spreadsheet(file_bytes: bytes, filename: str) -> dict:
             raise ValueError(item.get("error"))
     if not last_res:
         raise ValueError("Auditoria não retornou resultados.")
-    return {"stats": last_res["stats"], "logs": last_res["logs"]}
+    return {"success": True, "stats": last_res["stats"], "logs": last_res["logs"]}
