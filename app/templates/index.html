@@ -165,8 +165,8 @@
     </div>
 
     <form id="form-import-planilha"
-          onsubmit="submitImportPlanilha(event)"
-          action="/import-planilha"
+          onsubmit="submitImportPlanilha(event); return false;"
+          action="javascript:void(0);"
           method="POST"
           enctype="multipart/form-data"
           class="flex flex-col sm:flex-row items-center gap-3">
@@ -179,7 +179,8 @@
                class="text-xs text-gray-700 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer">
         
         <div class="flex items-center gap-2">
-            <button type="submit"
+            <button type="button"
+                    onclick="submitImportPlanilha(event)"
                     id="btn-import-submit"
                     class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition inline-flex items-center gap-2 cursor-pointer">
                 <span>⚡ Processar e Conciliar</span>
@@ -553,23 +554,6 @@ async function submitImportPlanilha(event) {
 
     } catch (err) {
         clearInterval(progressTimer);
-        resultContainer.innerHTML = `
-            <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-1">
-                <div class="font-bold flex items-center gap-1.5">
-                    <span>❌</span>
-                    <span>Falha na importação:</span>
-                </div>
-                <div class="text-xs font-mono bg-white p-2.5 rounded border border-red-200 mt-1">${err.message}</div>
-            </div>
-        `;
-    } finally {
-        if (loading) loading.classList.add('hidden');
-        if (btn) {
-            btn.disabled = false;
-            btn.classList.remove('opacity-60', 'cursor-not-allowed');
-        }
-    }
-}
         resultContainer.innerHTML = `
             <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-1">
                 <div class="font-bold flex items-center gap-1.5">
