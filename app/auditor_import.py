@@ -87,19 +87,28 @@ def parse_date_value(raw_val) -> str | None:
 
     # 2. String com data em formato brasileiro ou ISO
     s_val = str(raw_val).strip()
-    try:
-        dt = pd.to_datetime(s_val, errors="coerce", dayfirst=True)
-        if pd.notna(dt) and dt.year >= 2000:
-            return dt.strftime("%Y-%m-%d")
-    except Exception:
-        pass
+    if len(s_val) >= 10 and s_val[4] == "-" and s_val[7] == "-":
+        try:
+            return s_val[:10]
+        except Exception:
+            pass
 
-    try:
-        dt = pd.to_datetime(s_val, errors="coerce", dayfirst=False)
-        if pd.notna(dt) and dt.year >= 2000:
-            return dt.strftime("%Y-%m-%d")
-    except Exception:
-        pass
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            dt = pd.to_datetime(s_val, errors="coerce", dayfirst=True)
+            if pd.notna(dt) and dt.year >= 2000:
+                return dt.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+        try:
+            dt = pd.to_datetime(s_val, errors="coerce", dayfirst=False)
+            if pd.notna(dt) and dt.year >= 2000:
+                return dt.strftime("%Y-%m-%d")
+        except Exception:
+            pass
 
     return None
 
