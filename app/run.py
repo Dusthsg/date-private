@@ -15,7 +15,7 @@ import socket
 import threading
 from pathlib import Path
 from datetime import date, timedelta
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from flask_sock import Sock
 
 from app.db import (
@@ -301,36 +301,51 @@ def update_price(lot_id: int):
 @app.route("/import-planilha", methods=["GET", "POST"])
 def import_planilha():
     """
-    Recebe uma planilha Excel (.xlsx, .xls) ou CSV e executa a auditoria linha por linha:
-    1. Filtro de Lápide: Evita itens zumbis (já baixados).
-    2. Remessa Nova: Cria lotes novos direto no GALPÃO.
-    3. Divergência Delta: Lança excedente da planilha no GALPÃO mantendo a LOJA intacta.
+    Recebe uma planilha Excel (.xlsx, .xls) ou CSV e executa a auditoria linha por linha,
+    transmitindo o progresso em tempo real (0% a 100%) via streaming NDJSON.
     """
     if request.method == "GET":
         from flask import redirect
         return redirect("/")
-    from app.auditor_import import audit_and_import_spreadsheet
+
+    from app.auditor_import import audit_and_import_spreadsheet_stream
 
     if "file" not in request.files:
-        return '<div class="text-red-600 text-sm font-semibold p-4 bg-red-50 border border-red-300 rounded-xl shadow-sm">❌ Nenhum arquivo enviado. Selecione uma planilha (.xlsx, .xls ou .csv).</div>', 200
+        return jsonify({"type": "error", "error": "Nenhum arquivo enviado. Selecione uma planilha (.xlsx, .xls ou .csv)."}), 200
 
     uploaded_file = request.files["file"]
     if not uploaded_file.filename:
-        return '<div class="text-red-600 text-sm font-semibold p-4 bg-red-50 border border-red-300 rounded-xl shadow-sm">❌ Nenhum arquivo selecionado. Escolha um arquivo para importar.</div>', 200
+        return jsonify({"type": "error", "error": "Nenhum arquivo selecionado. Escolha um arquivo para importar."}), 200
 
-    try:
-        content = uploaded_file.read()
-        res = audit_and_import_spreadsheet(content, uploaded_file.filename)
-    except Exception as e:
-        return f'<div class="text-red-700 text-sm p-4 bg-red-50 border border-red-300 rounded-xl shadow-sm leading-relaxed"><strong>❌ Falha na importação:</strong><br><span class="text-xs font-mono mt-1 block">{str(e)}</span></div>', 200
+    filename = uploaded_file.filename
+    content = uploaded_file.read()
 
-    # Notifica todos os aparelhos conectados via WebSocket para atualizar a tela na hora
-    broadcast_reload("planilha_importada")
+    def generate_events():
+        last_stats = None
+        for update in audit_and_import_spreadsheet_stream(content, filename):
+            if update.get("type") == "done":
+                # Renderiza HTML do resumo para exibição direta
+                html_summary = render_template(
+                    "partials/import_summary.html",
+                    stats=update["stats"],
+                    logs=update.get("logs", [])
+                )
+                update["html"] = html_summary
+                last_stats = update["stats"]
 
-    stats = res["stats"]
-    logs = res["logs"]
+            yield json.dumps(update, ensure_ascii=False) + "\n"
 
-    return render_template("partials/import_summary.html", stats=stats, logs=logs)
+        if last_stats is not None:
+            broadcast_reload("planilha_importada")
+
+    return Response(
+        stream_with_context(generate_events()),
+        mimetype="application/x-ndjson",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        }
+    )
 
 
 @app.route("/upload-db", methods=["POST"])
