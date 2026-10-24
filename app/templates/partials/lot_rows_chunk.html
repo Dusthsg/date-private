@@ -6,7 +6,7 @@
 {% if has_more %}
 <tr id="infinite-scroll-trigger"
     hx-get="/lots/page?filtro={{ filtro }}&busca={{ busca }}&page={{ next_page }}"
-    hx-trigger="revealed"
+    hx-trigger="intersect once rootMargin:600px, revealed"
     hx-swap="outerHTML"
     class="bg-gray-50/50 hover:bg-gray-100 transition">
     <td colspan="8" class="py-3 text-center text-gray-500 text-xs">
@@ -15,7 +15,7 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
             </svg>
-            <span>Carregando mais lotes... (lotes {{ (page - 1) * 50 + lots|length }} de {{ total }})</span>
+            <span>Carregando mais lotes...</span>
         </div>
     </td>
 </tr>
