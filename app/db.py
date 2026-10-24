@@ -842,9 +842,12 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
                     params.append((today + timedelta(days=30)).strftime("%Y-%m-%d"))
                     params.append((today + timedelta(days=45)).strftime("%Y-%m-%d"))
 
-                elif filtro == "hoje":
-                    where_clauses.append(f"l.created_at = {ph}")
-                    params.append(today.strftime("%Y-%m-%d"))
+                elif filtro in ("recentes", "recente", "hoje"):
+                    two_weeks_ago = (today - timedelta(days=14)).strftime("%Y-%m-%d")
+                    tomorrow = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+                    where_clauses.append(f"l.created_at >= {ph} AND l.created_at < {ph}")
+                    params.append(two_weeks_ago)
+                    params.append(tomorrow)
 
                 if clean_busca:
                     like_op = "ILIKE" if db_type == "postgres" else "LIKE"
@@ -852,7 +855,7 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
                     params.append(f"%{clean_busca}%")
 
                 where_sql = " AND ".join(where_clauses)
-                order_by = "l.id DESC" if filtro == "hoje" else "l.date_valid ASC, p.name ASC"
+                order_by = "l.created_at DESC, l.id DESC" if filtro in ("recentes", "recente", "hoje") else "l.date_valid ASC, p.name ASC"
 
                 # Query única combinando dados e contagem total via window function
                 query = f"""
