@@ -1,0 +1,105 @@
+<tr class="border-b border-gray-100 hover:bg-indigo-50 transition odd:bg-white even:bg-gray-50/60"
+    id="lot-{{ lot['lot_id'] }}">
+
+    <td class="px-3 py-2.5 font-mono text-gray-500 whitespace-nowrap">#{{ lot['lot_id'] }}</td>
+
+    <td class="px-3 py-2.5 font-medium text-gray-800 min-w-[280px] max-w-[55ch] truncate"
+        title="{{ lot['product_name'] }}">
+        {{ lot['product_name'] }}
+    </td>
+
+    <!-- Quantidade (Inline de alto desempenho) -->
+    <td class="px-3 py-2.5 text-gray-600 whitespace-nowrap" id="quant-cell-{{ lot['lot_id'] }}">
+        <div id="view-quant-{{ lot['lot_id'] }}" class="flex items-center gap-1.5 whitespace-nowrap">
+            <span class="font-medium text-gray-800">{{ lot['quant'] }}</span>
+            <button type="button"
+                    onclick="startEditing({{ lot['lot_id'] }})"
+                    class="text-gray-400 hover:text-indigo-600 transition p-1 rounded hover:bg-gray-100"
+                    title="Editar quantidade">
+                ✏️
+            </button>
+        </div>
+        <form id="edit-quant-{{ lot['lot_id'] }}"
+              hx-post="/lote/{{ lot['lot_id'] }}/quantidade"
+              hx-target="#quant-cell-{{ lot['lot_id'] }}"
+              hx-swap="outerHTML"
+              onsubmit="window.isEditingLot = false;"
+              class="hidden flex items-center gap-1">
+            <input type="number" id="input-quant-{{ lot['lot_id'] }}" name="quant" value="{{ lot['quant'] }}" min="0" required
+                   class="w-16 border border-indigo-400 rounded px-1.5 py-0.5 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+            <button type="submit"
+                    class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5 text-xs font-bold transition shadow-sm"
+                    title="Salvar">
+                ✓
+            </button>
+            <button type="button"
+                    onclick="stopEditing({{ lot['lot_id'] }})"
+                    class="bg-gray-200 hover:bg-gray-300 text-gray-600 rounded px-1.5 py-0.5 text-xs transition"
+                    title="Cancelar">
+                ✕
+            </button>
+        </form>
+    </td>
+
+    <!-- Preço (Inline de alto desempenho) -->
+    <td class="px-3 py-2.5 text-gray-600 whitespace-nowrap" id="price-cell-{{ lot['lot_id'] }}">
+        <div id="view-price-{{ lot['lot_id'] }}" class="flex items-center gap-1.5 whitespace-nowrap">
+            <span class="font-medium text-gray-800">R$ {{ "%.2f" | format(lot['price']) }}</span>
+            <button type="button"
+                    onclick="startEditingPrice({{ lot['lot_id'] }})"
+                    class="text-gray-400 hover:text-indigo-600 transition p-1 rounded hover:bg-gray-100"
+                    title="Editar preço">
+                ✏️
+            </button>
+        </div>
+        <form id="edit-price-{{ lot['lot_id'] }}"
+              hx-post="/lote/{{ lot['lot_id'] }}/preco"
+              hx-target="#price-cell-{{ lot['lot_id'] }}"
+              hx-swap="outerHTML"
+              onsubmit="window.isEditingLot = false;"
+              class="hidden flex items-center gap-1">
+            <input type="number" id="input-price-{{ lot['lot_id'] }}" name="price" value="{{ "%.2f" | format(lot['price']) }}" step="0.01" min="0" required
+                   class="w-20 border border-indigo-400 rounded px-1.5 py-0.5 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+            <button type="submit"
+                    class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5 text-xs font-bold transition shadow-sm"
+                    title="Salvar">
+                ✓
+            </button>
+            <button type="button"
+                    onclick="stopEditingPrice({{ lot['lot_id'] }})"
+                    class="bg-gray-200 hover:bg-gray-300 text-gray-600 rounded px-1.5 py-0.5 text-xs transition"
+                    title="Cancelar">
+                ✕
+            </button>
+        </form>
+    </td>
+
+    <td class="px-3 py-2.5 whitespace-nowrap">
+        <span class="inline-block px-2 py-0.5 rounded-full text-xs font-semibold
+            {% if lot['date_valid'] < now_date %}
+                bg-red-100 text-red-700
+            {% elif lot['date_valid'] <= critico_date %}
+                bg-orange-100 text-orange-700
+            {% elif lot['date_valid'] <= atencao_date %}
+                bg-yellow-100 text-yellow-700
+            {% else %}
+                bg-green-100 text-green-700
+            {% endif %}">
+            {{ lot['date_valid'][8:] }}/{{ lot['date_valid'][5:7] }}/{{ lot['date_valid'][:4] }}
+        </span>
+    </td>
+
+    <td class="px-3 py-2.5 hidden md:table-cell text-gray-500 whitespace-nowrap">{{ lot['location'] }}</td>
+    <td class="px-3 py-2.5 hidden md:table-cell text-gray-500 whitespace-nowrap">{{ lot['status'] }}</td>
+
+    <td class="px-3 py-2.5 text-center whitespace-nowrap">
+        <button hx-delete="/lote/{{ lot['lot_id'] }}"
+                hx-target="#lot-{{ lot['lot_id'] }}"
+                hx-swap="outerHTML swap:0.4s"
+                hx-confirm="Tem certeza que deseja dar baixa no lote #{{ lot['lot_id'] }} — {{ lot['product_name'] }}?"
+                class="inline-flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition shadow-sm active:scale-95"
+                title="Dar baixa (deletar lote)">
+            ✕ <span class="hidden sm:inline">Baixa</span>
+        </button>
+    </td>
+</tr>

@@ -795,16 +795,17 @@ def init_db():
 
 
 # ── Consulta Otimizada de Lotes ───────────────────────────────────────────────
-def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwargs):
+def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: int = 0, **kwargs):
     """
     Consulta os lotes com:
     - Verificação em cache ultrarrápido (0.005ms)
     - 1 único roundtrip de banco com COUNT(*) OVER() (elimina query de count separada)
+    - Suporte a paginação com chunks (LIMIT e OFFSET)
     - Conexão reaproveitada via ThreadedConnectionPool
     Retorna: (total_count, lista_de_dicionarios)
     """
     clean_busca = busca.strip()
-    cache_key = (filtro, clean_busca.upper(), limit)
+    cache_key = (filtro, clean_busca.upper(), limit, offset)
 
     # 1. Checa cache em memória
     now = time.time()
@@ -842,9 +843,12 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
                     params.append((today + timedelta(days=30)).strftime("%Y-%m-%d"))
                     params.append((today + timedelta(days=45)).strftime("%Y-%m-%d"))
 
-                elif filtro == "hoje":
-                    where_clauses.append(f"l.created_at = {ph}")
-                    params.append(today.strftime("%Y-%m-%d"))
+                elif filtro in ("recentes", "recente", "hoje"):
+                    two_weeks_ago = (today - timedelta(days=14)).strftime("%Y-%m-%d")
+                    tomorrow = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+                    where_clauses.append(f"l.created_at >= {ph} AND l.created_at < {ph}")
+                    params.append(two_weeks_ago)
+                    params.append(tomorrow)
 
                 if clean_busca:
                     like_op = "ILIKE" if db_type == "postgres" else "LIKE"
@@ -852,9 +856,9 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
                     params.append(f"%{clean_busca}%")
 
                 where_sql = " AND ".join(where_clauses)
-                order_by = "l.id DESC" if filtro == "hoje" else "l.date_valid ASC, p.name ASC"
+                order_by = "l.created_at DESC, l.id DESC" if filtro in ("recentes", "recente", "hoje") else "l.date_valid ASC, p.name ASC"
 
-                # Query única combinando dados e contagem total via window function
+                # Query única combinando dados e contagem total via window function com LIMIT e OFFSET
                 query = f"""
                     SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
                            l.quant, l.price,
@@ -865,7 +869,7 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
                     INNER JOIN products p ON p.id = l.product_id
                     WHERE {where_sql}
                     ORDER BY {order_by}
-                    LIMIT {ph}
+                    LIMIT {ph} OFFSET {ph}
                 """ if db_type == "postgres" else f"""
                     SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
                            l.quant, l.price,
@@ -876,10 +880,10 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 100, **kwarg
                     INNER JOIN products p ON p.id = l.product_id
                     WHERE {where_sql}
                     ORDER BY {order_by}
-                    LIMIT {ph}
+                    LIMIT {ph} OFFSET {ph}
                 """
 
-                cur.execute(query, params + [limit])
+                cur.execute(query, params + [limit, offset])
                 raw_rows = cur.fetchall()
 
                 if not raw_rows:
@@ -1016,3 +1020,41 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
             lot_id = cur.lastrowid
 
         return product_id, lot_id
+
+
+def search_products(term: str, limit: int = 10) -> list[dict]:
+    """
+    Busca produtos cadastrados no catálogo por nome ou código de barras para autocomplete instantâneo.
+    """
+    term = term.strip()
+    if not term:
+        return []
+
+    with get_db_cursor() as (cur, db_type):
+        ph = "%s" if db_type == "postgres" else "?"
+        like_op = "ILIKE" if db_type == "postgres" else "LIKE"
+        like_val = f"%{term}%"
+
+        query = f"""
+            SELECT id, name, bar_code
+            FROM products
+            WHERE name {like_op} {ph} OR bar_code {like_op} {ph}
+            ORDER BY
+                CASE WHEN name {like_op} {ph} THEN 1 ELSE 2 END,
+                name ASC
+            LIMIT {ph}
+        """
+        cur.execute(query, (like_val, like_val, f"{term}%", limit))
+        rows = cur.fetchall()
+
+        results = []
+        for r in rows:
+            if db_type == "postgres":
+                results.append({"id": r[0], "name": r[1], "bar_code": r[2]})
+            else:
+                results.append({
+                    "id": r["id"] if hasattr(r, "keys") else r[0],
+                    "name": r["name"] if hasattr(r, "keys") else r[1],
+                    "bar_code": r["bar_code"] if hasattr(r, "keys") else r[2]
+                })
+        return results
