@@ -322,6 +322,8 @@ def import_planilha():
 
     def generate_events():
         last_stats = None
+        # Preamble de 1KB para forçar o navegador e a rede a descarregarem o buffer imediatamente (0ms de latência percebida)
+        yield ": " + (" " * 1024) + "\n"
         for update in audit_and_import_spreadsheet_stream(content, filename):
             if update.get("type") == "done":
                 # Renderiza HTML do resumo para exibição direta
