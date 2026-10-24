@@ -31,6 +31,7 @@ from app.db import (
     update_lot_price,
     delete_lot as db_delete_lot,
     create_lot,
+    search_products,
     clear_query_cache,
     DATABASE_URL
 )
@@ -187,6 +188,19 @@ def index():
         filtro=filtro,
         busca=busca
     )
+
+
+@app.route("/api/products/search", methods=["GET"])
+def api_search_products():
+    """Busca produtos no catálogo para o autocomplete na tela de cadastro."""
+    q = request.args.get("q", "").strip()
+    if len(q) < 2:
+        return jsonify([])
+    try:
+        results = search_products(q, limit=10)
+        return jsonify(results)
+    except Exception as e:
+        return jsonify([]), 200
 
 
 @app.route("/lote", methods=["POST"])

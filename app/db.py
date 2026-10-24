@@ -1016,3 +1016,41 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
             lot_id = cur.lastrowid
 
         return product_id, lot_id
+
+
+def search_products(term: str, limit: int = 10) -> list[dict]:
+    """
+    Busca produtos cadastrados no catálogo por nome ou código de barras para autocomplete instantâneo.
+    """
+    term = term.strip()
+    if not term:
+        return []
+
+    with get_db_cursor() as (cur, db_type):
+        ph = "%s" if db_type == "postgres" else "?"
+        like_op = "ILIKE" if db_type == "postgres" else "LIKE"
+        like_val = f"%{term}%"
+
+        query = f"""
+            SELECT id, name, bar_code
+            FROM products
+            WHERE name {like_op} {ph} OR bar_code {like_op} {ph}
+            ORDER BY
+                CASE WHEN name {like_op} {ph} THEN 1 ELSE 2 END,
+                name ASC
+            LIMIT {ph}
+        """
+        cur.execute(query, (like_val, like_val, f"{term}%", limit))
+        rows = cur.fetchall()
+
+        results = []
+        for r in rows:
+            if db_type == "postgres":
+                results.append({"id": r[0], "name": r[1], "bar_code": r[2]})
+            else:
+                results.append({
+                    "id": r["id"] if hasattr(r, "keys") else r[0],
+                    "name": r["name"] if hasattr(r, "keys") else r[1],
+                    "bar_code": r["bar_code"] if hasattr(r, "keys") else r[2]
+                })
+        return results

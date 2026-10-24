@@ -20,19 +20,35 @@
           hx-post="/lote"
           hx-target="#lot-table-body"
           hx-include="#current-filtro, #current-busca"
-          hx-on::after-request="if(event.detail.successful) { this.reset(); document.getElementById('form-add-msg').innerHTML = '<span class=\'text-emerald-600 text-xs font-semibold\'>✅ Lote cadastrado com sucesso!</span>'; setTimeout(() => document.getElementById('form-add-msg').innerHTML='', 4000); }"
+          hx-on::after-request="if(event.detail.successful) { this.reset(); clearAddLotSelection(); document.getElementById('form-add-msg').innerHTML = '<span class=\'text-emerald-600 text-xs font-semibold\'>✅ Lote cadastrado com sucesso!</span>'; setTimeout(() => document.getElementById('form-add-msg').innerHTML='', 4000); }"
           class="hidden mt-3 pt-3 border-t border-gray-100">
         
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2.5">
-            <div class="md:col-span-2">
-                <label class="block text-xs font-semibold text-gray-600 mb-1">Nome do Produto *</label>
-                <input type="text" name="name" required placeholder="Ex: LEITE INTEGRAL 1L"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm uppercase focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+            <div class="md:col-span-2 relative">
+                <div class="flex items-center justify-between mb-1">
+                    <label class="block text-xs font-semibold text-gray-600">Nome do Produto *</label>
+                    <span id="badge-catalog-selected" class="hidden text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-medium">✓ Catálogo</span>
+                </div>
+                <div class="relative">
+                    <input type="text"
+                           id="input-add-lot-name"
+                           name="name"
+                           required
+                           autocomplete="off"
+                           placeholder="Digite para buscar no catálogo ou cadastrar novo..."
+                           oninput="onAddLotSearch(this.value)"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm uppercase focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+                </div>
+
+                <!-- Menu Dropdown de Busca e Seleção do Catálogo -->
+                <div id="dropdown-add-lot-results"
+                     class="hidden absolute left-0 right-0 z-50 mt-1 bg-white border border-gray-200 rounded-xl shadow-2xl max-h-56 overflow-y-auto divide-y divide-gray-100 text-left">
+                </div>
             </div>
 
             <div>
                 <label class="block text-xs font-semibold text-gray-600 mb-1">Quantidade *</label>
-                <input type="number" name="quant" value="0" min="0" required
+                <input type="number" id="input-add-lot-quant" name="quant" value="0" min="0" required
                        class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-emerald-400 focus:outline-none">
             </div>
 
@@ -44,7 +60,7 @@
 
             <div>
                 <label class="block text-xs font-semibold text-gray-600 mb-1">Validade *</label>
-                <input type="date" name="date_valid" required
+                <input type="date" id="input-add-lot-date" name="date_valid" required
                        class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-emerald-400 focus:outline-none">
             </div>
         </div>
@@ -571,6 +587,103 @@ async function submitImportPlanilha(event) {
         }
     }
 }
+
+// ── Autocomplete e Seleção do Catálogo no Cadastro de Lotes ──────────────────
+let addLotDebounceTimer = null;
+
+function onAddLotSearch(val) {
+    const q = val.trim();
+    const dropdown = document.getElementById('dropdown-add-lot-results');
+    const badge = document.getElementById('badge-catalog-selected');
+    if (badge) badge.classList.add('hidden');
+
+    if (!q || q.length < 2) {
+        if (dropdown) dropdown.classList.add('hidden');
+        return;
+    }
+
+    clearTimeout(addLotDebounceTimer);
+    addLotDebounceTimer = setTimeout(async () => {
+        try {
+            const resp = await fetch(`/api/products/search?q=${encodeURIComponent(q)}`);
+            const items = await resp.json();
+            renderAddLotDropdown(items, q);
+        } catch (e) {
+            console.error("Erro na busca de produtos:", e);
+        }
+    }, 100);
+}
+
+function renderAddLotDropdown(items, query) {
+    const dropdown = document.getElementById('dropdown-add-lot-results');
+    if (!dropdown) return;
+
+    if (!items || items.length === 0) {
+        dropdown.innerHTML = `
+            <div class="p-3 text-xs text-gray-500 bg-white">
+                Nenhum produto correspondente no catálogo.
+                <div class="mt-1 font-semibold text-emerald-700">"<b>${query.toUpperCase()}</b>" será cadastrado como um produto novo.</div>
+            </div>
+        `;
+        dropdown.classList.remove('hidden');
+        return;
+    }
+
+    let html = `
+        <div class="p-2 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase tracking-wider flex items-center justify-between border-b border-gray-100">
+            <span>Produtos no Catálogo (${items.length})</span>
+            <span class="text-emerald-700">Clique para selecionar</span>
+        </div>
+    `;
+
+    items.forEach((item) => {
+        const codeText = item.bar_code ? `Cód: ${item.bar_code}` : `#${item.id}`;
+        const escapedName = (item.name || '').replace(/'/g, "\\'");
+        html += `
+            <button type="button"
+                    onclick="selectProductToAdd('${escapedName}')"
+                    class="w-full text-left px-3.5 py-2 hover:bg-emerald-50 active:bg-emerald-100 transition flex items-center justify-between gap-2 border-b border-gray-100 last:border-b-0 cursor-pointer bg-white">
+                <span class="font-semibold text-xs sm:text-sm text-gray-800 uppercase truncate">${item.name}</span>
+                <span class="text-[11px] font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded shrink-0">${codeText}</span>
+            </button>
+        `;
+    });
+
+    dropdown.innerHTML = html;
+    dropdown.classList.remove('hidden');
+}
+
+function selectProductToAdd(name) {
+    const input = document.getElementById('input-add-lot-name');
+    const dropdown = document.getElementById('dropdown-add-lot-results');
+    const badge = document.getElementById('badge-catalog-selected');
+    const quantInput = document.getElementById('input-add-lot-quant');
+
+    if (input) input.value = name;
+    if (dropdown) dropdown.classList.add('hidden');
+    if (badge) badge.classList.remove('hidden');
+
+    if (quantInput) {
+        quantInput.focus();
+        quantInput.select();
+    }
+}
+
+function clearAddLotSelection() {
+    const dropdown = document.getElementById('dropdown-add-lot-results');
+    const badge = document.getElementById('badge-catalog-selected');
+    if (dropdown) dropdown.classList.add('hidden');
+    if (badge) badge.classList.add('hidden');
+}
+
+// Fecha o dropdown se clicar fora
+document.addEventListener('click', function(e) {
+    const dropdown = document.getElementById('dropdown-add-lot-results');
+    const input = document.getElementById('input-add-lot-name');
+    if (dropdown && !dropdown.contains(e.target) && e.target !== input) {
+        dropdown.classList.add('hidden');
+    }
+});
 
 // Inicializa WebSocket
 if (document.readyState === 'loading') {
