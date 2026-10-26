@@ -45,6 +45,8 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 *.bak
+*.db-wal
+*.db-shm
 !database/products.db
 
 # Logs

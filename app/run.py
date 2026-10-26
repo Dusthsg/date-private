@@ -60,22 +60,32 @@ connected_clients = set()
 clients_lock = threading.Lock()
 
 
-def broadcast_reload(reason="change"):
-    """Notifica todos os clientes WebSocket conectados para atualizarem suas telas."""
-    dead_clients = []
-    with clients_lock:
-        clients_copy = list(connected_clients)
-
-    for client in clients_copy:
-        try:
-            client.send(json.dumps({"type": "reload", "reason": reason}))
-        except Exception:
-            dead_clients.append(client)
-
-    if dead_clients:
+def broadcast_reload(reason="change", exclude_client_id=None):
+    """
+    Notifica todos os clientes WebSocket em thread paralela de alta velocidade.
+    NUNCA bloqueia a resposta HTTP do usuário atual.
+    """
+    def _async_notify():
+        dead_clients = []
         with clients_lock:
-            for d in dead_clients:
-                connected_clients.discard(d)
+            clients_copy = list(connected_clients)
+
+        payload = json.dumps({"type": "reload", "reason": reason, "sender": exclude_client_id})
+        for client in clients_copy:
+            try:
+                # Não notifica o próprio cliente que acabou de enviar o formulário
+                if exclude_client_id and getattr(client, "client_id", None) == exclude_client_id:
+                    continue
+                client.send(payload)
+            except Exception:
+                dead_clients.append(client)
+
+        if dead_clients:
+            with clients_lock:
+                for d in dead_clients:
+                    connected_clients.discard(d)
+
+    threading.Thread(target=_async_notify, daemon=True).start()
 
 
 # Inicializa o banco de dados (SQLite local primeiro, depois ligação com PostgreSQL)
@@ -166,7 +176,10 @@ def ws_handler(ws):
                 continue
 
             action = msg.get("action")
-            if action == "search":
+            if action == "register":
+                ws.client_id = msg.get("clientId")
+                continue
+            elif action == "search":
                 filtro = msg.get("filtro", "todos")
                 busca = msg.get("busca", "").strip()
                 seq = msg.get("seq")
@@ -336,8 +349,9 @@ def add_lot():
     except Exception as e:
         return f'<div class="text-red-500 text-xs p-2">Erro ao cadastrar lote: {str(e)}</div>', 500
 
-    # Notifica outros clientes via WebSocket em tempo real
-    broadcast_reload("create_lot")
+    # Notifica outros clientes via WebSocket em tempo real sem travar a requisição atual
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("create_lot", exclude_client_id=client_id)
 
     # Recarrega a tabela para quem enviou o formulário
     filtro = request.form.get("filtro", "todos")
@@ -366,8 +380,9 @@ def delete_lot(lot_id: int):
     except Exception as e:
         return f"Erro ao deletar: {str(e)}", 500
 
-    # Notifica outros clientes conectados via WebSocket
-    broadcast_reload("delete_lot")
+    # Notifica outros clientes conectados via WebSocket sem travar quem deletou
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("delete_lot", exclude_client_id=client_id)
 
     # Retorna string vazia — o HTMX vai remover a <tr> do DOM do cliente atual
     return ""
@@ -389,8 +404,9 @@ def update_quant(lot_id: int):
     except Exception as e:
         return f"Erro ao salvar: {str(e)}", 500
 
-    # Notifica outros clientes
-    broadcast_reload("update_quant")
+    # Notifica outros clientes de forma assíncrona
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("update_quant", exclude_client_id=client_id)
 
     return render_template("partials/quant_cell.html", lot={"lot_id": lot_id, "quant": quant})
 
@@ -411,8 +427,9 @@ def update_price(lot_id: int):
     except Exception as e:
         return f"Erro ao salvar: {str(e)}", 500
 
-    # Notifica outros clientes
-    broadcast_reload("update_price")
+    # Notifica outros clientes de forma assíncrona
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("update_price", exclude_client_id=client_id)
 
     return render_template("partials/price_cell.html", lot={"lot_id": lot_id, "price": price})
 

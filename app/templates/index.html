@@ -235,6 +235,15 @@
 
 <!-- Lógica Client-side de WebSocket e Busca Ultrarrápida -->
 <script>
+window.myClientId = 'c_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+
+// Anexa o identificador do cliente a todas as requisições HTMX para evitar recarregamento redundante da própria tela
+document.addEventListener('htmx:configRequest', function(evt) {
+    if (evt && evt.detail && evt.detail.headers) {
+        evt.detail.headers['X-Client-ID'] = window.myClientId;
+    }
+});
+
 let socket = null;
 let searchDebounceTimer = null;
 let reloadDebounceTimer = null;
@@ -248,6 +257,9 @@ function initWebSocket() {
     socket = new WebSocket(wsUrl);
 
     socket.onopen = function() {
+        // Registra o ID desta aba no servidor
+        socket.send(JSON.stringify({ action: "register", clientId: window.myClientId }));
+
         const badge = document.getElementById('ws-badge');
         if (badge) {
             badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800";
@@ -291,6 +303,10 @@ function initWebSocket() {
                 renderLotsData(data.html, data.total);
 
             } else if (data.type === 'reload') {
+                // Se a ação partiu desta mesma aba, ignora pois o HTMX já atualizou a célula localmente em 0ms
+                if (data.sender && data.sender === window.myClientId) {
+                    return;
+                }
                 // Invalida cache local do cliente e recarrega com debounce inteligente
                 clientCache.clear();
                 clearTimeout(reloadDebounceTimer);
