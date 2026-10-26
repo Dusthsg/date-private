@@ -6,17 +6,15 @@
     <title>DateLimit — Controle de Validade</title>
 
     <!-- TailwindCSS via CDN com suporte a darkMode: 'class' -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        tailwind = {
-            config: {
-                darkMode: 'class',
-                theme: {
-                    extend: {}
-                }
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {}
             }
         };
     </script>
-    <script src="https://cdn.tailwindcss.com"></script>
 
     <!-- Detecção Instantânea de Tema Salvo (Evita tela branca ao carregar) -->
     <script>
@@ -39,6 +37,14 @@
     <style>
         /* Animação de fade-out ao deletar */
         tr.htmx-swapping { opacity: 0; transition: opacity 0.4s ease-out; }
+
+        /* Ajuste do esquema de cores nativo (scrollbars e controles do navegador) */
+        html.dark {
+            color-scheme: dark;
+        }
+        html:not(.dark) {
+            color-scheme: light;
+        }
     </style>
     <script>
         // Flag global de edição
@@ -101,28 +107,36 @@
         });
 
         // Alternância e persistência de Modo Escuro
-        function updateThemeUI() {
+        window.updateThemeUI = function() {
             const isDark = document.documentElement.classList.contains('dark');
+            if (document.body) {
+                if (isDark) document.body.classList.add('dark');
+                else document.body.classList.remove('dark');
+            }
             const icon = document.getElementById('theme-toggle-icon');
             const text = document.getElementById('theme-toggle-text');
             const btn = document.getElementById('btn-theme-toggle');
             if (icon) icon.innerText = isDark ? '☀️' : '🌙';
             if (text) text.innerText = isDark ? 'Modo Claro' : 'Modo Escuro';
             if (btn) btn.title = isDark ? 'Mudar para Modo Claro' : 'Mudar para Modo Escuro';
-        }
+        };
 
-        function toggleDarkMode() {
+        window.toggleDarkMode = function() {
             const isDark = document.documentElement.classList.toggle('dark');
+            if (document.body) {
+                if (isDark) document.body.classList.add('dark');
+                else document.body.classList.remove('dark');
+            }
             try {
                 localStorage.setItem('datelimit_theme', isDark ? 'dark' : 'light');
             } catch (e) {}
-            updateThemeUI();
-        }
+            window.updateThemeUI();
+        };
 
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', updateThemeUI);
+            document.addEventListener('DOMContentLoaded', window.updateThemeUI);
         } else {
-            updateThemeUI();
+            window.updateThemeUI();
         }
     </script>
 </head>
