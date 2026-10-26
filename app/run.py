@@ -438,7 +438,7 @@ def update_price(lot_id: int):
 def import_planilha():
     """
     Recebe uma planilha Excel (.xlsx, .xls) ou CSV e executa a auditoria linha por linha,
-    transmitindo o progresso em tempo real (0% a 100%) via streaming NDJSON.
+    com detecção automática universal e suporte a mapeamento de colunas interativo.
     """
     if request.method == "GET":
         from flask import redirect
@@ -456,8 +456,32 @@ def import_planilha():
     filename = uploaded_file.filename
     content = uploaded_file.read()
 
+    custom_col_prod = request.form.get("col_prod") or None
+    custom_col_valid = request.form.get("col_valid") or None
+    custom_col_code = request.form.get("col_code") or None
+    custom_col_quant = request.form.get("col_quant") or None
+
     try:
-        result = audit_and_import_spreadsheet(content, filename)
+        result = audit_and_import_spreadsheet(
+            content,
+            filename,
+            custom_col_prod=custom_col_prod,
+            custom_col_valid=custom_col_valid,
+            custom_col_code=custom_col_code,
+            custom_col_quant=custom_col_quant
+        )
+
+        # Se for necessária confirmação manual de colunas pelo usuário
+        if result.get("needs_mapping"):
+            return jsonify({
+                "success": False,
+                "needs_mapping": True,
+                "columns": result.get("columns", []),
+                "preview": result.get("preview", []),
+                "suggestions": result.get("suggestions", {}),
+                "message": result.get("error", "Confirmação de colunas necessária")
+            }), 200
+
         html_summary = render_template(
             "partials/import_summary.html",
             stats=result["stats"],
@@ -471,6 +495,8 @@ def import_planilha():
             "html": html_summary
         })
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 400
 
 

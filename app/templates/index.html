@@ -182,17 +182,16 @@
     </div>
 
     <form id="form-import-planilha"
-          onsubmit="submitImportPlanilha(event); return false;"
+          onsubmit="event.preventDefault(); submitImportPlanilha(event); return false;"
           action="javascript:void(0);"
-          method="POST"
-          enctype="multipart/form-data"
           class="flex flex-col sm:flex-row items-center gap-3">
         
         <input type="file"
                id="input-spreadsheet-file"
                name="file"
-               accept=".xlsx,.xls,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,*/*"
+               accept=".xlsx,.xls,.csv,.xml,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/xml,*/*"
                required
+               onchange="if (this.files && this.files.length) currentSpreadsheetFile = this.files[0];"
                class="text-xs text-gray-700 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer">
         
         <div class="flex items-center gap-2">
@@ -491,22 +490,162 @@ async function triggerPullConnection() {
     }
 }
 
-async function submitImportPlanilha(event) {
-    if (event) event.preventDefault();
+let currentSpreadsheetFile = null;
+
+function renderColumnMappingInterface(data, file) {
+    const resultContainer = document.getElementById('import-result-container');
+    if (!resultContainer) return;
+
+    const cols = data.columns || [];
+    const suggestions = data.suggestions || {};
+    const preview = data.preview || [];
+
+    // Helper para gerar as options de um select
+    const generateOptions = (selectedVal, isRequired = false) => {
+        let html = isRequired ? '' : '<option value="">(Nenhuma / Opcional)</option>';
+        cols.forEach(c => {
+            const isSel = (c === selectedVal);
+            html += `<option value="${c}" ${isSel ? 'selected' : ''}>${c}</option>`;
+        });
+        return html;
+    };
+
+    let previewHeaders = cols.map(c => `<th class="px-2.5 py-1.5 font-bold text-gray-700 bg-gray-100 border-b border-gray-200 whitespace-nowrap text-xs">${c}</th>`).join('');
+    let previewBody = '';
+    preview.forEach(row => {
+        let cells = cols.map(c => `<td class="px-2.5 py-1 border-b border-gray-100 text-gray-600 truncate max-w-[150px] text-[11px]">${row[c] || ''}</td>`).join('');
+        previewBody += `<tr>${cells}</tr>`;
+    });
+
+    resultContainer.innerHTML = `
+        <div id="import-mapping-card" class="mt-4 p-4 bg-amber-50/70 border border-amber-300 rounded-xl space-y-4 shadow-sm animate-fade-in">
+            <div class="flex items-start gap-2.5">
+                <span class="text-xl">📋</span>
+                <div class="space-y-0.5">
+                    <h4 class="text-sm font-bold text-amber-900">Confirmação de Colunas da Planilha</h4>
+                    <p class="text-xs text-amber-800">
+                        O arquivo <b>${file.name}</b> foi lido com sucesso! Para conciliar perfeitamente com seu estoque, confirme abaixo quais colunas contêm o <b>Produto</b> e a <b>Validade</b>:
+                    </p>
+                </div>
+            </div>
+
+            <!-- Seletores de Mapeamento -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white p-3.5 rounded-lg border border-amber-200">
+                <div>
+                    <label class="block text-[11px] font-bold text-gray-700 mb-1">
+                        📦 Coluna do Produto <span class="text-red-500">*</span>
+                    </label>
+                    <select id="map-col-prod" class="w-full text-xs bg-gray-50 border border-gray-300 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
+                        ${generateOptions(suggestions.col_prod, true)}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-[11px] font-bold text-gray-700 mb-1">
+                        📅 Coluna da Validade <span class="text-red-500">*</span>
+                    </label>
+                    <select id="map-col-valid" class="w-full text-xs bg-gray-50 border border-gray-300 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
+                        ${generateOptions(suggestions.col_valid, true)}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-[11px] font-bold text-gray-700 mb-1">
+                        🏷️ Código de Barras (Opcional)
+                    </label>
+                    <select id="map-col-code" class="w-full text-xs bg-gray-50 border border-gray-300 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
+                        ${generateOptions(suggestions.col_code, false)}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-[11px] font-bold text-gray-700 mb-1">
+                        🔢 Quantidade (Opcional)
+                    </label>
+                    <select id="map-col-quant" class="w-full text-xs bg-gray-50 border border-gray-300 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
+                        ${generateOptions(suggestions.col_quant, false)}
+                    </select>
+                </div>
+            </div>
+
+            <!-- Pré-visualização das Primeiras Linhas da Planilha -->
+            <div class="space-y-1.5">
+                <span class="text-[11px] font-semibold text-gray-600 uppercase tracking-wider">Amostra dos Dados da Planilha (5 primeiras linhas):</span>
+                <div class="overflow-x-auto bg-white border border-gray-200 rounded-lg max-h-48 shadow-inner">
+                    <table class="w-full text-left border-collapse">
+                        <thead><tr>${previewHeaders}</tr></thead>
+                        <tbody>${previewBody}</tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Botões de Ação do Mapeamento -->
+            <div class="flex items-center justify-between pt-1">
+                <button type="button"
+                        onclick="document.getElementById('import-result-container').innerHTML = '';"
+                        class="text-xs text-gray-500 hover:text-gray-700 font-medium px-3 py-1.5">
+                    Cancelar
+                </button>
+                <button type="button"
+                        onclick="confirmColumnMappingAndSubmit()"
+                        class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition inline-flex items-center gap-1.5 cursor-pointer">
+                    <span>🚀 Confirmar Colunas e Importar</span>
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function confirmColumnMappingAndSubmit() {
+    const colProd = document.getElementById('map-col-prod')?.value || '';
+    const colValid = document.getElementById('map-col-valid')?.value || '';
+    const colCode = document.getElementById('map-col-code')?.value || '';
+    const colQuant = document.getElementById('map-col-quant')?.value || '';
+
+    if (!colProd || !colValid) {
+        alert('Por favor, selecione as colunas de Produto e Validade.');
+        return;
+    }
+
+    submitImportPlanilha(null, {
+        col_prod: colProd,
+        col_valid: colValid,
+        col_code: colCode,
+        col_quant: colQuant
+    });
+}
+
+function submitImportPlanilha(event, customMapping = null) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
 
     const fileInput = document.getElementById('input-spreadsheet-file');
     const resultContainer = document.getElementById('import-result-container');
     const loading = document.getElementById('import-loading');
     const btn = document.getElementById('btn-import-submit');
 
-    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    // Recupera o arquivo selecionado ou o salvo anteriormente
+    if (fileInput && fileInput.files && fileInput.files.length > 0) {
+        currentSpreadsheetFile = fileInput.files[0];
+    }
+
+    if (!currentSpreadsheetFile) {
         resultContainer.innerHTML = '<div class="text-amber-700 text-xs p-3 bg-amber-50 border border-amber-300 rounded-lg mt-3 font-medium">⚠️ Por favor, selecione um arquivo de planilha (.xlsx, .xls ou .csv) antes de processar.</div>';
         return;
     }
 
-    const file = fileInput.files[0];
+    const file = currentSpreadsheetFile;
     const formData = new FormData();
     formData.append('file', file);
+
+    if (customMapping) {
+        if (customMapping.col_prod) formData.append('col_prod', customMapping.col_prod);
+        if (customMapping.col_valid) formData.append('col_valid', customMapping.col_valid);
+        if (customMapping.col_code) formData.append('col_code', customMapping.col_code);
+        if (customMapping.col_quant) formData.append('col_quant', customMapping.col_quant);
+    }
 
     if (loading) loading.classList.remove('hidden');
     if (btn) {
@@ -514,16 +653,16 @@ async function submitImportPlanilha(event) {
         btn.classList.add('opacity-60', 'cursor-not-allowed');
     }
 
-    // Estrutura visual da barra de progresso com animação instantânea (0ms de atraso percebido)
+    // Estrutura visual da barra de progresso com animação instantânea
     resultContainer.innerHTML = `
         <div id="import-progress-card" class="mt-4 p-4 bg-white border border-emerald-200 rounded-xl space-y-3 shadow-sm transition-all duration-300">
             <div class="flex items-center justify-between text-xs font-semibold">
                 <span class="text-gray-700 flex items-center gap-2 truncate max-w-[75%]">
                     <span id="import-progress-spinner" class="animate-spin text-emerald-600 inline-block text-sm">⏳</span>
-                    <span id="import-progress-stage" class="text-gray-800">Enviando e auditando ${file.name} (${(file.size / 1024).toFixed(1)} KB)...</span>
+                    <span id="import-progress-stage" class="text-gray-800">Enviando ${file.name} (${(file.size / 1024).toFixed(1)} KB)...</span>
                 </span>
                 <span id="import-progress-percent" class="text-emerald-700 font-extrabold font-mono text-base tracking-tight">
-                    20%
+                    15%
                 </span>
             </div>
 
@@ -531,12 +670,12 @@ async function submitImportPlanilha(event) {
             <div class="w-full bg-gray-100 rounded-full h-3.5 overflow-hidden shadow-inner p-0.5 border border-gray-200">
                 <div id="import-progress-bar"
                      class="bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 h-full rounded-full transition-all duration-150 ease-out shadow-sm"
-                     style="width: 20%;">
+                     style="width: 15%;">
                 </div>
             </div>
 
             <div class="flex items-center justify-between text-[11px] text-gray-500 pt-0.5">
-                <span id="import-progress-count" class="font-medium text-gray-600">Reconciliando lotes no banco de dados...</span>
+                <span id="import-progress-count" class="font-medium text-gray-600">Reconciliando linhas e estoque no banco de dados...</span>
                 <span id="import-progress-mini-stats" class="font-bold text-emerald-700">⚡ Otimizado</span>
             </div>
         </div>
@@ -550,30 +689,95 @@ async function submitImportPlanilha(event) {
     const summaryWrapper = document.getElementById('import-summary-wrapper');
     const spinner = document.getElementById('import-progress-spinner');
 
-    // Animação imediata e suave enquanto o servidor conclui o processamento em ~0.2s
-    let curPct = 20;
-    const progressTimer = setInterval(() => {
-        if (curPct < 85) {
-            curPct += 15;
-            if (progressBar) progressBar.style.width = curPct + '%';
-            if (percentEl) percentEl.innerText = curPct + '%';
+    let processingTimer = null;
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/import-planilha', true);
+    xhr.setRequestHeader('X-Client-ID', window.myClientId || '');
+
+    // 1. Progresso real de envio dos bytes do arquivo (0% até 45%)
+    xhr.upload.onprogress = function(evt) {
+        if (evt.lengthComputable) {
+            const uploadPct = Math.min(45, Math.round((evt.loaded / evt.total) * 45));
+            if (progressBar) progressBar.style.width = uploadPct + '%';
+            if (percentEl) percentEl.innerText = uploadPct + '%';
+            if (stageEl) stageEl.innerText = `Enviando arquivo: ${(evt.loaded / 1024).toFixed(0)} KB de ${(evt.total / 1024).toFixed(0)} KB...`;
         }
-    }, 60);
+    };
 
-    try {
-        const response = await fetch('/import-planilha', {
-            method: 'POST',
-            body: formData
-        });
+    // 2. Quando o upload conclui, inicia a animação do processamento no servidor (45% até 90%)
+    xhr.upload.onload = function() {
+        if (progressBar) progressBar.style.width = '50%';
+        if (percentEl) percentEl.innerText = '50%';
+        if (stageEl) stageEl.innerText = 'Arquivo enviado! Auditando linhas e conciliando com o estoque...';
 
-        clearInterval(progressTimer);
+        let currentSimPct = 50;
+        processingTimer = setInterval(() => {
+            if (currentSimPct < 90) {
+                currentSimPct += 10;
+                if (progressBar) progressBar.style.width = currentSimPct + '%';
+                if (percentEl) percentEl.innerText = currentSimPct + '%';
+            }
+        }, 120);
+    };
 
-        const data = await response.json();
-        if (!response.ok || !data.success) {
-            throw new Error(data.error || "Erro ao processar planilha no servidor.");
+    // 3. Resposta recebida do servidor
+    xhr.onload = function() {
+        if (processingTimer) clearInterval(processingTimer);
+
+        if (loading) loading.classList.add('hidden');
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-not-allowed');
         }
 
-        // Conclusão imediata
+        let data = null;
+        try {
+            data = JSON.parse(xhr.responseText);
+        } catch (e) {
+            // Em caso de retorno não-JSON (ex: erro HTML de servidor ou proxy)
+            resultContainer.innerHTML = `
+                <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-2">
+                    <div class="font-bold flex items-center gap-1.5">
+                        <span>❌</span>
+                        <span>Falha no servidor ao processar planilha (Status ${xhr.status}):</span>
+                    </div>
+                    <div class="text-xs bg-white p-2.5 rounded border border-red-200">
+                        O servidor retornou uma resposta inesperada. Verifique se o formato do arquivo (.xlsx, .xls ou .csv) está íntegro.
+                    </div>
+                    <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
+                        Tentar Novamente
+                    </button>
+                </div>
+            `;
+            return;
+        }
+
+        // Se o servidor pedir confirmação / mapeamento manual de colunas
+        if (data && data.needs_mapping) {
+            renderColumnMappingInterface(data, file);
+            return;
+        }
+
+        // Se houve erro retornado em JSON
+        if (xhr.status !== 200 || !data || !data.success) {
+            const errorMsg = (data && data.error) ? data.error : `Erro HTTP ${xhr.status}`;
+            resultContainer.innerHTML = `
+                <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-2">
+                    <div class="font-bold flex items-center gap-1.5">
+                        <span>❌</span>
+                        <span>Falha na importação da planilha:</span>
+                    </div>
+                    <div class="text-xs font-mono bg-white p-2.5 rounded border border-red-200">${errorMsg}</div>
+                    <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
+                        Tentar Novamente
+                    </button>
+                </div>
+            `;
+            return;
+        }
+
+        // Conclusão com sucesso total
         if (progressBar) progressBar.style.width = '100%';
         if (percentEl) percentEl.innerText = '100%';
         if (spinner) spinner.innerText = '✅';
@@ -587,26 +791,34 @@ async function submitImportPlanilha(event) {
 
         clientCache.clear();
         performSearch(true);
-        fileInput.value = '';
+        if (fileInput) fileInput.value = '';
+    };
 
-    } catch (err) {
-        clearInterval(progressTimer);
-        resultContainer.innerHTML = `
-            <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-1">
-                <div class="font-bold flex items-center gap-1.5">
-                    <span>❌</span>
-                    <span>Falha na importação:</span>
-                </div>
-                <div class="text-xs font-mono bg-white p-2.5 rounded border border-red-200 mt-1">${err.message}</div>
-            </div>
-        `;
-    } finally {
+    // 4. Erros de rede ou conexão
+    xhr.onerror = function() {
+        if (processingTimer) clearInterval(processingTimer);
         if (loading) loading.classList.add('hidden');
         if (btn) {
             btn.disabled = false;
             btn.classList.remove('opacity-60', 'cursor-not-allowed');
         }
-    }
+        resultContainer.innerHTML = `
+            <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-2">
+                <div class="font-bold flex items-center gap-1.5">
+                    <span>⚠️</span>
+                    <span>Erro de conexão de rede durante o envio.</span>
+                </div>
+                <div class="text-xs text-red-600">
+                    Não foi possível completar o envio para o servidor. Verifique sua conexão e tente novamente.
+                </div>
+                <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
+                    Tentar Novamente
+                </button>
+            </div>
+        `;
+    };
+
+    xhr.send(formData);
 }
 
 // ── Autocomplete e Seleção do Catálogo no Cadastro de Lotes ──────────────────

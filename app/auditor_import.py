@@ -25,16 +25,35 @@ def normalize_col_name(col: str) -> str:
     s = s.replace("Ó", "O").replace("Ô", "O").replace("Õ", "O")
     s = s.replace("Ú", "U")
     s = s.replace("Ç", "C")
+    # Remove pontuações e caracteres especiais
+    s = re.sub(r"[._\-/\\]+", " ", s).strip()
     return s
 
 
-def find_column(df, candidates):
-    """Localiza a primeira coluna do dataframe que combina com a lista de candidatos."""
+def find_column(df, candidates, custom_name=None):
+    """
+    Localiza a coluna do dataframe que combina com a lista de candidatos.
+    Suporta nome customizado explícito, correspondência exata e contenção aproximada (fuzzy).
+    """
+    if custom_name and custom_name in df.columns:
+        return custom_name
+
     norm_cols = {normalize_col_name(c): c for c in df.columns}
+
+    # 1. Correspondência exata normalizada
     for cand in candidates:
         cand_norm = normalize_col_name(cand)
         if cand_norm in norm_cols:
             return norm_cols[cand_norm]
+
+    # 2. Correspondência aproximada (subpalavra / substring)
+    for cand in candidates:
+        cand_norm = normalize_col_name(cand)
+        if len(cand_norm) >= 3:
+            for col_norm, original_col in norm_cols.items():
+                if cand_norm == col_norm or f" {cand_norm} " in f" {col_norm} " or col_norm.startswith(cand_norm) or cand_norm.startswith(col_norm):
+                    return original_col
+
     return None
 
 
@@ -42,26 +61,31 @@ PROD_CANDIDATES = [
     "Produto", "Descricao", "Nome", "Item", "Mercadoria", "Desc",
     "Descricao do Produto", "Nome do Produto", "Prod", "Produto Descricao",
     "Descricao Reduzida", "Descricao_Produto", "Desc_Produto", "Dsc_Produto",
-    "Produto/Descricao", "Descricao Produto"
+    "Produto/Descricao", "Descricao Produto", "Ds_Produto", "Descr", "Mat_Desc",
+    "Material", "Artigo", "Denominacao", "Txt_Produto", "Nome_Item"
 ]
 
 VALID_CANDIDATES = [
     "Validade", "Vencimento", "Data Validade", "Dt Validade", "Data",
     "Vencto", "Dt Vencto", "Dt_Vencto", "Dt_Validade", "Data Vencimento",
     "Data_Vencimento", "Dt.Validade", "Dt.Vencimento", "Val", "Data_Val",
-    "Data_Vencto", "Dt. Vencto"
+    "Data_Vencto", "Dt. Vencto", "D_Val", "DT_VAL", "Venc", "Dt_Venc",
+    "Expiracao", "Dt Expiracao", "Dt_Expiracao", "Data Expiracao", "Valid",
+    "Vcto", "Dt_Vcto", "Data_Vcto"
 ]
 
 CODE_CANDIDATES = [
     "Codigo", "Cod", "EAN", "Codigo Barras", "Bar_code", "Cod Produto",
     "Cod_Produto", "Cod Barra", "Cod_Barra", "CodBar", "GTIN",
-    "Codigo de Barras", "Plu", "Cod.Barra", "Cod_Barras"
+    "Codigo de Barras", "Plu", "Cod.Barra", "Cod_Barras", "SKU", "Ref",
+    "Referencia", "Id_Produto", "Cod_Item", "Cód", "Cód.", "Cod_Prod"
 ]
 
 QUANT_CANDIDATES = [
     "Quantidade", "Qtd", "Qtde", "Estoque", "Saldo", "Fisico", "Quant",
     "Qtd Estoque", "Saldo Atual", "Qtd_Estoque", "Qtd_Loja", "Loja",
-    "Galpao", "Qtd_Fisica"
+    "Galpao", "Qtd_Fisica", "Saldo_Fisico", "Saldo_Estoque", "Qt_Estoque",
+    "Estoque_Loja", "Qtd_Saldo", "Qtd_Disp", "Qtde_Estoque"
 ]
 
 
@@ -114,40 +138,177 @@ def parse_date_value(raw_val) -> str | None:
     return None
 
 
+def parse_xml_spreadsheet(file_bytes: bytes) -> pd.DataFrame:
+    """
+    Parseia planilhas exportadas em XML Spreadsheet 2003
+    (comum em ERPs como Totvs, Linx, SysPDV, Senior salvas com extensão .xls).
+    """
+    try:
+        import xml.etree.ElementTree as ET
+        # Suporta arquivos com declarações de encoding variadas (latin1, windows-1252, utf-8)
+        try:
+            root = ET.fromstring(file_bytes)
+        except Exception:
+            # Fallback para decode ignorando erros se houver caracteres inválidos
+            text = file_bytes.decode("latin1", errors="replace")
+            root = ET.fromstring(text.encode("utf-8"))
+
+        rows = []
+        for elem in root.iter():
+            if elem.tag.endswith("Row"):
+                row_vals = []
+                col_idx = 1
+                for cell in elem.iter():
+                    if cell.tag.endswith("Cell"):
+                        idx_attr = None
+                        for k, v in cell.attrib.items():
+                            if k.endswith("Index"):
+                                try:
+                                    idx_attr = int(v)
+                                except (ValueError, TypeError):
+                                    pass
+                                break
+                        if idx_attr and idx_attr > col_idx:
+                            while col_idx < idx_attr:
+                                row_vals.append("")
+                                col_idx += 1
+                        cell_text = ""
+                        for data_elem in cell.iter():
+                            if data_elem.tag.endswith("Data") and data_elem.text:
+                                cell_text = str(data_elem.text).strip()
+                                break
+                        row_vals.append(cell_text)
+                        col_idx += 1
+                if any(bool(c) for c in row_vals):
+                    rows.append(row_vals)
+
+        if len(rows) > 0:
+            max_cols = max(len(r) for r in rows)
+            padded = [r + [""] * (max_cols - len(r)) for r in rows]
+            headers = [str(h).strip() if str(h).strip() else f"Coluna_{i+1}" for i, h in enumerate(padded[0])]
+            return pd.DataFrame(padded[1:], columns=headers)
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
+from html.parser import HTMLParser
+
+
+class HTMLTableExtractor(HTMLParser):
+    """Extrator nativo de tabelas HTML em Python puro (sem necessidade de lxml ou bs4)."""
+    def __init__(self):
+        super().__init__()
+        self.tables = []
+        self.current_table = []
+        self.current_row = []
+        self.current_cell = []
+        self.in_cell = False
+
+    def handle_starttag(self, tag, attrs):
+        t = tag.lower()
+        if t == "table":
+            self.current_table = []
+        elif t == "tr":
+            self.current_row = []
+        elif t in ("td", "th"):
+            self.in_cell = True
+            self.current_cell = []
+
+    def handle_endtag(self, tag):
+        t = tag.lower()
+        if t in ("td", "th"):
+            self.in_cell = False
+            self.current_row.append("".join(self.current_cell).strip())
+        elif t == "tr":
+            if any(bool(c) for c in self.current_row):
+                self.current_table.append(self.current_row)
+        elif t == "table":
+            if self.current_table:
+                self.tables.append(self.current_table)
+
+    def handle_data(self, data):
+        if self.in_cell:
+            self.current_cell.append(data)
+
+
+def parse_html_table(file_bytes: bytes) -> pd.DataFrame:
+    """Extrai tabelas HTML salvas com extensão .xls de sistemas legados de PDV/ERP."""
+    parser = HTMLTableExtractor()
+    for enc in ("utf-8", "latin1", "cp1252", "iso-8859-1"):
+        try:
+            text = file_bytes.decode(enc)
+            parser.feed(text)
+            break
+        except Exception:
+            continue
+
+    if not parser.tables:
+        return pd.DataFrame()
+
+    rows = parser.tables[0]
+    if len(rows) > 1:
+        max_cols = max(len(r) for r in rows)
+        padded = [r + [""] * (max_cols - len(r)) for r in rows]
+        headers = [str(h).strip() if str(h).strip() else f"Coluna_{i+1}" for i, h in enumerate(padded[0])]
+        return pd.DataFrame(padded[1:], columns=headers)
+    elif len(rows) == 1:
+        return pd.DataFrame(rows)
+    return pd.DataFrame()
+
+
+def deep_scan_headers(df: pd.DataFrame, candidates_prod, candidates_valid):
+    """
+    Varre as primeiras 25 linhas caso as colunas principais não estejam na primeira linha
+    (muito comum em relatórios com cabeçalhos de empresa e data no topo).
+    """
+    col_p = find_column(df, candidates_prod)
+    col_v = find_column(df, candidates_valid)
+    if col_p and col_v:
+        return df, col_p, col_v
+
+    for i in range(min(25, len(df))):
+        row_str = " ".join([normalize_col_name(v) for v in df.iloc[i].dropna().astype(str)])
+        has_p = any(c in row_str for c in ["PRODUT", "DESCRIC", "NOME", "MERCAD", "ITEM", "PROD", "MAT", "DSC"])
+        has_v = any(c in row_str for c in ["VALID", "VENCT", "VENCIM", "DATA", "VENC", "VAL", "EXPIR"])
+        if has_p and has_v:
+            new_headers = [str(c).strip() if str(c).strip() and str(c).strip().lower() != "nan" else f"Coluna_{j+1}" for j, c in enumerate(df.iloc[i])]
+            df_candidate = df.iloc[i + 1:].copy().reset_index(drop=True)
+            df_candidate.columns = new_headers
+            c_p = find_column(df_candidate, candidates_prod)
+            c_v = find_column(df_candidate, candidates_valid)
+            if c_p and c_v:
+                return df_candidate, c_p, c_v
+
+    return df, col_p, col_v
+
+
 def read_spreadsheet_dataframe(file_bytes: bytes, filename: str) -> pd.DataFrame:
     """
-    Lê com velocidade máxima e tolerância a qualquer formato:
-    - Identifica magic bytes (BIFF8 .xls em 0.03s com xlrd direto)
-    - Identifica magic bytes (OpenXML .xlsx com openpyxl direto)
-    - Identifica exportações HTML salvas como .xls
-    - Identifica CSVs com detecção automática rápida de separador
+    Lê com tolerância universal e fallback em camadas:
+    1. XML Spreadsheet 2003 (ERPs brasileiros com extensão .xls)
+    2. HTML Table salvo como .xls (varre até 8KB de cabeçalho)
+    3. BIFF8 .xls binário legado (com xlrd e leitura integral de linhas)
+    4. OpenXML .xlsx moderno com openpyxl
+    5. CSV / TSV delimitado com múltiplos separadores e encodings
+    6. Fallbacks com pandas read_excel, read_html e read_csv engine python
     """
     if not file_bytes:
         return pd.DataFrame()
 
-    # 1. Magic bytes: Excel .xls binário legado (BIFF8: 0xD0CF11E0A1B11AE1)
-    if file_bytes.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
-        try:
-            import xlrd
-            book = xlrd.open_workbook(file_contents=file_bytes, on_demand=True)
-            sheet = book.sheet_by_index(0)
-            if sheet.nrows > 0:
-                headers = [str(sheet.cell_value(0, c)).strip() for c in range(sheet.ncols)]
-                rows = [sheet.row_values(r) for r in range(1, sheet.nrows)]
-                return pd.DataFrame(rows, columns=headers)
-        except Exception:
-            pass
+    preview_start = file_bytes[:8192].lower()
 
-    # 2. Magic bytes: Excel .xlsx moderno (ZIP: PK\x03\x04)
-    if file_bytes.startswith(b"PK\x03\x04"):
-        try:
-            return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
-        except Exception:
-            pass
+    # 1. XML Spreadsheet 2003 (começa com <?xml ou contém namespace do Office Spreadsheet)
+    if b"<?xml" in preview_start or b"urn:schemas-microsoft-com:office:spreadsheet" in preview_start or b"<workbook" in preview_start:
+        df_xml = parse_xml_spreadsheet(file_bytes)
+        if not df_xml.empty and len(df_xml.columns) > 1:
+            return df_xml
 
-    # 3. Exportações de ERP em tabela HTML salvas como .xls
-    preview = file_bytes[:1024].lower()
-    if b"<html" in preview or b"<table" in preview or b"<!doctype" in preview:
+    # 2. Exportações de ERP em tabela HTML salvas como .xls
+    if b"<html" in preview_start or b"<table" in preview_start or b"<!doctype" in preview_start or b"<tr" in preview_start:
+        df_html = parse_html_table(file_bytes)
+        if not df_html.empty and len(df_html.columns) > 1:
+            return df_html
         try:
             tables = pd.read_html(io.BytesIO(file_bytes))
             if tables and len(tables[0]) > 0:
@@ -155,11 +316,39 @@ def read_spreadsheet_dataframe(file_bytes: bytes, filename: str) -> pd.DataFrame
         except Exception:
             pass
 
-    # 4. CSV ou texto delimitado
+    # 3. Magic bytes: Excel .xls binário legado (BIFF8: 0xD0CF11E0A1B11AE1)
+    if file_bytes.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        try:
+            import xlrd
+            book = xlrd.open_workbook(file_contents=file_bytes, on_demand=True)
+            sheet = book.sheet_by_index(0)
+            if sheet.nrows > 0:
+                raw_rows = []
+                for r in range(sheet.nrows):
+                    raw_rows.append([sheet.cell_value(r, c) for c in range(sheet.ncols)])
+                if len(raw_rows) > 1:
+                    headers = [str(c).strip() if str(c).strip() else f"Coluna_{i+1}" for i, c in enumerate(raw_rows[0])]
+                    return pd.DataFrame(raw_rows[1:], columns=headers)
+        except Exception:
+            pass
+        # Fallback pd.read_excel para BIFF8
+        try:
+            return pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
+        except Exception:
+            pass
+
+    # 4. Magic bytes: Excel .xlsx moderno (ZIP: PK\x03\x04)
+    if file_bytes.startswith(b"PK\x03\x04"):
+        try:
+            return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+        except Exception:
+            pass
+
+    # 5. CSV ou texto delimitado
     filename_lower = filename.lower()
-    if filename_lower.endswith(".csv") or b"," in file_bytes[:512] or b";" in file_bytes[:512]:
+    if filename_lower.endswith(".csv") or b"," in file_bytes[:1024] or b";" in file_bytes[:1024] or b"\t" in file_bytes[:1024]:
         for sep in [";", ",", "\t", "|"]:
-            for enc in ["utf-8-sig", "utf-8", "latin1", "cp1252"]:
+            for enc in ["utf-8-sig", "utf-8", "latin1", "cp1252", "iso-8859-1"]:
                 try:
                     df = pd.read_csv(io.BytesIO(file_bytes), sep=sep, encoding=enc)
                     if len(df.columns) > 1 and len(df) > 0:
@@ -167,11 +356,33 @@ def read_spreadsheet_dataframe(file_bytes: bytes, filename: str) -> pd.DataFrame
                 except Exception:
                     pass
 
-    # 5. Fallback geral do Pandas
-    return pd.read_excel(io.BytesIO(file_bytes))
+    # 6. Fallback final resiliente com pandas
+    try:
+        return pd.read_excel(io.BytesIO(file_bytes))
+    except Exception:
+        pass
+    try:
+        tables = pd.read_html(io.BytesIO(file_bytes))
+        if tables and len(tables[0]) > 0:
+            return tables[0]
+    except Exception:
+        pass
+    try:
+        return pd.read_csv(io.BytesIO(file_bytes), sep=None, engine="python")
+    except Exception:
+        pass
+
+    return pd.DataFrame()
 
 
-def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
+def audit_and_import_spreadsheet_stream(
+    file_bytes: bytes,
+    filename: str,
+    custom_col_prod: str = None,
+    custom_col_valid: str = None,
+    custom_col_code: str = None,
+    custom_col_quant: str = None
+):
     """
     Gerador que executa a conciliação linha por linha e emite atualizações
     de progresso em tempo real (0% a 100%) para cada linha processada.
@@ -191,45 +402,53 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
         return
 
     if df.empty:
-        yield {"type": "error", "error": "A planilha enviada está vazia."}
+        yield {"type": "error", "error": "A planilha enviada está vazia ou não contém dados legíveis."}
         return
 
     yield {
         "type": "progress",
         "percent": 10,
-        "stage": "Identificando colunas de produto e validade...",
+        "stage": "Identificando estrutura de colunas e cabeçalhos...",
         "current": 0,
         "total": len(df),
     }
 
-    # 2. Identificação de colunas essenciais
-    col_prod = find_column(df, PROD_CANDIDATES)
-    col_valid = find_column(df, VALID_CANDIDATES)
+    # 2. Varredura inteligente de cabeçalhos nas primeiras 25 linhas
+    df, col_prod, col_valid = deep_scan_headers(df, PROD_CANDIDATES, VALID_CANDIDATES)
 
-    # Se não localizou, tenta detectar se o cabeçalho real está em alguma linha abaixo
-    if not col_prod or not col_valid:
-        for i in range(min(15, len(df))):
-            row_str = " ".join([normalize_col_name(v) for v in df.iloc[i].dropna().astype(str)])
-            has_p = any(c in row_str for c in ["PRODUT", "DESCRIC", "NOME", "MERCAD", "ITEM"])
-            has_v = any(c in row_str for c in ["VALID", "VENCT", "VENCIM", "DATA"])
-            if has_p and has_v:
-                df.columns = df.iloc[i].astype(str).str.strip()
-                df = df.iloc[i + 1:].reset_index(drop=True)
-                col_prod = find_column(df, PROD_CANDIDATES)
-                col_valid = find_column(df, VALID_CANDIDATES)
-                break
+    # Aplica seleções manuais se fornecidas
+    if custom_col_prod and custom_col_prod in df.columns:
+        col_prod = custom_col_prod
+    if custom_col_valid and custom_col_valid in df.columns:
+        col_valid = custom_col_valid
 
-    col_code = find_column(df, CODE_CANDIDATES)
-    col_quant = find_column(df, QUANT_CANDIDATES)
+    col_code = find_column(df, CODE_CANDIDATES, custom_col_code)
+    col_quant = find_column(df, QUANT_CANDIDATES, custom_col_quant)
     has_quant_col = col_quant is not None
 
-    if not col_prod:
-        cols_found = ", ".join([str(c) for c in df.columns[:8]])
-        yield {"type": "error", "error": f"Coluna de Produto/Descrição não identificada. Colunas encontradas: [{cols_found}]"}
-        return
-    if not col_valid:
-        cols_found = ", ".join([str(c) for c in df.columns[:8]])
-        yield {"type": "error", "error": f"Coluna de Validade/Vencimento não identificada. Colunas encontradas: [{cols_found}]"}
+    # Se ainda faltar produto ou validade, emite evento de mapeamento manual em vez de falhar
+    if not col_prod or not col_valid:
+        cols_list = [str(c) for c in df.columns]
+        sample_rows = []
+        for _, r in df.head(5).iterrows():
+            row_dict = {}
+            for c in df.columns:
+                val = r[c]
+                row_dict[str(c)] = str(val) if pd.notna(val) else ""
+            sample_rows.append(row_dict)
+
+        yield {
+            "type": "needs_mapping",
+            "columns": cols_list,
+            "preview": sample_rows,
+            "suggestions": {
+                "col_prod": col_prod or (cols_list[1] if len(cols_list) > 1 else cols_list[0]),
+                "col_valid": col_valid or (cols_list[2] if len(cols_list) > 2 else (cols_list[1] if len(cols_list) > 1 else cols_list[0])),
+                "col_code": col_code or (cols_list[0] if len(cols_list) > 0 else ""),
+                "col_quant": col_quant or ""
+            },
+            "error": "Não conseguimos confirmar com 100% de precisão as colunas de Produto e Validade. Por favor, confirme o mapeamento abaixo."
+        }
         return
 
     # 3. Limpeza inicial de linhas nulas
@@ -543,12 +762,35 @@ def audit_and_import_spreadsheet_stream(file_bytes: bytes, filename: str):
         yield {"type": "error", "error": f"Erro durante a gravação no banco: {str(exc)}"}
 
 
-def audit_and_import_spreadsheet(file_bytes: bytes, filename: str) -> dict:
-    """Execução direta ultrarrápida da conciliação sem overhead de streaming."""
+def audit_and_import_spreadsheet(
+    file_bytes: bytes,
+    filename: str,
+    custom_col_prod: str = None,
+    custom_col_valid: str = None,
+    custom_col_code: str = None,
+    custom_col_quant: str = None
+) -> dict:
+    """Execução direta ultrarrápida da conciliação com suporte a mapeamento de colunas."""
     last_res = None
-    for item in audit_and_import_spreadsheet_stream(file_bytes, filename):
+    for item in audit_and_import_spreadsheet_stream(
+        file_bytes,
+        filename,
+        custom_col_prod=custom_col_prod,
+        custom_col_valid=custom_col_valid,
+        custom_col_code=custom_col_code,
+        custom_col_quant=custom_col_quant
+    ):
         if item.get("type") == "done":
             last_res = item
+        elif item.get("type") == "needs_mapping":
+            return {
+                "success": False,
+                "needs_mapping": True,
+                "columns": item.get("columns", []),
+                "preview": item.get("preview", []),
+                "suggestions": item.get("suggestions", {}),
+                "error": item.get("error", "Confirmação de colunas necessária")
+            }
         elif item.get("type") == "error":
             raise ValueError(item.get("error"))
     if not last_res:
