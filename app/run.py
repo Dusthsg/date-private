@@ -438,13 +438,15 @@ def update_price(lot_id: int):
 def import_planilha():
     """
     Recebe uma planilha Excel (.xlsx, .xls) ou CSV e executa a auditoria linha por linha,
-    com detecção automática universal e suporte a mapeamento de colunas interativo.
+    com salvamento automático de cópia de segurança (backup), detecção automática universal
+    e suporte a mapeamento de colunas interativo.
     """
     if request.method == "GET":
         from flask import redirect
         return redirect("/")
 
     from app.auditor_import import audit_and_import_spreadsheet
+    from app.spreadsheet_storage import save_spreadsheet_backup, update_spreadsheet_backup_status
 
     if "file" not in request.files:
         return jsonify({"success": False, "error": "Nenhum arquivo enviado. Selecione uma planilha (.xlsx, .xls ou .csv)."}), 400
@@ -455,6 +457,15 @@ def import_planilha():
 
     filename = uploaded_file.filename
     content = uploaded_file.read()
+
+    # Salva IMEDIATAMENTE uma cópia segura em disco antes de qualquer processamento
+    backup_entry = save_spreadsheet_backup(
+        content,
+        filename,
+        status="PROCESSANDO",
+        details="Iniciando auditoria..."
+    )
+    file_id = backup_entry["id"]
 
     custom_col_prod = request.form.get("col_prod") or None
     custom_col_valid = request.form.get("col_valid") or None
@@ -473,9 +484,16 @@ def import_planilha():
 
         # Se for necessária confirmação manual de colunas pelo usuário
         if result.get("needs_mapping"):
+            update_spreadsheet_backup_status(
+                file_id,
+                status="MAPEAMENTO_PENDENTE",
+                details=result.get("error", "Confirmação de colunas necessária")
+            )
             return jsonify({
                 "success": False,
                 "needs_mapping": True,
+                "file_id": file_id,
+                "filename": filename,
                 "columns": result.get("columns", []),
                 "preview": result.get("preview", []),
                 "suggestions": result.get("suggestions", {}),
@@ -487,9 +505,17 @@ def import_planilha():
             stats=result["stats"],
             logs=result.get("logs", [])
         )
+        total_rows = result["stats"].get("total_linhas", 0)
+        update_spreadsheet_backup_status(
+            file_id,
+            status="SUCESSO",
+            details=f"{total_rows} linhas processadas com sucesso",
+            total_rows=total_rows
+        )
         broadcast_reload("planilha_importada")
         return jsonify({
             "success": True,
+            "file_id": file_id,
             "stats": result["stats"],
             "logs": result.get("logs", []),
             "html": html_summary
@@ -497,7 +523,118 @@ def import_planilha():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)}), 400
+        update_spreadsheet_backup_status(
+            file_id,
+            status="ERRO",
+            details=str(e)
+        )
+        return jsonify({"success": False, "file_id": file_id, "error": str(e)}), 400
+
+
+@app.route("/download-planilha/<file_id>", methods=["GET"])
+def download_planilha(file_id):
+    """Permite baixar a cópia original de qualquer planilha enviada ao servidor."""
+    from app.spreadsheet_storage import get_spreadsheet_backup_by_id
+    res = get_spreadsheet_backup_by_id(file_id)
+    if not res:
+        return "Arquivo de planilha não encontrado ou expirado.", 404
+    content, original_filename, meta = res
+    import io
+    from flask import send_file
+    return send_file(
+        io.BytesIO(content),
+        download_name=original_filename,
+        as_attachment=True
+    )
+
+
+@app.route("/reprocess-planilha/<file_id>", methods=["POST"])
+def reprocess_planilha(file_id):
+    """Re-executa a auditoria e conciliação diretamente da cópia salva no servidor sem re-upload."""
+    from app.spreadsheet_storage import get_spreadsheet_backup_by_id, update_spreadsheet_backup_status
+    from app.auditor_import import audit_and_import_spreadsheet
+
+    res = get_spreadsheet_backup_by_id(file_id)
+    if not res:
+        return jsonify({"success": False, "error": "Planilha não encontrada no histórico de backups."}), 404
+    content, original_filename, meta = res
+
+    custom_col_prod = request.form.get("col_prod") or None
+    custom_col_valid = request.form.get("col_valid") or None
+    custom_col_code = request.form.get("col_code") or None
+    custom_col_quant = request.form.get("col_quant") or None
+
+    try:
+        result = audit_and_import_spreadsheet(
+            content,
+            original_filename,
+            custom_col_prod=custom_col_prod,
+            custom_col_valid=custom_col_valid,
+            custom_col_code=custom_col_code,
+            custom_col_quant=custom_col_quant
+        )
+
+        if result.get("needs_mapping"):
+            update_spreadsheet_backup_status(
+                file_id,
+                status="MAPEAMENTO_PENDENTE",
+                details=result.get("error", "Confirmação de colunas necessária")
+            )
+            return jsonify({
+                "success": False,
+                "needs_mapping": True,
+                "file_id": file_id,
+                "filename": original_filename,
+                "columns": result.get("columns", []),
+                "preview": result.get("preview", []),
+                "suggestions": result.get("suggestions", {}),
+                "message": result.get("error", "Confirmação de colunas necessária")
+            }), 200
+
+        html_summary = render_template(
+            "partials/import_summary.html",
+            stats=result["stats"],
+            logs=result.get("logs", [])
+        )
+        total_rows = result["stats"].get("total_linhas", 0)
+        update_spreadsheet_backup_status(
+            file_id,
+            status="SUCESSO",
+            details=f"{total_rows} linhas processadas com sucesso",
+            total_rows=total_rows
+        )
+        broadcast_reload("planilha_importada")
+        return jsonify({
+            "success": True,
+            "file_id": file_id,
+            "stats": result["stats"],
+            "logs": result.get("logs", []),
+            "html": html_summary
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        update_spreadsheet_backup_status(file_id, status="ERRO", details=str(e))
+        return jsonify({"success": False, "file_id": file_id, "error": str(e)}), 400
+
+
+@app.route("/planilhas-salvas", methods=["GET"])
+def list_planilhas_salvas():
+    """Retorna a lista de cópias salvas de planilhas para exibição no painel."""
+    from app.spreadsheet_storage import get_spreadsheet_backups
+    backups = get_spreadsheet_backups()
+    if request.headers.get("HX-Request") or request.args.get("html"):
+        return render_template("partials/spreadsheet_history.html", backups=backups)
+    return jsonify({"success": True, "backups": backups})
+
+
+@app.route("/planilhas-salvas/<file_id>/delete", methods=["POST", "DELETE"])
+def delete_planilha_salva(file_id):
+    """Exclui uma cópia salva do histórico."""
+    from app.spreadsheet_storage import delete_spreadsheet_backup, get_spreadsheet_backups
+    delete_spreadsheet_backup(file_id)
+    backups = get_spreadsheet_backups()
+    return render_template("partials/spreadsheet_history.html", backups=backups)
 
 
 @app.route("/upload-db", methods=["POST"])

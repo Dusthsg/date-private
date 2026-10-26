@@ -209,6 +209,20 @@
 
     <!-- Container do Resultado da Auditoria -->
     <div id="import-result-container"></div>
+
+    <!-- Seção de Histórico e Backup de Planilhas Salvas -->
+    <div class="mt-4 pt-3 border-t border-gray-100">
+        <div class="flex items-center justify-between">
+            <button type="button"
+                    onclick="toggleSpreadsheetHistory()"
+                    class="text-xs font-bold text-gray-700 hover:text-emerald-700 inline-flex items-center gap-1.5 transition cursor-pointer">
+                <span>📁 Planilhas Salvas & Cópias de Segurança</span>
+                <span id="history-toggle-icon" class="text-[10px]">▼</span>
+            </button>
+            <span class="text-[11px] text-gray-400 hidden sm:inline">Guarda cópia automática de todo arquivo enviado para recuperação</span>
+        </div>
+        <div id="spreadsheet-history-wrapper" class="hidden mt-2"></div>
+    </div>
 </div>
 
 <!-- Tabela de lotes -->
@@ -491,14 +505,20 @@ async function triggerPullConnection() {
 }
 
 let currentSpreadsheetFile = null;
+let currentSavedFileId = null;
 
 function renderColumnMappingInterface(data, file) {
     const resultContainer = document.getElementById('import-result-container');
     if (!resultContainer) return;
 
+    if (data.file_id) {
+        currentSavedFileId = data.file_id;
+    }
+
     const cols = data.columns || [];
     const suggestions = data.suggestions || {};
     const preview = data.preview || [];
+    const fileName = file.name || data.filename || 'planilha.xls';
 
     // Helper para gerar as options de um select
     const generateOptions = (selectedVal, isRequired = false) => {
@@ -517,16 +537,25 @@ function renderColumnMappingInterface(data, file) {
         previewBody += `<tr>${cells}</tr>`;
     });
 
+    const downloadBadge = data.file_id ? `
+        <a href="/download-planilha/${data.file_id}" download class="inline-flex items-center gap-1 text-[11px] text-amber-900 bg-amber-200/80 hover:bg-amber-300 px-2.5 py-1 rounded-md font-semibold transition shadow-xs">
+            <span>📥 Baixar cópia original salva</span>
+        </a>
+    ` : '';
+
     resultContainer.innerHTML = `
         <div id="import-mapping-card" class="mt-4 p-4 bg-amber-50/70 border border-amber-300 rounded-xl space-y-4 shadow-sm animate-fade-in">
-            <div class="flex items-start gap-2.5">
-                <span class="text-xl">📋</span>
-                <div class="space-y-0.5">
-                    <h4 class="text-sm font-bold text-amber-900">Confirmação de Colunas da Planilha</h4>
-                    <p class="text-xs text-amber-800">
-                        O arquivo <b>${file.name}</b> foi lido com sucesso! Para conciliar perfeitamente com seu estoque, confirme abaixo quais colunas contêm o <b>Produto</b> e a <b>Validade</b>:
-                    </p>
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div class="flex items-start gap-2.5">
+                    <span class="text-xl">📋</span>
+                    <div class="space-y-0.5">
+                        <h4 class="text-sm font-bold text-amber-900">Confirmação de Colunas da Planilha</h4>
+                        <p class="text-xs text-amber-800">
+                            O arquivo <b>${fileName}</b> foi salvo com segurança em nosso servidor! Confirme abaixo quais colunas contêm o <b>Produto</b> e a <b>Validade</b>:
+                        </p>
+                    </div>
                 </div>
+                ${downloadBadge}
             </div>
 
             <!-- Seletores de Mapeamento -->
@@ -607,12 +636,18 @@ function confirmColumnMappingAndSubmit() {
         return;
     }
 
-    submitImportPlanilha(null, {
+    const mapping = {
         col_prod: colProd,
         col_valid: colValid,
         col_code: colCode,
         col_quant: colQuant
-    });
+    };
+
+    if (currentSavedFileId) {
+        reprocessSavedSpreadsheet(currentSavedFileId, currentSpreadsheetFile?.name || 'planilha.xls', mapping);
+    } else {
+        submitImportPlanilha(null, mapping);
+    }
 }
 
 function submitImportPlanilha(event, customMapping = null) {
@@ -659,7 +694,7 @@ function submitImportPlanilha(event, customMapping = null) {
             <div class="flex items-center justify-between text-xs font-semibold">
                 <span class="text-gray-700 flex items-center gap-2 truncate max-w-[75%]">
                     <span id="import-progress-spinner" class="animate-spin text-emerald-600 inline-block text-sm">⏳</span>
-                    <span id="import-progress-stage" class="text-gray-800">Enviando ${file.name} (${(file.size / 1024).toFixed(1)} KB)...</span>
+                    <span id="import-progress-stage" class="text-gray-800">Enviando e salvando cópia de segurança de ${file.name} (${(file.size / 1024).toFixed(1)} KB)...</span>
                 </span>
                 <span id="import-progress-percent" class="text-emerald-700 font-extrabold font-mono text-base tracking-tight">
                     15%
@@ -676,7 +711,7 @@ function submitImportPlanilha(event, customMapping = null) {
 
             <div class="flex items-center justify-between text-[11px] text-gray-500 pt-0.5">
                 <span id="import-progress-count" class="font-medium text-gray-600">Reconciliando linhas e estoque no banco de dados...</span>
-                <span id="import-progress-mini-stats" class="font-bold text-emerald-700">⚡ Otimizado</span>
+                <span id="import-progress-mini-stats" class="font-bold text-emerald-700">⚡ Backup Ativo</span>
             </div>
         </div>
         <div id="import-summary-wrapper" class="mt-2"></div>
@@ -701,7 +736,7 @@ function submitImportPlanilha(event, customMapping = null) {
             const uploadPct = Math.min(45, Math.round((evt.loaded / evt.total) * 45));
             if (progressBar) progressBar.style.width = uploadPct + '%';
             if (percentEl) percentEl.innerText = uploadPct + '%';
-            if (stageEl) stageEl.innerText = `Enviando arquivo: ${(evt.loaded / 1024).toFixed(0)} KB de ${(evt.total / 1024).toFixed(0)} KB...`;
+            if (stageEl) stageEl.innerText = `Enviando e gravando backup: ${(evt.loaded / 1024).toFixed(0)} KB de ${(evt.total / 1024).toFixed(0)} KB...`;
         }
     };
 
@@ -709,7 +744,7 @@ function submitImportPlanilha(event, customMapping = null) {
     xhr.upload.onload = function() {
         if (progressBar) progressBar.style.width = '50%';
         if (percentEl) percentEl.innerText = '50%';
-        if (stageEl) stageEl.innerText = 'Arquivo enviado! Auditando linhas e conciliando com o estoque...';
+        if (stageEl) stageEl.innerText = 'Backup gravado! Auditando linhas e conciliando com o estoque...';
 
         let currentSimPct = 50;
         processingTimer = setInterval(() => {
@@ -735,7 +770,7 @@ function submitImportPlanilha(event, customMapping = null) {
         try {
             data = JSON.parse(xhr.responseText);
         } catch (e) {
-            // Em caso de retorno não-JSON (ex: erro HTML de servidor ou proxy)
+            // Em caso de retorno não-JSON
             resultContainer.innerHTML = `
                 <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-2">
                     <div class="font-bold flex items-center gap-1.5">
@@ -756,24 +791,38 @@ function submitImportPlanilha(event, customMapping = null) {
         // Se o servidor pedir confirmação / mapeamento manual de colunas
         if (data && data.needs_mapping) {
             renderColumnMappingInterface(data, file);
+            loadSpreadsheetHistory();
             return;
         }
 
         // Se houve erro retornado em JSON
         if (xhr.status !== 200 || !data || !data.success) {
             const errorMsg = (data && data.error) ? data.error : `Erro HTTP ${xhr.status}`;
+            const downloadBtn = data && data.file_id ? `
+                <a href="/download-planilha/${data.file_id}" download class="text-xs bg-amber-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-amber-700 transition inline-flex items-center gap-1">
+                    <span>📥 Baixar cópia salva do arquivo</span>
+                </a>
+            ` : '';
+
             resultContainer.innerHTML = `
-                <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-2">
+                <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-3">
                     <div class="font-bold flex items-center gap-1.5">
                         <span>❌</span>
                         <span>Falha na importação da planilha:</span>
                     </div>
                     <div class="text-xs font-mono bg-white p-2.5 rounded border border-red-200">${errorMsg}</div>
-                    <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
-                        Tentar Novamente
-                    </button>
+                    <div class="text-xs text-gray-600 bg-amber-50 p-2 rounded border border-amber-200">
+                        🛡️ <b>Fique tranquilo:</b> sua planilha foi guardada com segurança em nosso servidor de backups. Você pode baixá-la ou tentar novamente a qualquer momento.
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 pt-1">
+                        <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
+                            Tentar Novamente
+                        </button>
+                        ${downloadBtn}
+                    </div>
                 </div>
             `;
+            loadSpreadsheetHistory();
             return;
         }
 
@@ -784,14 +833,30 @@ function submitImportPlanilha(event, customMapping = null) {
         if (stageEl) stageEl.innerText = `Auditoria concluída! ${data.stats ? data.stats.total_linhas : 0} linhas processadas instantaneamente`;
         if (countEl) countEl.innerText = `📦 ${data.stats ? data.stats.total_linhas : 0} linhas auditadas com sucesso`;
 
+        let backupLinkHtml = '';
+        if (data.file_id) {
+            backupLinkHtml = `
+                <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 text-emerald-900 border border-emerald-200 px-3 py-2 rounded-lg shadow-2xs">
+                    <span class="flex items-center gap-1.5">
+                        <span>🛡️</span>
+                        <span>Cópia de segurança salva em disco: <b>${file.name}</b></span>
+                    </span>
+                    <a href="/download-planilha/${data.file_id}" download class="inline-flex items-center gap-1 font-bold underline hover:text-emerald-950">
+                        <span>📥 Baixar Cópia Original</span>
+                    </a>
+                </div>
+            `;
+        }
+
         if (summaryWrapper && data.html) {
-            summaryWrapper.innerHTML = data.html;
+            summaryWrapper.innerHTML = data.html + backupLinkHtml;
             if (window.htmx) htmx.process(summaryWrapper);
         }
 
         clientCache.clear();
         performSearch(true);
         if (fileInput) fileInput.value = '';
+        loadSpreadsheetHistory();
     };
 
     // 4. Erros de rede ou conexão
@@ -819,6 +884,190 @@ function submitImportPlanilha(event, customMapping = null) {
     };
 
     xhr.send(formData);
+}
+
+// ── Re-processamento de Planilha a partir da Cópia Salva no Servidor ─────────
+async function reprocessSavedSpreadsheet(fileId, filename, customMapping = null) {
+    const resultContainer = document.getElementById('import-result-container');
+    const loading = document.getElementById('import-loading');
+    const btn = document.getElementById('btn-import-submit');
+
+    currentSavedFileId = fileId;
+
+    if (loading) loading.classList.remove('hidden');
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-60', 'cursor-not-allowed');
+    }
+
+    resultContainer.innerHTML = `
+        <div id="import-progress-card" class="mt-4 p-4 bg-white border border-emerald-200 rounded-xl space-y-3 shadow-sm transition-all duration-300">
+            <div class="flex items-center justify-between text-xs font-semibold">
+                <span class="text-gray-700 flex items-center gap-2 truncate max-w-[75%]">
+                    <span id="import-progress-spinner" class="animate-spin text-emerald-600 inline-block text-sm">⏳</span>
+                    <span id="import-progress-stage" class="text-gray-800">Recuperando cópia salva e auditando ${filename}...</span>
+                </span>
+                <span id="import-progress-percent" class="text-emerald-700 font-extrabold font-mono text-base tracking-tight">
+                    35%
+                </span>
+            </div>
+
+            <div class="w-full bg-gray-100 rounded-full h-3.5 overflow-hidden shadow-inner p-0.5 border border-gray-200">
+                <div id="import-progress-bar"
+                     class="bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 h-full rounded-full transition-all duration-150 ease-out shadow-sm"
+                     style="width: 35%;">
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between text-[11px] text-gray-500 pt-0.5">
+                <span id="import-progress-count" class="font-medium text-gray-600">Reconciliando linhas a partir do backup em disco...</span>
+                <span id="import-progress-mini-stats" class="font-bold text-emerald-700">⚡ Cópia Salva</span>
+            </div>
+        </div>
+        <div id="import-summary-wrapper" class="mt-2"></div>
+    `;
+
+    const progressBar = document.getElementById('import-progress-bar');
+    const percentEl = document.getElementById('import-progress-percent');
+    const stageEl = document.getElementById('import-progress-stage');
+    const countEl = document.getElementById('import-progress-count');
+    const summaryWrapper = document.getElementById('import-summary-wrapper');
+    const spinner = document.getElementById('import-progress-spinner');
+
+    const formData = new FormData();
+    if (customMapping) {
+        if (customMapping.col_prod) formData.append('col_prod', customMapping.col_prod);
+        if (customMapping.col_valid) formData.append('col_valid', customMapping.col_valid);
+        if (customMapping.col_code) formData.append('col_code', customMapping.col_code);
+        if (customMapping.col_quant) formData.append('col_quant', customMapping.col_quant);
+    }
+
+    try {
+        const resp = await fetch(`/reprocess-planilha/${fileId}`, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Client-ID': window.myClientId || ''
+            }
+        });
+
+        const data = await resp.json();
+
+        if (loading) loading.classList.add('hidden');
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
+
+        if (data.needs_mapping) {
+            renderColumnMappingInterface(data, { name: filename, fileId: fileId });
+            loadSpreadsheetHistory();
+            return;
+        }
+
+        if (!resp.ok || !data.success) {
+            throw new Error(data.error || `Erro HTTP ${resp.status}`);
+        }
+
+        if (progressBar) progressBar.style.width = '100%';
+        if (percentEl) percentEl.innerText = '100%';
+        if (spinner) spinner.innerText = '✅';
+        if (stageEl) stageEl.innerText = `Re-processamento concluído! ${data.stats ? data.stats.total_linhas : 0} linhas conciliadas com sucesso`;
+        if (countEl) countEl.innerText = `📦 ${data.stats ? data.stats.total_linhas : 0} linhas auditadas`;
+
+        const backupLinkHtml = `
+            <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 text-emerald-900 border border-emerald-200 px-3 py-2 rounded-lg shadow-2xs">
+                <span class="flex items-center gap-1.5">
+                    <span>🛡️</span>
+                    <span>Origem da importação: Cópia de segurança <b>${filename}</b></span>
+                </span>
+                <a href="/download-planilha/${fileId}" download class="inline-flex items-center gap-1 font-bold underline hover:text-emerald-950">
+                    <span>📥 Baixar Arquivo Original</span>
+                </a>
+            </div>
+        `;
+
+        if (summaryWrapper && data.html) {
+            summaryWrapper.innerHTML = data.html + backupLinkHtml;
+            if (window.htmx) htmx.process(summaryWrapper);
+        }
+
+        clientCache.clear();
+        performSearch(true);
+        loadSpreadsheetHistory();
+
+    } catch (err) {
+        if (loading) loading.classList.add('hidden');
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
+
+        resultContainer.innerHTML = `
+            <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-3">
+                <div class="font-bold flex items-center gap-1.5">
+                    <span>❌</span>
+                    <span>Falha ao re-processar cópia salva:</span>
+                </div>
+                <div class="text-xs font-mono bg-white p-2.5 rounded border border-red-200">${err.message}</div>
+                <div class="flex items-center gap-2 pt-1">
+                    <button type="button" onclick="reprocessSavedSpreadsheet('${fileId}', '${filename}')" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
+                        Tentar Novamente
+                    </button>
+                    <a href="/download-planilha/${fileId}" download class="text-xs bg-amber-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-amber-700 transition">
+                        📥 Baixar Cópia
+                    </a>
+                </div>
+            </div>
+        `;
+        loadSpreadsheetHistory();
+    }
+}
+
+// ── Gestão do Histórico de Planilhas Salvas ─────────────────────────────────
+async function toggleSpreadsheetHistory() {
+    const wrapper = document.getElementById('spreadsheet-history-wrapper');
+    const icon = document.getElementById('history-toggle-icon');
+    if (!wrapper) return;
+
+    if (wrapper.classList.contains('hidden')) {
+        wrapper.classList.remove('hidden');
+        if (icon) icon.innerText = '▲';
+        loadSpreadsheetHistory();
+    } else {
+        wrapper.classList.add('hidden');
+        if (icon) icon.innerText = '▼';
+    }
+}
+
+async function loadSpreadsheetHistory() {
+    const wrapper = document.getElementById('spreadsheet-history-wrapper');
+    if (!wrapper || wrapper.classList.contains('hidden')) return;
+
+    try {
+        const resp = await fetch('/planilhas-salvas?html=1');
+        if (resp.ok) {
+            wrapper.innerHTML = await resp.text();
+            if (window.htmx) htmx.process(wrapper);
+        }
+    } catch (e) {
+        console.error('Erro ao carregar histórico de planilhas:', e);
+    }
+}
+
+async function deleteSavedSpreadsheet(fileId) {
+    if (!confirm('Deseja excluir esta cópia de segurança salva do histórico?')) return;
+    const wrapper = document.getElementById('spreadsheet-history-wrapper');
+
+    try {
+        const resp = await fetch(`/planilhas-salvas/${fileId}/delete`, { method: 'POST' });
+        if (resp.ok && wrapper) {
+            wrapper.innerHTML = await resp.text();
+            if (window.htmx) htmx.process(wrapper);
+        }
+    } catch (e) {
+        console.error('Erro ao excluir planilha salva:', e);
+    }
 }
 
 // ── Autocomplete e Seleção do Catálogo no Cadastro de Lotes ──────────────────

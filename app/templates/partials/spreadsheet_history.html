@@ -1,0 +1,82 @@
+<!-- Lista de Planilhas Salvas com Cópia de Segurança -->
+<div id="spreadsheet-history-container" class="space-y-2">
+    {% if backups and backups|length > 0 %}
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs border-collapse">
+                <thead>
+                    <tr class="bg-gray-100 text-gray-600 border-b border-gray-200">
+                        <th class="px-3 py-2 font-semibold">Arquivo</th>
+                        <th class="px-3 py-2 font-semibold">Data e Hora</th>
+                        <th class="px-3 py-2 font-semibold">Tamanho</th>
+                        <th class="px-3 py-2 font-semibold">Status</th>
+                        <th class="px-3 py-2 font-semibold text-right">Ações</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    {% for item in backups %}
+                    <tr class="hover:bg-gray-50/80 transition-colors">
+                        <td class="px-3 py-2 font-medium text-gray-800 max-w-[200px] truncate" title="{{ item.original_filename }}">
+                            📄 {{ item.original_filename }}
+                        </td>
+                        <td class="px-3 py-2 text-gray-500 whitespace-nowrap">
+                            {{ item.timestamp_display }}
+                        </td>
+                        <td class="px-3 py-2 text-gray-500 font-mono text-[11px]">
+                            {{ item.size_display }}
+                        </td>
+                        <td class="px-3 py-2 whitespace-nowrap">
+                            {% if item.status == 'SUCESSO' %}
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200" title="{{ item.details }}">
+                                    <span>✅ Sucesso</span>
+                                    {% if item.total_rows %}<span class="font-normal font-mono">({{ item.total_rows }} un)</span>{% endif %}
+                                </span>
+                            {% elif item.status == 'MAPEAMENTO_PENDENTE' %}
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200" title="{{ item.details }}">
+                                    <span>⚠️ Mapear</span>
+                                </span>
+                            {% elif item.status == 'PROCESSANDO' %}
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                    <span>⏳ Processando</span>
+                                </span>
+                            {% else %}
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-200" title="{{ item.details }}">
+                                    <span>❌ Falha</span>
+                                </span>
+                            {% endif %}
+                        </td>
+                        <td class="px-3 py-2 text-right whitespace-nowrap space-x-1">
+                            <!-- Baixar arquivo original -->
+                            <a href="/download-planilha/{{ item.id }}"
+                               download
+                               class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
+                               title="Baixar cópia original deste arquivo para seu dispositivo">
+                                <span>📥 Baixar</span>
+                            </a>
+
+                            <!-- Re-importar diretamente do backup -->
+                            <button type="button"
+                                    onclick="reprocessSavedSpreadsheet('{{ item.id }}', '{{ item.original_filename }}')"
+                                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition cursor-pointer"
+                                    title="Processar novamente este arquivo sem precisar reenviar">
+                                <span>🔄 Re-importar</span>
+                            </button>
+
+                            <!-- Excluir cópia -->
+                            <button type="button"
+                                    onclick="deleteSavedSpreadsheet('{{ item.id }}')"
+                                    class="inline-flex items-center px-1.5 py-1 rounded-md text-[11px] text-gray-400 hover:text-red-600 transition"
+                                    title="Remover cópia salva">
+                                <span>✕</span>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="p-3 text-center text-xs text-gray-500 bg-gray-50 rounded-lg border border-gray-200">
+            Nenhuma cópia de planilha salva no histórico ainda. Toda planilha enviada será guardada aqui automaticamente.
+        </div>
+    {% endif %}
+</div>
