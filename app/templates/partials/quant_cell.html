@@ -1,10 +1,10 @@
-<td class="px-3 py-2.5 text-gray-600 whitespace-nowrap" id="quant-cell-{{ lot['lot_id'] }}">
+<td class="px-3 py-2.5 text-gray-600 dark:text-gray-300 whitespace-nowrap" id="quant-cell-{{ lot['lot_id'] }}">
     <!-- Visualização normal -->
     <div id="view-quant-{{ lot['lot_id'] }}" class="flex items-center gap-1.5 whitespace-nowrap">
-        <span class="font-medium text-gray-800">{{ lot['quant'] }}</span>
+        <span class="font-medium text-gray-800 dark:text-gray-100">{{ lot['quant'] }}</span>
         <button type="button"
                 onclick="startEditing({{ lot['lot_id'] }})"
-                class="text-gray-400 hover:text-indigo-600 transition p-1 rounded hover:bg-gray-100"
+                class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
                 title="Editar quantidade">
             ✏️
         </button>
@@ -18,7 +18,7 @@
           onsubmit="window.isEditingLot = false;"
           class="hidden flex items-center gap-1">
         <input type="number" id="input-quant-{{ lot['lot_id'] }}" name="quant" value="{{ lot['quant'] }}" min="0" required
-               class="w-16 border border-indigo-400 rounded px-1.5 py-0.5 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+               class="w-16 border border-indigo-400 dark:border-indigo-500 rounded px-1.5 py-0.5 text-xs text-gray-800 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
         <button type="submit"
                 class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5 text-xs font-bold transition shadow-sm"
                 title="Salvar">
@@ -26,7 +26,7 @@
         </button>
         <button type="button"
                 onclick="stopEditing({{ lot['lot_id'] }})"
-                class="bg-gray-200 hover:bg-gray-300 text-gray-600 rounded px-1.5 py-0.5 text-xs transition"
+                class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded px-1.5 py-0.5 text-xs transition"
                 title="Cancelar">
             ✕
         </button>

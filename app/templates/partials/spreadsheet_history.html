@@ -1,10 +1,10 @@
 <!-- Lista de Planilhas Salvas com Cópia de Segurança -->
 <div id="spreadsheet-history-container" class="space-y-2">
     {% if backups and backups|length > 0 %}
-        <div class="overflow-x-auto">
+        <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
             <table class="w-full text-left text-xs border-collapse">
                 <thead>
-                    <tr class="bg-gray-100 text-gray-600 border-b border-gray-200">
+                    <tr class="bg-gray-100 dark:bg-gray-700/80 text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
                         <th class="px-3 py-2 font-semibold">Arquivo</th>
                         <th class="px-3 py-2 font-semibold">Data e Hora</th>
                         <th class="px-3 py-2 font-semibold">Tamanho</th>
@@ -12,34 +12,34 @@
                         <th class="px-3 py-2 font-semibold text-right">Ações</th>
                     </tr>
                 </thead>
-                <tbody class="divide-y divide-gray-100">
+                <tbody class="divide-y divide-gray-100 dark:divide-gray-700/60 bg-white dark:bg-gray-800">
                     {% for item in backups %}
-                    <tr class="hover:bg-gray-50/80 transition-colors">
-                        <td class="px-3 py-2 font-medium text-gray-800 max-w-[200px] truncate" title="{{ item.original_filename }}">
+                    <tr class="hover:bg-gray-50/80 dark:hover:bg-gray-750 transition-colors">
+                        <td class="px-3 py-2 font-medium text-gray-800 dark:text-gray-100 max-w-[200px] truncate" title="{{ item.original_filename }}">
                             📄 {{ item.original_filename }}
                         </td>
-                        <td class="px-3 py-2 text-gray-500 whitespace-nowrap">
+                        <td class="px-3 py-2 text-gray-500 dark:text-gray-400 whitespace-nowrap">
                             {{ item.timestamp_display }}
                         </td>
-                        <td class="px-3 py-2 text-gray-500 font-mono text-[11px]">
+                        <td class="px-3 py-2 text-gray-500 dark:text-gray-400 font-mono text-[11px]">
                             {{ item.size_display }}
                         </td>
                         <td class="px-3 py-2 whitespace-nowrap">
                             {% if item.status == 'SUCESSO' %}
-                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200" title="{{ item.details }}">
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800" title="{{ item.details }}">
                                     <span>✅ Sucesso</span>
                                     {% if item.total_rows %}<span class="font-normal font-mono">({{ item.total_rows }} un)</span>{% endif %}
                                 </span>
                             {% elif item.status == 'MAPEAMENTO_PENDENTE' %}
-                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200" title="{{ item.details }}">
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title="{{ item.details }}">
                                     <span>⚠️ Mapear</span>
                                 </span>
                             {% elif item.status == 'PROCESSANDO' %}
-                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950/80 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                                     <span>⏳ Processando</span>
                                 </span>
                             {% else %}
-                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-200" title="{{ item.details }}">
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 dark:bg-red-950/80 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-800" title="{{ item.details }}">
                                     <span>❌ Falha</span>
                                 </span>
                             {% endif %}
@@ -48,7 +48,7 @@
                             <!-- Baixar arquivo original -->
                             <a href="/download-planilha/{{ item.id }}"
                                download
-                               class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
+                               class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 transition"
                                title="Baixar cópia original deste arquivo para seu dispositivo">
                                 <span>📥 Baixar</span>
                             </a>
@@ -56,7 +56,7 @@
                             <!-- Re-importar diretamente do backup -->
                             <button type="button"
                                     onclick="reprocessSavedSpreadsheet('{{ item.id }}', '{{ item.original_filename }}')"
-                                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition cursor-pointer"
+                                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 transition cursor-pointer"
                                     title="Processar novamente este arquivo sem precisar reenviar">
                                 <span>🔄 Re-importar</span>
                             </button>
@@ -64,7 +64,7 @@
                             <!-- Excluir cópia -->
                             <button type="button"
                                     onclick="deleteSavedSpreadsheet('{{ item.id }}')"
-                                    class="inline-flex items-center px-1.5 py-1 rounded-md text-[11px] text-gray-400 hover:text-red-600 transition"
+                                    class="inline-flex items-center px-1.5 py-1 rounded-md text-[11px] text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition cursor-pointer"
                                     title="Remover cópia salva">
                                 <span>✕</span>
                             </button>
@@ -75,7 +75,7 @@
             </table>
         </div>
     {% else %}
-        <div class="p-3 text-center text-xs text-gray-500 bg-gray-50 rounded-lg border border-gray-200">
+        <div class="p-3 text-center text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
             Nenhuma cópia de planilha salva no histórico ainda. Toda planilha enviada será guardada aqui automaticamente.
         </div>
     {% endif %}

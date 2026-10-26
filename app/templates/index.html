@@ -3,14 +3,14 @@
 {% block content %}
 
 <!-- Painel de Adição Rápida (Colapsável) -->
-<div class="bg-white rounded-xl shadow-sm p-3 sm:p-4 mb-4 border-l-4 border-emerald-500">
+<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-3 sm:p-4 mb-4 border-l-4 border-emerald-500 transition-colors">
     <div class="flex items-center justify-between cursor-pointer select-none"
          onclick="document.getElementById('form-add-lot').classList.toggle('hidden'); document.getElementById('icon-add-toggle').classList.toggle('rotate-180');">
         <div class="flex items-center gap-2">
-            <span class="text-base font-bold text-gray-800">➕ Cadastrar Novo Lote</span>
-            <span class="text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-medium">Rápido</span>
+            <span class="text-base font-bold text-gray-800 dark:text-gray-100">➕ Cadastrar Novo Lote</span>
+            <span class="text-xs text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full font-medium">Rápido</span>
         </div>
-        <button type="button" class="text-gray-400 hover:text-gray-600 transition p-1" id="icon-add-toggle">
+        <button type="button" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition p-1" id="icon-add-toggle">
             ▼
         </button>
     </div>
@@ -21,14 +21,14 @@
           hx-target="#lot-table-body"
           hx-include="#current-filtro, #current-busca"
           hx-on::before-request="const ni = document.getElementById('input-add-lot-name'); if(ni) ni.value = ni.value.trim().toUpperCase();"
-          hx-on::after-request="if(event.detail.successful) { this.reset(); clearAddLotSelection(); document.getElementById('form-add-msg').innerHTML = '<span class=\'text-emerald-600 text-xs font-semibold\'>✅ Lote cadastrado com sucesso!</span>'; setTimeout(() => document.getElementById('form-add-msg').innerHTML='', 4000); }"
-          class="hidden mt-3 pt-3 border-t border-gray-100">
+          hx-on::after-request="if(event.detail.successful) { this.reset(); clearAddLotSelection(); document.getElementById('form-add-msg').innerHTML = '<span class=\'text-emerald-600 dark:text-emerald-400 text-xs font-semibold\'>✅ Lote cadastrado com sucesso!</span>'; setTimeout(() => document.getElementById('form-add-msg').innerHTML='', 4000); }"
+          class="hidden mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
         
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2.5">
             <div class="md:col-span-2 relative">
                 <div class="flex items-center justify-between mb-1">
-                    <label class="block text-xs font-semibold text-gray-600">Nome do Produto *</label>
-                    <span id="badge-catalog-selected" class="hidden text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-medium">✓ Catálogo</span>
+                    <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Nome do Produto *</label>
+                    <span id="badge-catalog-selected" class="hidden text-[10px] bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 px-1.5 py-0.5 rounded font-medium">✓ Catálogo</span>
                 </div>
                 <div class="relative">
                     <input type="text"
@@ -38,38 +38,38 @@
                            autocomplete="off"
                            placeholder="Digite para buscar no catálogo ou cadastrar novo..."
                            oninput="onAddLotInput(this)"
-                           class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm uppercase focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+                           class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm uppercase dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 focus:ring-2 focus:ring-emerald-400 focus:outline-none">
                 </div>
 
                 <!-- Menu Dropdown de Busca e Seleção do Catálogo -->
                 <div id="dropdown-add-lot-results"
-                     class="hidden absolute left-0 right-0 z-50 mt-1 bg-white border border-gray-200 rounded-xl shadow-2xl max-h-56 overflow-y-auto divide-y divide-gray-100 text-left">
+                     class="hidden absolute left-0 right-0 z-50 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl max-h-56 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 text-left">
                 </div>
             </div>
 
             <div>
-                <label class="block text-xs font-semibold text-gray-600 mb-1">Quantidade *</label>
+                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Quantidade *</label>
                 <input type="number" id="input-add-lot-quant" name="quant" value="0" min="0" required
-                       class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+                       class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-emerald-400 focus:outline-none">
             </div>
 
             <div>
-                <label class="block text-xs font-semibold text-gray-600 mb-1">Preço (R$)</label>
+                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Preço (R$)</label>
                 <input type="number" step="0.01" name="price" value="0.00" min="0"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+                       class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-emerald-400 focus:outline-none">
             </div>
 
             <div>
-                <label class="block text-xs font-semibold text-gray-600 mb-1">Validade *</label>
+                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Validade *</label>
                 <input type="date" id="input-add-lot-date" name="date_valid" required
-                       class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+                       class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-emerald-400 focus:outline-none">
             </div>
         </div>
 
         <div class="flex items-center justify-between mt-3">
             <div id="form-add-msg"></div>
             <button type="submit"
-                    class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs sm:text-sm font-semibold px-5 py-2 rounded-lg shadow-sm transition">
+                    class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs sm:text-sm font-semibold px-5 py-2 rounded-lg shadow-sm transition cursor-pointer">
                 ✓ Salvar Lote
             </button>
         </div>
@@ -77,7 +77,7 @@
 </div>
 
 <!-- Filtros + Busca -->
-<div class="bg-white rounded-xl shadow-sm p-3 sm:p-4 mb-4">
+<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-3 sm:p-4 mb-4 transition-colors">
 
     <!-- Inputs globais de estado mantidos sincronizados -->
     <input type="hidden" id="current-filtro" name="filtro" value="{{ filtro }}">
@@ -92,7 +92,7 @@
           onsubmit="event.preventDefault(); submitSearch();">
         
         <div class="relative flex items-center">
-            <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-gray-400">
+            <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-gray-400 dark:text-gray-400">
                 🔍
             </span>
             <input type="text"
@@ -102,18 +102,18 @@
                    autocomplete="off"
                    oninput="onSearchInput(this.value)"
                    placeholder="Buscar produto pelo nome (busca instantânea via LIKE)..."
-                   class="w-full pl-10 pr-24 border border-gray-300 rounded-lg py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 shadow-inner">
+                   class="w-full pl-10 pr-24 border border-gray-300 dark:border-gray-600 rounded-lg py-2.5 text-sm dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 shadow-inner">
             
             <div class="absolute inset-y-0 right-0 flex items-center pr-2 gap-1.5">
                 <button type="button"
                         id="clear-search-btn"
                         onclick="clearSearch()"
-                        class="text-gray-400 hover:text-gray-600 {% if not busca %}hidden{% endif %} text-xs px-2 py-1 rounded font-bold"
+                        class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 {% if not busca %}hidden{% endif %} text-xs px-2 py-1 rounded font-bold cursor-pointer"
                         title="Limpar busca">
                     ✕
                 </button>
                 <button type="submit"
-                        class="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white px-3.5 py-1.5 rounded-md text-xs font-medium transition shadow-sm">
+                        class="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white px-3.5 py-1.5 rounded-md text-xs font-medium transition shadow-sm cursor-pointer">
                     Buscar
                 </button>
             </div>
@@ -127,14 +127,14 @@
 <!-- Contador e Status do Banco + WebSocket -->
 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2 px-1">
     <div class="flex flex-wrap items-center gap-2">
-        <p class="text-sm text-gray-500">
-            <span id="lots-count" class="font-semibold text-gray-700">{{ total }}</span> lote(s) encontrado(s)
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+            <span id="lots-count" class="font-semibold text-gray-700 dark:text-gray-200">{{ total }}</span> lote(s) encontrado(s)
         </p>
-        <span id="ws-badge" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800" title="Status da conexão WebSocket">
+        <span id="ws-badge" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border dark:border-amber-800" title="Status da conexão WebSocket">
             <span class="w-2 h-2 rounded-full bg-amber-500"></span>
             WebSocket Conectando...
         </span>
-        <span id="db-badge" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold {% if is_postgres %}bg-blue-100 text-blue-800 border border-blue-200{% else %}bg-amber-100 text-amber-800 border border-amber-200{% endif %}"
+        <span id="db-badge" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold {% if is_postgres %}bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-800{% else %}bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-800{% endif %}"
               title="Banco de dados em uso">
             💾 <span id="db-label">{{ db_name }}</span>
         </span>
@@ -143,7 +143,7 @@
         <button type="button"
                 id="btn-pull-db"
                 onclick="triggerPullConnection()"
-                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-white hover:bg-gray-50 active:scale-95 text-gray-700 transition border border-gray-300 shadow-xs cursor-pointer"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 active:scale-95 text-gray-700 dark:text-gray-200 transition border border-gray-300 dark:border-gray-600 shadow-xs cursor-pointer"
                 title="Puxar dados do PostgreSQL para o SQLite local e testar ligação">
             <span id="pull-spinner" class="hidden animate-spin">⏳</span>
             <span id="pull-icon">🔄</span>
@@ -155,7 +155,7 @@
     <div>
         <button type="button"
                 onclick="document.getElementById('panel-import-planilha').classList.toggle('hidden');"
-                class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg shadow-sm transition"
+                class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg shadow-sm transition cursor-pointer"
                 title="Conciliar estoque com planilha da retaguarda">
             <span>📥 Importar Planilha (Excel)</span>
         </button>
@@ -163,19 +163,19 @@
 </div>
 
 <!-- Painel Colapsável de Importação de Planilha com Auditoria Linha por Linha -->
-<div id="panel-import-planilha" class="hidden mb-4 bg-white border border-emerald-200 rounded-xl shadow-sm p-4">
-    <div class="flex items-center justify-between pb-2 mb-3 border-b border-gray-100">
+<div id="panel-import-planilha" class="hidden mb-4 bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-800 rounded-xl shadow-sm p-4 transition-colors">
+    <div class="flex items-center justify-between pb-2 mb-3 border-b border-gray-100 dark:border-gray-700">
         <div class="flex items-center gap-2">
-            <span class="text-sm font-bold text-gray-800">📥 Conciliação e Importação de Planilha</span>
-            <span class="text-[11px] bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-semibold">Auditor Linha por Linha</span>
+            <span class="text-sm font-bold text-gray-800 dark:text-gray-100">📥 Conciliação e Importação de Planilha</span>
+            <span class="text-[11px] bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 px-2.5 py-0.5 rounded-full font-semibold border dark:border-emerald-800">Auditor Linha por Linha</span>
         </div>
-        <button type="button" onclick="document.getElementById('panel-import-planilha').classList.add('hidden');" class="text-xs text-gray-400 hover:text-gray-600 font-bold p-1">
+        <button type="button" onclick="document.getElementById('panel-import-planilha').classList.add('hidden');" class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 font-bold p-1 cursor-pointer">
             ✕ Fechar
         </button>
     </div>
 
-    <div class="text-xs text-gray-600 mb-3 space-y-1 bg-gray-50 p-2.5 rounded-lg border border-gray-200">
-        <div class="font-semibold text-gray-700 mb-1">Regras automáticas aplicadas ao importar:</div>
+    <div class="text-xs text-gray-600 dark:text-gray-300 mb-3 space-y-1 bg-gray-50 dark:bg-gray-700/60 p-2.5 rounded-lg border border-gray-200 dark:border-gray-600">
+        <div class="font-semibold text-gray-700 dark:text-gray-200 mb-1">Regras automáticas aplicadas ao importar:</div>
         <div>🛡️ <b>1. Filtro de Lápide:</b> se o lote já foi baixado no chão da loja hoje, a linha é descartada (evita o item zumbi).</div>
         <div>📦 <b>2. Remessa Nova:</b> se o lote não existe no banco, é criado direto no <b>GALPÃO</b> (deixando os mais velhos intocados na LOJA).</div>
         <div>⚖️ <b>3. Divergência Delta:</b> se a planilha tiver excedente em relação à loja, lança apenas a diferença como reforço no <b>GALPÃO</b>.</div>
@@ -192,7 +192,7 @@
                accept=".xlsx,.xls,.csv,.xml,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/xml,*/*"
                required
                onchange="if (this.files && this.files.length) currentSpreadsheetFile = this.files[0];"
-               class="text-xs text-gray-700 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer">
+               class="text-xs text-gray-700 dark:text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer">
         
         <div class="flex items-center gap-2">
             <button type="button"
@@ -201,7 +201,7 @@
                     class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition inline-flex items-center gap-2 cursor-pointer">
                 <span>⚡ Processar e Conciliar</span>
             </button>
-            <span id="import-loading" class="hidden text-xs text-emerald-600 font-semibold animate-pulse">
+            <span id="import-loading" class="hidden text-xs text-emerald-600 dark:text-emerald-400 font-semibold animate-pulse">
                 ⏳ Enviando e auditando linhas...
             </span>
         </div>
@@ -211,24 +211,24 @@
     <div id="import-result-container"></div>
 
     <!-- Seção de Histórico e Backup de Planilhas Salvas -->
-    <div class="mt-4 pt-3 border-t border-gray-100">
+    <div class="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700">
         <div class="flex items-center justify-between">
             <button type="button"
                     onclick="toggleSpreadsheetHistory()"
-                    class="text-xs font-bold text-gray-700 hover:text-emerald-700 inline-flex items-center gap-1.5 transition cursor-pointer">
+                    class="text-xs font-bold text-gray-700 dark:text-gray-300 hover:text-emerald-700 dark:hover:text-emerald-400 inline-flex items-center gap-1.5 transition cursor-pointer">
                 <span>📁 Planilhas Salvas & Cópias de Segurança</span>
                 <span id="history-toggle-icon" class="text-[10px]">▼</span>
             </button>
-            <span class="text-[11px] text-gray-400 hidden sm:inline">Guarda cópia automática de todo arquivo enviado para recuperação</span>
+            <span class="text-[11px] text-gray-400 dark:text-gray-400 hidden sm:inline">Guarda cópia automática de todo arquivo enviado para recuperação</span>
         </div>
         <div id="spreadsheet-history-wrapper" class="hidden mt-2"></div>
     </div>
 </div>
 
 <!-- Tabela de lotes -->
-<div class="bg-white rounded-xl shadow-sm overflow-x-auto">
+<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-x-auto transition-colors">
     <table class="w-full text-left text-sm">
-        <thead class="bg-gray-50 text-gray-600 uppercase text-xs tracking-wider">
+        <thead class="bg-gray-50 dark:bg-gray-700/80 text-gray-600 dark:text-gray-300 uppercase text-xs tracking-wider border-b border-gray-200 dark:border-gray-700">
             <tr>
                 <th class="px-3 py-3">Lote</th>
                 <th class="px-3 py-3">Produto</th>
@@ -438,9 +438,9 @@ function setFiltro(key, evt) {
     // Atualiza visual dos botões
     document.querySelectorAll('.filter-btn').forEach(btn => {
         if (btn.getAttribute('data-filtro') === key) {
-            btn.className = "filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-indigo-600 text-white shadow";
+            btn.className = "filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm font-semibold cursor-pointer select-none";
         } else {
-            btn.className = "filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-gray-200 text-gray-700 hover:bg-gray-300";
+            btn.className = "filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 cursor-pointer select-none";
         }
     });
 
@@ -530,27 +530,27 @@ function renderColumnMappingInterface(data, file) {
         return html;
     };
 
-    let previewHeaders = cols.map(c => `<th class="px-2.5 py-1.5 font-bold text-gray-700 bg-gray-100 border-b border-gray-200 whitespace-nowrap text-xs">${c}</th>`).join('');
+    let previewHeaders = cols.map(c => `<th class="px-2.5 py-1.5 font-bold text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600 whitespace-nowrap text-xs">${c}</th>`).join('');
     let previewBody = '';
     preview.forEach(row => {
-        let cells = cols.map(c => `<td class="px-2.5 py-1 border-b border-gray-100 text-gray-600 truncate max-w-[150px] text-[11px]">${row[c] || ''}</td>`).join('');
+        let cells = cols.map(c => `<td class="px-2.5 py-1 border-b border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-300 truncate max-w-[150px] text-[11px]">${row[c] || ''}</td>`).join('');
         previewBody += `<tr>${cells}</tr>`;
     });
 
     const downloadBadge = data.file_id ? `
-        <a href="/download-planilha/${data.file_id}" download class="inline-flex items-center gap-1 text-[11px] text-amber-900 bg-amber-200/80 hover:bg-amber-300 px-2.5 py-1 rounded-md font-semibold transition shadow-xs">
+        <a href="/download-planilha/${data.file_id}" download class="inline-flex items-center gap-1 text-[11px] text-amber-900 dark:text-amber-200 bg-amber-200/80 dark:bg-amber-900/60 hover:bg-amber-300 dark:hover:bg-amber-800 px-2.5 py-1 rounded-md font-semibold transition shadow-xs">
             <span>📥 Baixar cópia original salva</span>
         </a>
     ` : '';
 
     resultContainer.innerHTML = `
-        <div id="import-mapping-card" class="mt-4 p-4 bg-amber-50/70 border border-amber-300 rounded-xl space-y-4 shadow-sm animate-fade-in">
+        <div id="import-mapping-card" class="mt-4 p-4 bg-amber-50/70 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/80 rounded-xl space-y-4 shadow-sm animate-fade-in">
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div class="flex items-start gap-2.5">
                     <span class="text-xl">📋</span>
                     <div class="space-y-0.5">
-                        <h4 class="text-sm font-bold text-amber-900">Confirmação de Colunas da Planilha</h4>
-                        <p class="text-xs text-amber-800">
+                        <h4 class="text-sm font-bold text-amber-900 dark:text-amber-300">Confirmação de Colunas da Planilha</h4>
+                        <p class="text-xs text-amber-800 dark:text-amber-400">
                             O arquivo <b>${fileName}</b> foi salvo com segurança em nosso servidor! Confirme abaixo quais colunas contêm o <b>Produto</b> e a <b>Validade</b>:
                         </p>
                     </div>
@@ -559,39 +559,39 @@ function renderColumnMappingInterface(data, file) {
             </div>
 
             <!-- Seletores de Mapeamento -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white p-3.5 rounded-lg border border-amber-200">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white dark:bg-gray-800 p-3.5 rounded-lg border border-amber-200 dark:border-gray-700">
                 <div>
-                    <label class="block text-[11px] font-bold text-gray-700 mb-1">
+                    <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
                         📦 Coluna do Produto <span class="text-red-500">*</span>
                     </label>
-                    <select id="map-col-prod" class="w-full text-xs bg-gray-50 border border-gray-300 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
+                    <select id="map-col-prod" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
                         ${generateOptions(suggestions.col_prod, true)}
                     </select>
                 </div>
 
                 <div>
-                    <label class="block text-[11px] font-bold text-gray-700 mb-1">
+                    <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
                         📅 Coluna da Validade <span class="text-red-500">*</span>
                     </label>
-                    <select id="map-col-valid" class="w-full text-xs bg-gray-50 border border-gray-300 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
+                    <select id="map-col-valid" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
                         ${generateOptions(suggestions.col_valid, true)}
                     </select>
                 </div>
 
                 <div>
-                    <label class="block text-[11px] font-bold text-gray-700 mb-1">
+                    <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
                         🏷️ Código de Barras (Opcional)
                     </label>
-                    <select id="map-col-code" class="w-full text-xs bg-gray-50 border border-gray-300 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
+                    <select id="map-col-code" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
                         ${generateOptions(suggestions.col_code, false)}
                     </select>
                 </div>
 
                 <div>
-                    <label class="block text-[11px] font-bold text-gray-700 mb-1">
+                    <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
                         🔢 Quantidade (Opcional)
                     </label>
-                    <select id="map-col-quant" class="w-full text-xs bg-gray-50 border border-gray-300 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
+                    <select id="map-col-quant" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
                         ${generateOptions(suggestions.col_quant, false)}
                     </select>
                 </div>
@@ -599,8 +599,8 @@ function renderColumnMappingInterface(data, file) {
 
             <!-- Pré-visualização das Primeiras Linhas da Planilha -->
             <div class="space-y-1.5">
-                <span class="text-[11px] font-semibold text-gray-600 uppercase tracking-wider">Amostra dos Dados da Planilha (5 primeiras linhas):</span>
-                <div class="overflow-x-auto bg-white border border-gray-200 rounded-lg max-h-48 shadow-inner">
+                <span class="text-[11px] font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Amostra dos Dados da Planilha (5 primeiras linhas):</span>
+                <div class="overflow-x-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg max-h-48 shadow-inner">
                     <table class="w-full text-left border-collapse">
                         <thead><tr>${previewHeaders}</tr></thead>
                         <tbody>${previewBody}</tbody>
@@ -612,7 +612,7 @@ function renderColumnMappingInterface(data, file) {
             <div class="flex items-center justify-between pt-1">
                 <button type="button"
                         onclick="document.getElementById('import-result-container').innerHTML = '';"
-                        class="text-xs text-gray-500 hover:text-gray-700 font-medium px-3 py-1.5">
+                        class="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 font-medium px-3 py-1.5 cursor-pointer">
                     Cancelar
                 </button>
                 <button type="button"
@@ -667,7 +667,7 @@ function submitImportPlanilha(event, customMapping = null) {
     }
 
     if (!currentSpreadsheetFile) {
-        resultContainer.innerHTML = '<div class="text-amber-700 text-xs p-3 bg-amber-50 border border-amber-300 rounded-lg mt-3 font-medium">⚠️ Por favor, selecione um arquivo de planilha (.xlsx, .xls ou .csv) antes de processar.</div>';
+        resultContainer.innerHTML = '<div class="text-amber-700 dark:text-amber-300 text-xs p-3 bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 rounded-lg mt-3 font-medium">⚠️ Por favor, selecione um arquivo de planilha (.xlsx, .xls ou .csv) antes de processar.</div>';
         return;
     }
 
@@ -690,28 +690,28 @@ function submitImportPlanilha(event, customMapping = null) {
 
     // Estrutura visual da barra de progresso com animação instantânea
     resultContainer.innerHTML = `
-        <div id="import-progress-card" class="mt-4 p-4 bg-white border border-emerald-200 rounded-xl space-y-3 shadow-sm transition-all duration-300">
+        <div id="import-progress-card" class="mt-4 p-4 bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-3 shadow-sm transition-all duration-300">
             <div class="flex items-center justify-between text-xs font-semibold">
-                <span class="text-gray-700 flex items-center gap-2 truncate max-w-[75%]">
-                    <span id="import-progress-spinner" class="animate-spin text-emerald-600 inline-block text-sm">⏳</span>
-                    <span id="import-progress-stage" class="text-gray-800">Enviando e salvando cópia de segurança de ${file.name} (${(file.size / 1024).toFixed(1)} KB)...</span>
+                <span class="text-gray-700 dark:text-gray-300 flex items-center gap-2 truncate max-w-[75%]">
+                    <span id="import-progress-spinner" class="animate-spin text-emerald-600 dark:text-emerald-400 inline-block text-sm">⏳</span>
+                    <span id="import-progress-stage" class="text-gray-800 dark:text-gray-200">Enviando e salvando cópia de segurança de ${file.name} (${(file.size / 1024).toFixed(1)} KB)...</span>
                 </span>
-                <span id="import-progress-percent" class="text-emerald-700 font-extrabold font-mono text-base tracking-tight">
+                <span id="import-progress-percent" class="text-emerald-700 dark:text-emerald-400 font-extrabold font-mono text-base tracking-tight">
                     15%
                 </span>
             </div>
 
             <!-- Trilho e Barra de Progresso com Transição Fluida e Gradiente -->
-            <div class="w-full bg-gray-100 rounded-full h-3.5 overflow-hidden shadow-inner p-0.5 border border-gray-200">
+            <div class="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3.5 overflow-hidden shadow-inner p-0.5 border border-gray-200 dark:border-gray-600">
                 <div id="import-progress-bar"
                      class="bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 h-full rounded-full transition-all duration-150 ease-out shadow-sm"
                      style="width: 15%;">
                 </div>
             </div>
 
-            <div class="flex items-center justify-between text-[11px] text-gray-500 pt-0.5">
-                <span id="import-progress-count" class="font-medium text-gray-600">Reconciliando linhas e estoque no banco de dados...</span>
-                <span id="import-progress-mini-stats" class="font-bold text-emerald-700">⚡ Backup Ativo</span>
+            <div class="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400 pt-0.5">
+                <span id="import-progress-count" class="font-medium text-gray-600 dark:text-gray-300">Reconciliando linhas e estoque no banco de dados...</span>
+                <span id="import-progress-mini-stats" class="font-bold text-emerald-700 dark:text-emerald-400">⚡ Backup Ativo</span>
             </div>
         </div>
         <div id="import-summary-wrapper" class="mt-2"></div>
@@ -772,12 +772,12 @@ function submitImportPlanilha(event, customMapping = null) {
         } catch (e) {
             // Em caso de retorno não-JSON
             resultContainer.innerHTML = `
-                <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-2">
+                <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-2">
                     <div class="font-bold flex items-center gap-1.5">
                         <span>❌</span>
                         <span>Falha no servidor ao processar planilha (Status ${xhr.status}):</span>
                     </div>
-                    <div class="text-xs bg-white p-2.5 rounded border border-red-200">
+                    <div class="text-xs bg-white dark:bg-gray-800 p-2.5 rounded border border-red-200 dark:border-red-900/60 text-gray-800 dark:text-gray-200">
                         O servidor retornou uma resposta inesperada. Verifique se o formato do arquivo (.xlsx, .xls ou .csv) está íntegro.
                     </div>
                     <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
@@ -805,13 +805,13 @@ function submitImportPlanilha(event, customMapping = null) {
             ` : '';
 
             resultContainer.innerHTML = `
-                <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-3">
+                <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-3">
                     <div class="font-bold flex items-center gap-1.5">
                         <span>❌</span>
                         <span>Falha na importação da planilha:</span>
                     </div>
-                    <div class="text-xs font-mono bg-white p-2.5 rounded border border-red-200">${errorMsg}</div>
-                    <div class="text-xs text-gray-600 bg-amber-50 p-2 rounded border border-amber-200">
+                    <div class="text-xs font-mono bg-white dark:bg-gray-800 p-2.5 rounded border border-red-200 dark:border-red-900/60 text-gray-800 dark:text-gray-200">${errorMsg}</div>
+                    <div class="text-xs text-gray-600 dark:text-gray-300 bg-amber-50 dark:bg-amber-950/40 p-2 rounded border border-amber-200 dark:border-amber-800">
                         🛡️ <b>Fique tranquilo:</b> sua planilha foi guardada com segurança em nosso servidor de backups. Você pode baixá-la ou tentar novamente a qualquer momento.
                     </div>
                     <div class="flex flex-wrap items-center gap-2 pt-1">
@@ -836,12 +836,12 @@ function submitImportPlanilha(event, customMapping = null) {
         let backupLinkHtml = '';
         if (data.file_id) {
             backupLinkHtml = `
-                <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 text-emerald-900 border border-emerald-200 px-3 py-2 rounded-lg shadow-2xs">
+                <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-lg shadow-2xs">
                     <span class="flex items-center gap-1.5">
                         <span>🛡️</span>
                         <span>Cópia de segurança salva em disco: <b>${file.name}</b></span>
                     </span>
-                    <a href="/download-planilha/${data.file_id}" download class="inline-flex items-center gap-1 font-bold underline hover:text-emerald-950">
+                    <a href="/download-planilha/${data.file_id}" download class="inline-flex items-center gap-1 font-bold underline hover:text-emerald-950 dark:hover:text-emerald-100">
                         <span>📥 Baixar Cópia Original</span>
                     </a>
                 </div>
@@ -868,12 +868,12 @@ function submitImportPlanilha(event, customMapping = null) {
             btn.classList.remove('opacity-60', 'cursor-not-allowed');
         }
         resultContainer.innerHTML = `
-            <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-2">
+            <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-2">
                 <div class="font-bold flex items-center gap-1.5">
                     <span>⚠️</span>
                     <span>Erro de conexão de rede durante o envio.</span>
                 </div>
-                <div class="text-xs text-red-600">
+                <div class="text-xs text-red-600 dark:text-red-300">
                     Não foi possível completar o envio para o servidor. Verifique sua conexão e tente novamente.
                 </div>
                 <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
@@ -901,27 +901,27 @@ async function reprocessSavedSpreadsheet(fileId, filename, customMapping = null)
     }
 
     resultContainer.innerHTML = `
-        <div id="import-progress-card" class="mt-4 p-4 bg-white border border-emerald-200 rounded-xl space-y-3 shadow-sm transition-all duration-300">
+        <div id="import-progress-card" class="mt-4 p-4 bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-3 shadow-sm transition-all duration-300">
             <div class="flex items-center justify-between text-xs font-semibold">
-                <span class="text-gray-700 flex items-center gap-2 truncate max-w-[75%]">
-                    <span id="import-progress-spinner" class="animate-spin text-emerald-600 inline-block text-sm">⏳</span>
-                    <span id="import-progress-stage" class="text-gray-800">Recuperando cópia salva e auditando ${filename}...</span>
+                <span class="text-gray-700 dark:text-gray-300 flex items-center gap-2 truncate max-w-[75%]">
+                    <span id="import-progress-spinner" class="animate-spin text-emerald-600 dark:text-emerald-400 inline-block text-sm">⏳</span>
+                    <span id="import-progress-stage" class="text-gray-800 dark:text-gray-200">Recuperando cópia salva e auditando ${filename}...</span>
                 </span>
-                <span id="import-progress-percent" class="text-emerald-700 font-extrabold font-mono text-base tracking-tight">
+                <span id="import-progress-percent" class="text-emerald-700 dark:text-emerald-400 font-extrabold font-mono text-base tracking-tight">
                     35%
                 </span>
             </div>
 
-            <div class="w-full bg-gray-100 rounded-full h-3.5 overflow-hidden shadow-inner p-0.5 border border-gray-200">
+            <div class="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3.5 overflow-hidden shadow-inner p-0.5 border border-gray-200 dark:border-gray-600">
                 <div id="import-progress-bar"
                      class="bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 h-full rounded-full transition-all duration-150 ease-out shadow-sm"
                      style="width: 35%;">
                 </div>
             </div>
 
-            <div class="flex items-center justify-between text-[11px] text-gray-500 pt-0.5">
-                <span id="import-progress-count" class="font-medium text-gray-600">Reconciliando linhas a partir do backup em disco...</span>
-                <span id="import-progress-mini-stats" class="font-bold text-emerald-700">⚡ Cópia Salva</span>
+            <div class="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400 pt-0.5">
+                <span id="import-progress-count" class="font-medium text-gray-600 dark:text-gray-300">Reconciliando linhas a partir do backup em disco...</span>
+                <span id="import-progress-mini-stats" class="font-bold text-emerald-700 dark:text-emerald-400">⚡ Cópia Salva</span>
             </div>
         </div>
         <div id="import-summary-wrapper" class="mt-2"></div>
@@ -976,12 +976,12 @@ async function reprocessSavedSpreadsheet(fileId, filename, customMapping = null)
         if (countEl) countEl.innerText = `📦 ${data.stats ? data.stats.total_linhas : 0} linhas auditadas`;
 
         const backupLinkHtml = `
-            <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 text-emerald-900 border border-emerald-200 px-3 py-2 rounded-lg shadow-2xs">
+            <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-lg shadow-2xs">
                 <span class="flex items-center gap-1.5">
                     <span>🛡️</span>
                     <span>Origem da importação: Cópia de segurança <b>${filename}</b></span>
                 </span>
-                <a href="/download-planilha/${fileId}" download class="inline-flex items-center gap-1 font-bold underline hover:text-emerald-950">
+                <a href="/download-planilha/${fileId}" download class="inline-flex items-center gap-1 font-bold underline hover:text-emerald-950 dark:hover:text-emerald-100">
                     <span>📥 Baixar Arquivo Original</span>
                 </a>
             </div>
@@ -1004,12 +1004,12 @@ async function reprocessSavedSpreadsheet(fileId, filename, customMapping = null)
         }
 
         resultContainer.innerHTML = `
-            <div class="mt-3 p-4 bg-red-50 border border-red-300 rounded-xl text-red-700 text-sm shadow-sm space-y-3">
+            <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-3">
                 <div class="font-bold flex items-center gap-1.5">
                     <span>❌</span>
                     <span>Falha ao re-processar cópia salva:</span>
                 </div>
-                <div class="text-xs font-mono bg-white p-2.5 rounded border border-red-200">${err.message}</div>
+                <div class="text-xs font-mono bg-white dark:bg-gray-800 p-2.5 rounded border border-red-200 dark:border-red-900/60 text-gray-800 dark:text-gray-200">${err.message}</div>
                 <div class="flex items-center gap-2 pt-1">
                     <button type="button" onclick="reprocessSavedSpreadsheet('${fileId}', '${filename}')" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
                         Tentar Novamente
@@ -1113,9 +1113,9 @@ function renderAddLotDropdown(items, query) {
 
     if (!items || items.length === 0) {
         dropdown.innerHTML = `
-            <div class="p-3 text-xs text-gray-500 bg-white">
+            <div class="p-3 text-xs text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800">
                 Nenhum produto correspondente no catálogo.
-                <div class="mt-1 font-semibold text-emerald-700">"<b>${query.toUpperCase()}</b>" será cadastrado como um produto novo.</div>
+                <div class="mt-1 font-semibold text-emerald-700 dark:text-emerald-400">"<b>${query.toUpperCase()}</b>" será cadastrado como um produto novo.</div>
             </div>
         `;
         dropdown.classList.remove('hidden');
@@ -1123,9 +1123,9 @@ function renderAddLotDropdown(items, query) {
     }
 
     let html = `
-        <div class="p-2 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase tracking-wider flex items-center justify-between border-b border-gray-100">
+        <div class="p-2 bg-gray-50 dark:bg-gray-700/80 text-[11px] font-semibold text-gray-500 dark:text-gray-300 uppercase tracking-wider flex items-center justify-between border-b border-gray-100 dark:border-gray-700">
             <span>Produtos no Catálogo (${items.length})</span>
-            <span class="text-emerald-700">Clique para selecionar</span>
+            <span class="text-emerald-700 dark:text-emerald-400">Clique para selecionar</span>
         </div>
     `;
 
@@ -1135,9 +1135,9 @@ function renderAddLotDropdown(items, query) {
         html += `
             <button type="button"
                     onclick="selectProductToAdd('${escapedName}')"
-                    class="w-full text-left px-3.5 py-2 hover:bg-emerald-50 active:bg-emerald-100 transition flex items-center justify-between gap-2 border-b border-gray-100 last:border-b-0 cursor-pointer bg-white">
-                <span class="font-semibold text-xs sm:text-sm text-gray-800 uppercase truncate">${item.name}</span>
-                <span class="text-[11px] font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded shrink-0">${codeText}</span>
+                    class="w-full text-left px-3.5 py-2 hover:bg-emerald-50 dark:hover:bg-gray-700 active:bg-emerald-100 dark:active:bg-gray-600 transition flex items-center justify-between gap-2 border-b border-gray-100 dark:border-gray-700 last:border-b-0 cursor-pointer bg-white dark:bg-gray-800">
+                <span class="font-semibold text-xs sm:text-sm text-gray-800 dark:text-gray-100 uppercase truncate">${item.name}</span>
+                <span class="text-[11px] font-mono text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded shrink-0">${codeText}</span>
             </button>
         `;
     });
