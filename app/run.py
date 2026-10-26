@@ -60,22 +60,32 @@ connected_clients = set()
 clients_lock = threading.Lock()
 
 
-def broadcast_reload(reason="change"):
-    """Notifica todos os clientes WebSocket conectados para atualizarem suas telas."""
-    dead_clients = []
-    with clients_lock:
-        clients_copy = list(connected_clients)
-
-    for client in clients_copy:
-        try:
-            client.send(json.dumps({"type": "reload", "reason": reason}))
-        except Exception:
-            dead_clients.append(client)
-
-    if dead_clients:
+def broadcast_reload(reason="change", exclude_client_id=None):
+    """
+    Notifica todos os clientes WebSocket em thread paralela de alta velocidade.
+    NUNCA bloqueia a resposta HTTP do usuário atual.
+    """
+    def _async_notify():
+        dead_clients = []
         with clients_lock:
-            for d in dead_clients:
-                connected_clients.discard(d)
+            clients_copy = list(connected_clients)
+
+        payload = json.dumps({"type": "reload", "reason": reason, "sender": exclude_client_id})
+        for client in clients_copy:
+            try:
+                # Não notifica o próprio cliente que acabou de enviar o formulário
+                if exclude_client_id and getattr(client, "client_id", None) == exclude_client_id:
+                    continue
+                client.send(payload)
+            except Exception:
+                dead_clients.append(client)
+
+        if dead_clients:
+            with clients_lock:
+                for d in dead_clients:
+                    connected_clients.discard(d)
+
+    threading.Thread(target=_async_notify, daemon=True).start()
 
 
 # Inicializa o banco de dados (SQLite local primeiro, depois ligação com PostgreSQL)
@@ -166,7 +176,10 @@ def ws_handler(ws):
                 continue
 
             action = msg.get("action")
-            if action == "search":
+            if action == "register":
+                ws.client_id = msg.get("clientId")
+                continue
+            elif action == "search":
                 filtro = msg.get("filtro", "todos")
                 busca = msg.get("busca", "").strip()
                 seq = msg.get("seq")
@@ -336,8 +349,9 @@ def add_lot():
     except Exception as e:
         return f'<div class="text-red-500 text-xs p-2">Erro ao cadastrar lote: {str(e)}</div>', 500
 
-    # Notifica outros clientes via WebSocket em tempo real
-    broadcast_reload("create_lot")
+    # Notifica outros clientes via WebSocket em tempo real sem travar a requisição atual
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("create_lot", exclude_client_id=client_id)
 
     # Recarrega a tabela para quem enviou o formulário
     filtro = request.form.get("filtro", "todos")
@@ -366,8 +380,9 @@ def delete_lot(lot_id: int):
     except Exception as e:
         return f"Erro ao deletar: {str(e)}", 500
 
-    # Notifica outros clientes conectados via WebSocket
-    broadcast_reload("delete_lot")
+    # Notifica outros clientes conectados via WebSocket sem travar quem deletou
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("delete_lot", exclude_client_id=client_id)
 
     # Retorna string vazia — o HTMX vai remover a <tr> do DOM do cliente atual
     return ""
@@ -389,8 +404,9 @@ def update_quant(lot_id: int):
     except Exception as e:
         return f"Erro ao salvar: {str(e)}", 500
 
-    # Notifica outros clientes
-    broadcast_reload("update_quant")
+    # Notifica outros clientes de forma assíncrona
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("update_quant", exclude_client_id=client_id)
 
     return render_template("partials/quant_cell.html", lot={"lot_id": lot_id, "quant": quant})
 
@@ -411,8 +427,9 @@ def update_price(lot_id: int):
     except Exception as e:
         return f"Erro ao salvar: {str(e)}", 500
 
-    # Notifica outros clientes
-    broadcast_reload("update_price")
+    # Notifica outros clientes de forma assíncrona
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("update_price", exclude_client_id=client_id)
 
     return render_template("partials/price_cell.html", lot={"lot_id": lot_id, "price": price})
 
@@ -421,13 +438,15 @@ def update_price(lot_id: int):
 def import_planilha():
     """
     Recebe uma planilha Excel (.xlsx, .xls) ou CSV e executa a auditoria linha por linha,
-    transmitindo o progresso em tempo real (0% a 100%) via streaming NDJSON.
+    com salvamento automático de cópia de segurança (backup), detecção automática universal
+    e suporte a mapeamento de colunas interativo.
     """
     if request.method == "GET":
         from flask import redirect
         return redirect("/")
 
     from app.auditor_import import audit_and_import_spreadsheet
+    from app.spreadsheet_storage import save_spreadsheet_backup, update_spreadsheet_backup_status
 
     if "file" not in request.files:
         return jsonify({"success": False, "error": "Nenhum arquivo enviado. Selecione uma planilha (.xlsx, .xls ou .csv)."}), 400
@@ -439,22 +458,183 @@ def import_planilha():
     filename = uploaded_file.filename
     content = uploaded_file.read()
 
+    # Salva IMEDIATAMENTE uma cópia segura em disco antes de qualquer processamento
+    backup_entry = save_spreadsheet_backup(
+        content,
+        filename,
+        status="PROCESSANDO",
+        details="Iniciando auditoria..."
+    )
+    file_id = backup_entry["id"]
+
+    custom_col_prod = request.form.get("col_prod") or None
+    custom_col_valid = request.form.get("col_valid") or None
+    custom_col_code = request.form.get("col_code") or None
+    custom_col_quant = request.form.get("col_quant") or None
+
     try:
-        result = audit_and_import_spreadsheet(content, filename)
+        result = audit_and_import_spreadsheet(
+            content,
+            filename,
+            custom_col_prod=custom_col_prod,
+            custom_col_valid=custom_col_valid,
+            custom_col_code=custom_col_code,
+            custom_col_quant=custom_col_quant
+        )
+
+        # Se for necessária confirmação manual de colunas pelo usuário
+        if result.get("needs_mapping"):
+            update_spreadsheet_backup_status(
+                file_id,
+                status="MAPEAMENTO_PENDENTE",
+                details=result.get("error", "Confirmação de colunas necessária")
+            )
+            return jsonify({
+                "success": False,
+                "needs_mapping": True,
+                "file_id": file_id,
+                "filename": filename,
+                "columns": result.get("columns", []),
+                "preview": result.get("preview", []),
+                "suggestions": result.get("suggestions", {}),
+                "message": result.get("error", "Confirmação de colunas necessária")
+            }), 200
+
         html_summary = render_template(
             "partials/import_summary.html",
             stats=result["stats"],
             logs=result.get("logs", [])
         )
+        total_rows = result["stats"].get("total_linhas", 0)
+        update_spreadsheet_backup_status(
+            file_id,
+            status="SUCESSO",
+            details=f"{total_rows} linhas processadas com sucesso",
+            total_rows=total_rows
+        )
         broadcast_reload("planilha_importada")
         return jsonify({
             "success": True,
+            "file_id": file_id,
             "stats": result["stats"],
             "logs": result.get("logs", []),
             "html": html_summary
         })
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 400
+        import traceback
+        traceback.print_exc()
+        update_spreadsheet_backup_status(
+            file_id,
+            status="ERRO",
+            details=str(e)
+        )
+        return jsonify({"success": False, "file_id": file_id, "error": str(e)}), 400
+
+
+@app.route("/download-planilha/<file_id>", methods=["GET"])
+def download_planilha(file_id):
+    """Permite baixar a cópia original de qualquer planilha enviada ao servidor."""
+    from app.spreadsheet_storage import get_spreadsheet_backup_by_id
+    res = get_spreadsheet_backup_by_id(file_id)
+    if not res:
+        return "Arquivo de planilha não encontrado ou expirado.", 404
+    content, original_filename, meta = res
+    import io
+    from flask import send_file
+    return send_file(
+        io.BytesIO(content),
+        download_name=original_filename,
+        as_attachment=True
+    )
+
+
+@app.route("/reprocess-planilha/<file_id>", methods=["POST"])
+def reprocess_planilha(file_id):
+    """Re-executa a auditoria e conciliação diretamente da cópia salva no servidor sem re-upload."""
+    from app.spreadsheet_storage import get_spreadsheet_backup_by_id, update_spreadsheet_backup_status
+    from app.auditor_import import audit_and_import_spreadsheet
+
+    res = get_spreadsheet_backup_by_id(file_id)
+    if not res:
+        return jsonify({"success": False, "error": "Planilha não encontrada no histórico de backups."}), 404
+    content, original_filename, meta = res
+
+    custom_col_prod = request.form.get("col_prod") or None
+    custom_col_valid = request.form.get("col_valid") or None
+    custom_col_code = request.form.get("col_code") or None
+    custom_col_quant = request.form.get("col_quant") or None
+
+    try:
+        result = audit_and_import_spreadsheet(
+            content,
+            original_filename,
+            custom_col_prod=custom_col_prod,
+            custom_col_valid=custom_col_valid,
+            custom_col_code=custom_col_code,
+            custom_col_quant=custom_col_quant
+        )
+
+        if result.get("needs_mapping"):
+            update_spreadsheet_backup_status(
+                file_id,
+                status="MAPEAMENTO_PENDENTE",
+                details=result.get("error", "Confirmação de colunas necessária")
+            )
+            return jsonify({
+                "success": False,
+                "needs_mapping": True,
+                "file_id": file_id,
+                "filename": original_filename,
+                "columns": result.get("columns", []),
+                "preview": result.get("preview", []),
+                "suggestions": result.get("suggestions", {}),
+                "message": result.get("error", "Confirmação de colunas necessária")
+            }), 200
+
+        html_summary = render_template(
+            "partials/import_summary.html",
+            stats=result["stats"],
+            logs=result.get("logs", [])
+        )
+        total_rows = result["stats"].get("total_linhas", 0)
+        update_spreadsheet_backup_status(
+            file_id,
+            status="SUCESSO",
+            details=f"{total_rows} linhas processadas com sucesso",
+            total_rows=total_rows
+        )
+        broadcast_reload("planilha_importada")
+        return jsonify({
+            "success": True,
+            "file_id": file_id,
+            "stats": result["stats"],
+            "logs": result.get("logs", []),
+            "html": html_summary
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        update_spreadsheet_backup_status(file_id, status="ERRO", details=str(e))
+        return jsonify({"success": False, "file_id": file_id, "error": str(e)}), 400
+
+
+@app.route("/planilhas-salvas", methods=["GET"])
+def list_planilhas_salvas():
+    """Retorna a lista de cópias salvas de planilhas para exibição no painel."""
+    from app.spreadsheet_storage import get_spreadsheet_backups
+    backups = get_spreadsheet_backups()
+    if request.headers.get("HX-Request") or request.args.get("html"):
+        return render_template("partials/spreadsheet_history.html", backups=backups)
+    return jsonify({"success": True, "backups": backups})
+
+
+@app.route("/planilhas-salvas/<file_id>/delete", methods=["POST", "DELETE"])
+def delete_planilha_salva(file_id):
+    """Exclui uma cópia salva do histórico."""
+    from app.spreadsheet_storage import delete_spreadsheet_backup, get_spreadsheet_backups
+    delete_spreadsheet_backup(file_id)
+    backups = get_spreadsheet_backups()
+    return render_template("partials/spreadsheet_history.html", backups=backups)
 
 
 @app.route("/upload-db", methods=["POST"])

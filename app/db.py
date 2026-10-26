@@ -436,12 +436,38 @@ def release_connection(conn, db_type):
 # ── Cache em Memória Inteligente ──────────────────────────────────────────────
 _query_cache = {}
 _cache_lock = threading.Lock()
-CACHE_TTL_SECONDS = 30  # expira automaticamente em 30s se não houver mutações
+CACHE_TTL_SECONDS = 120  # Mantém cache aquecido por 2 minutos
 
 def clear_query_cache():
-    """Invalida todo o cache de consultas instantaneamente em qualquer alteração."""
+    """Invalida todo o cache de consultas instantaneamente em alterações globais (ex: importação)."""
     with _cache_lock:
         _query_cache.clear()
+
+def _update_cache_lot_field(lot_id: int, field: str, value):
+    """Atualiza o lote diretamente na memória RAM sem invalidar as consultas já carregadas (0.01ms)."""
+    with _cache_lock:
+        for key, (t, total, lots) in _query_cache.items():
+            for lot in lots:
+                if lot.get("lot_id") == lot_id:
+                    lot[field] = value
+
+def _remove_cache_lot(lot_id: int):
+    """Remove um lote deletado do cache em memória RAM sem precisar recarregar o banco todo."""
+    with _cache_lock:
+        for key, (t, total, lots) in list(_query_cache.items()):
+            new_lots = [l for l in lots if l.get("lot_id") != lot_id]
+            if len(new_lots) != len(lots):
+                _query_cache[key] = (t, max(0, total - 1), new_lots)
+
+def _mirror_to_sqlite(sql: str, params: tuple):
+    """Espelha a alteração imediatamente no SQLite local em modo WAL (< 1ms)."""
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+            s_conn.execute("PRAGMA journal_mode = WAL;")
+            s_conn.execute(sql, params)
+            s_conn.commit()
+    except Exception as e:
+        print(f"⚠️ Erro ao espelhar alteração no SQLite: {e}")
 
 
 # ── Inicialização do Banco, Migrações e Sincronização Dual ────────────────────
@@ -787,11 +813,42 @@ def init_db():
             print("🚀 PostgreSQL conectado com sucesso!")
             # Puxa a cópia mais recente do Postgres para o SQLite em background thread
             threading.Thread(target=pull_cloud_to_sqlite, daemon=True).start()
+            _start_neon_keepalive()
         else:
             with _status_lock:
                 _db_status["postgres_online"] = False
             print("⚡ PostgreSQL offline. Servidor rodando com cópia local SQLite (Offline-first).")
             trigger_auto_reconnect()
+
+
+_keepalive_started = False
+def _start_neon_keepalive():
+    """Mantém a conexão e compute do Neon ativos em segundo plano (evita cold start de 8s)."""
+    global _keepalive_started
+    if _keepalive_started:
+        return
+    _keepalive_started = True
+
+    def _worker():
+        while is_postgres_configured():
+            time.sleep(150)
+            if is_postgres():
+                try:
+                    pool_inst = get_pg_pool()
+                    if pool_inst:
+                        conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
+                        if conn:
+                            with conn.cursor() as cur:
+                                cur.execute("SELECT 1;")
+                            _mark_conn_used(conn)
+                            if is_from_pool:
+                                pool_inst.putconn(conn)
+                            else:
+                                conn.close()
+                except Exception:
+                    pass
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 # ── Consulta Otimizada de Lotes ───────────────────────────────────────────────
@@ -932,24 +989,42 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
             raise
 
 
-# ── Mutações (Com Invalidação Instantânea de Cache) ─────────────────────────────
+# ── Mutações (Com Resposta Instantânea Local-First + Sincronização em Background) ────
 
 def update_lot_quant(lot_id: int, quant: int) -> bool:
-    clear_query_cache()
-    with get_db_cursor(commit=True) as (cur, db_type):
-        ph = "%s" if db_type == "postgres" else "?"
-        now_val = "CURRENT_TIMESTAMP" if db_type == "postgres" else "datetime('now', 'localtime')"
-        cur.execute(f"UPDATE product_lots SET quant = {ph}, updated_at = {now_val} WHERE id = {ph}", (quant, lot_id))
-        return True
+    # 1. Atualiza cache em RAM instantaneamente (0.01ms) — zero espera
+    _update_cache_lot_field(lot_id, "quant", quant)
+    # 2. Grava no SQLite local em WAL mode (< 1ms)
+    _mirror_to_sqlite("UPDATE product_lots SET quant = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (quant, lot_id))
+    # 3. Sincroniza com PostgreSQL na nuvem em segundo plano sem travar a resposta HTTP
+    if is_postgres():
+        def _sync_pg():
+            try:
+                with get_db_cursor(commit=True) as (cur, db_type):
+                    if db_type == "postgres":
+                        cur.execute("UPDATE product_lots SET quant = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (quant, lot_id))
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar quantidade no Postgres: {e}")
+        threading.Thread(target=_sync_pg, daemon=True).start()
+    return True
 
 
 def update_lot_price(lot_id: int, price: float) -> bool:
-    clear_query_cache()
-    with get_db_cursor(commit=True) as (cur, db_type):
-        ph = "%s" if db_type == "postgres" else "?"
-        now_val = "CURRENT_TIMESTAMP" if db_type == "postgres" else "datetime('now', 'localtime')"
-        cur.execute(f"UPDATE product_lots SET price = {ph}, updated_at = {now_val} WHERE id = {ph}", (price, lot_id))
-        return True
+    # 1. Atualiza cache em RAM instantaneamente (0.01ms)
+    _update_cache_lot_field(lot_id, "price", price)
+    # 2. Grava no SQLite local em WAL mode (< 1ms)
+    _mirror_to_sqlite("UPDATE product_lots SET price = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (price, lot_id))
+    # 3. Sincroniza com PostgreSQL na nuvem em segundo plano sem travar a resposta HTTP
+    if is_postgres():
+        def _sync_pg():
+            try:
+                with get_db_cursor(commit=True) as (cur, db_type):
+                    if db_type == "postgres":
+                        cur.execute("UPDATE product_lots SET price = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (price, lot_id))
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar preço no Postgres: {e}")
+        threading.Thread(target=_sync_pg, daemon=True).start()
+    return True
 
 
 def delete_lot(lot_id: int) -> bool:
@@ -957,31 +1032,46 @@ def delete_lot(lot_id: int) -> bool:
     Dá baixa no lote e registra a Lápide (tombstone) em stock_movements,
     garantindo que futuras importações de planilhas não ressuscitem esse lote (Item Zumbi).
     """
-    clear_query_cache()
-    with get_db_cursor(commit=True) as (cur, db_type):
-        ph = "%s" if db_type == "postgres" else "?"
+    # 1. Remove do cache em RAM imediatamente (0.01ms)
+    _remove_cache_lot(lot_id)
 
-        # 1. Recupera dados do lote para registrar a baixa
-        cur.execute(
-            f"SELECT product_id, quant, date_valid::TEXT FROM product_lots WHERE id = {ph}" if db_type == "postgres"
-            else f"SELECT product_id, quant, date_valid FROM product_lots WHERE id = {ph}",
-            (lot_id,)
-        )
-        row = cur.fetchone()
-        if row:
-            p_id = row[0]
-            q = row[1]
-            d_valid = str(row[2])[:10]
-            # Registra baixa no histórico de auditoria
-            cur.execute(
-                f"""INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid)
-                    VALUES ({ph}, {ph}, 'BAIXA', {ph}, {ph})""",
-                (p_id, lot_id, q, d_valid)
-            )
+    # 2. Registra baixa e remove no SQLite local imediatamente (< 1ms)
+    row_info = None
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+            s_conn.execute("PRAGMA journal_mode = WAL;")
+            s_cur = s_conn.cursor()
+            s_cur.execute("SELECT product_id, quant, date_valid FROM product_lots WHERE id = ?", (lot_id,))
+            s_row = s_cur.fetchone()
+            if s_row:
+                p_id, q, d_valid = s_row[0], s_row[1], str(s_row[2])[:10]
+                row_info = (p_id, q, d_valid)
+                s_cur.execute(
+                    "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid) VALUES (?, ?, 'BAIXA', ?, ?)",
+                    (p_id, lot_id, q, d_valid)
+                )
+            s_cur.execute("DELETE FROM product_lots WHERE id = ?", (lot_id,))
+            s_conn.commit()
+    except Exception as e:
+        print(f"⚠️ Erro ao registrar baixa no SQLite: {e}")
 
-        # 2. Deleta o lote ativo
-        cur.execute(f"DELETE FROM product_lots WHERE id = {ph}", (lot_id,))
-        return True
+    # 3. Sincroniza com PostgreSQL em background
+    if is_postgres():
+        def _sync_pg():
+            try:
+                with get_db_cursor(commit=True) as (cur, db_type):
+                    if db_type == "postgres":
+                        if row_info:
+                            cur.execute(
+                                "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid) VALUES (%s, %s, 'BAIXA', %s, %s)",
+                                (row_info[0], lot_id, row_info[1], row_info[2])
+                            )
+                        cur.execute("DELETE FROM product_lots WHERE id = %s", (lot_id,))
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar baixa no Postgres: {e}")
+        threading.Thread(target=_sync_pg, daemon=True).start()
+
+    return True
 
 
 def create_lot(name: str, quant: int, price: float, date_valid: str, location: str = "LOJA", status: str = "NORMAL"):

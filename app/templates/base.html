@@ -5,8 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DateLimit — Controle de Validade</title>
 
-    <!-- TailwindCSS via CDN -->
+    <!-- TailwindCSS via CDN com suporte a darkMode: 'class' -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {}
+            }
+        };
+    </script>
+
+    <!-- Detecção Instantânea de Tema Salvo (Evita tela branca ao carregar) -->
+    <script>
+        (function() {
+            try {
+                const saved = localStorage.getItem('datelimit_theme');
+                const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                if (saved === 'dark' || (!saved && prefersDark)) {
+                    document.documentElement.classList.add('dark');
+                } else {
+                    document.documentElement.classList.remove('dark');
+                }
+            } catch (e) {}
+        })();
+    </script>
 
     <!-- HTMX via CDN -->
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
@@ -14,6 +37,14 @@
     <style>
         /* Animação de fade-out ao deletar */
         tr.htmx-swapping { opacity: 0; transition: opacity 0.4s ease-out; }
+
+        /* Ajuste do esquema de cores nativo (scrollbars e controles do navegador) */
+        html.dark {
+            color-scheme: dark;
+        }
+        html:not(.dark) {
+            color-scheme: light;
+        }
     </style>
     <script>
         // Flag global de edição
@@ -74,25 +105,71 @@
                 }
             }
         });
+
+        // Alternância e persistência de Modo Escuro
+        window.updateThemeUI = function() {
+            const isDark = document.documentElement.classList.contains('dark');
+            if (document.body) {
+                if (isDark) document.body.classList.add('dark');
+                else document.body.classList.remove('dark');
+            }
+            const icon = document.getElementById('theme-toggle-icon');
+            const text = document.getElementById('theme-toggle-text');
+            const btn = document.getElementById('btn-theme-toggle');
+            if (icon) icon.innerText = isDark ? '☀️' : '🌙';
+            if (text) text.innerText = isDark ? 'Modo Claro' : 'Modo Escuro';
+            if (btn) btn.title = isDark ? 'Mudar para Modo Claro' : 'Mudar para Modo Escuro';
+        };
+
+        window.toggleDarkMode = function() {
+            const isDark = document.documentElement.classList.toggle('dark');
+            if (document.body) {
+                if (isDark) document.body.classList.add('dark');
+                else document.body.classList.remove('dark');
+            }
+            try {
+                localStorage.setItem('datelimit_theme', isDark ? 'dark' : 'light');
+            } catch (e) {}
+            window.updateThemeUI();
+        };
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', window.updateThemeUI);
+        } else {
+            window.updateThemeUI();
+        }
     </script>
 </head>
-<body class="bg-gray-100 min-h-screen">
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen transition-colors duration-200">
 
     <!-- Header -->
-    <header class="bg-indigo-700 text-white shadow-lg">
-        <div class="max-w-7xl mx-auto px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div class="flex items-center gap-2">
-                <h1 class="text-xl sm:text-2xl font-bold tracking-tight">📦 DateLimit</h1>
-                <span class="text-indigo-200 text-xs hidden sm:inline">Controle de Validade</span>
+    <header class="bg-indigo-700 dark:bg-gray-800 text-white shadow-lg border-b border-indigo-800 dark:border-gray-700 transition-colors duration-200">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <h1 class="text-xl sm:text-2xl font-bold tracking-tight">📦 DateLimit</h1>
+                    <span class="text-indigo-200 dark:text-indigo-300 text-xs hidden sm:inline">Controle de Validade</span>
+                </div>
             </div>
-            <!-- Links de Acesso -->
+
+            <!-- Links de Acesso + Botão de Modo Escuro -->
             <div class="flex flex-wrap items-center gap-2 text-xs">
+                <!-- Botão de Alternar Modo Escuro -->
+                <button id="btn-theme-toggle"
+                        type="button"
+                        onclick="toggleDarkMode()"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-800/90 hover:bg-indigo-900 dark:bg-gray-700 dark:hover:bg-gray-600 text-indigo-100 dark:text-amber-300 transition border border-indigo-600/70 dark:border-gray-600 shadow-xs cursor-pointer select-none active:scale-95"
+                        title="Alternar entre modo claro e escuro">
+                    <span id="theme-toggle-icon">🌙</span>
+                    <span id="theme-toggle-text">Modo Escuro</span>
+                </button>
+
                 <a href="{{ local_url }}" target="_blank"
-                   class="bg-indigo-800 hover:bg-indigo-900 px-2.5 py-1 rounded-md text-indigo-100 flex items-center gap-1 transition">
-                    💻 <span>Local:</span> <span class="font-mono text-white">{{ local_url }}</span>
+                   class="bg-indigo-800 hover:bg-indigo-900 dark:bg-gray-700 dark:hover:bg-gray-600 px-2.5 py-1.5 rounded-lg text-indigo-100 dark:text-gray-200 flex items-center gap-1 transition border border-indigo-600/40 dark:border-gray-600">
+                    💻 <span>Local:</span> <span class="font-mono text-white dark:text-indigo-200">{{ local_url }}</span>
                 </a>
                 <a href="{{ network_url }}" target="_blank"
-                   class="bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 rounded-md text-white font-medium flex items-center gap-1 transition shadow-sm"
+                   class="bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-600 px-2.5 py-1.5 rounded-lg text-white font-medium flex items-center gap-1 transition shadow-sm"
                    title="Use este link no navegador do celular conectado no mesmo Wi-Fi">
                     📱 <span>Rede/Celular:</span> <span class="font-mono font-bold">{{ network_url }}</span>
                 </a>
@@ -105,8 +182,8 @@
     </main>
 
     <!-- Footer -->
-    <footer class="text-center text-gray-400 text-xs py-4">
-        DateLimit — Interface temporária (Flask + HTMX)
+    <footer class="text-center text-gray-400 dark:text-gray-500 text-xs py-4 transition-colors">
+        DateLimit — Interface de Controle de Validade
     </footer>
 
 </body>
