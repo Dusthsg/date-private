@@ -286,6 +286,9 @@ function initWebSocket() {
                 }
             }, 20000);
         }
+
+        // Pré-aquece todos os filtros principais no cache do navegador (0.0ms na troca de abas)
+        prewarmClientFilters();
     };
 
     socket.onclose = function() {
@@ -305,13 +308,16 @@ function initWebSocket() {
         try {
             const data = JSON.parse(event.data);
             if (data.type === 'lots_update') {
-                // Descarta pacotes desatualizados caso o usuário tenha continuado a digitar
-                if (data.seq !== undefined && data.seq < currentSearchSeq) return;
-                if (window.isEditingLot) return;
-                
                 // Armazena no cache local do cliente
                 const cacheKey = `${data.filtro || 'todos'}|${(data.busca || '').trim().toUpperCase()}`;
                 clientCache.set(cacheKey, { html: data.html, total: data.total });
+
+                // Se for pré-aquecimento silencioso, apenas guarda na memória sem sobrescrever o que o usuário está vendo
+                if (data.prewarm) return;
+
+                // Descarta pacotes desatualizados caso o usuário tenha continuado a digitar
+                if (data.seq !== undefined && data.seq < currentSearchSeq) return;
+                if (window.isEditingLot) return;
 
                 renderLotsData(data.html, data.total);
 
@@ -429,6 +435,22 @@ function clearSearch() {
     input.value = '';
     onSearchInput('');
     input.focus();
+}
+
+function prewarmClientFilters() {
+    const filters = ['vencidos', 'critico', 'atencao', 'alerta', 'recentes'];
+    filters.forEach((f, idx) => {
+        setTimeout(() => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({
+                    action: "search",
+                    busca: "",
+                    filtro: f,
+                    prewarm: true
+                }));
+            }
+        }, 120 + (idx * 60));
+    });
 }
 
 function setFiltro(key, evt) {

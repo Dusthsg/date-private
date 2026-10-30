@@ -183,12 +183,13 @@ def ws_handler(ws):
                 filtro = msg.get("filtro", "todos")
                 busca = msg.get("busca", "").strip()
                 seq = msg.get("seq")
+                is_prewarm = bool(msg.get("prewarm"))
 
                 limit = 50
                 total, lots = query_lots(filtro=filtro, busca=busca, limit=limit, offset=0)
                 has_more = len(lots) < total
 
-                if has_more and not busca:
+                if has_more and not busca and not is_prewarm:
                     threading.Thread(target=_prefetch_next_chunk, args=(filtro, busca, 2, limit), daemon=True).start()
 
                 html = render_template(
@@ -208,7 +209,8 @@ def ws_handler(ws):
                     "total": total,
                     "filtro": filtro,
                     "busca": busca,
-                    "seq": seq
+                    "seq": seq,
+                    "prewarm": is_prewarm
                 }))
             elif action == "ping":
                 ws.send(json.dumps({"type": "pong"}))

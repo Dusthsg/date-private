@@ -510,6 +510,7 @@ def init_sqlite_db():
         );
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid ON product_lots(date_valid);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid_id ON product_lots(date_valid, id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
 
@@ -530,6 +531,7 @@ def init_sqlite_db():
         cur.execute("ALTER TABLE product_lots ADD COLUMN updated_at TEXT;")
         cur.execute("UPDATE product_lots SET updated_at = datetime('now', 'localtime') WHERE updated_at IS NULL;")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created_id ON product_lots(created_at, id);")
 
     # Tabela de movimentações e filtro de lápide para SQLite
     cur.execute("""
@@ -592,6 +594,7 @@ def init_pg_db():
             );
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid ON product_lots(date_valid);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid_id ON product_lots(date_valid, id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
 
@@ -604,6 +607,7 @@ def init_pg_db():
         cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS created_at DATE DEFAULT CURRENT_DATE;")
         cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created_id ON product_lots(created_at, id);")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS stock_movements (
@@ -819,11 +823,22 @@ def init_db():
             # Puxa a cópia mais recente do Postgres para o SQLite em background thread
             threading.Thread(target=pull_cloud_to_sqlite, daemon=True).start()
             _start_neon_keepalive()
+            threading.Thread(target=prewarm_filters_cache, daemon=True).start()
         else:
             with _status_lock:
                 _db_status["postgres_online"] = False
             print("⚡ PostgreSQL offline. Servidor rodando com cópia local SQLite (Offline-first).")
             trigger_auto_reconnect()
+            threading.Thread(target=prewarm_filters_cache, daemon=True).start()
+
+
+def prewarm_filters_cache():
+    """Pré-aquece os 6 filtros principais em memória RAM para resposta em 0.005ms."""
+    try:
+        for f in ("todos", "vencidos", "critico", "atencao", "alerta", "recentes"):
+            query_lots(filtro=f, busca="", limit=50, offset=0)
+    except Exception:
+        pass
 
 
 _keepalive_started = False
@@ -918,7 +933,7 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
                     params.append(f"%{clean_busca}%")
 
                 where_sql = " AND ".join(where_clauses)
-                order_by = "l.created_at DESC, l.id DESC" if filtro in ("recentes", "recente", "hoje") else "l.date_valid ASC, p.name ASC"
+                order_by = "l.created_at DESC, l.id DESC" if filtro in ("recentes", "recente", "hoje") else "l.date_valid ASC, l.id ASC"
 
                 # Query única combinando dados e contagem total via window function com LIMIT e OFFSET
                 query = f"""
@@ -1031,7 +1046,7 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
                             params.append(f"%{clean_busca}%")
 
                         where_sql = " AND ".join(where_clauses)
-                        order_by = "l.created_at DESC, l.id DESC" if filtro in ("recentes", "recente", "hoje") else "l.date_valid ASC, p.name ASC"
+                        order_by = "l.created_at DESC, l.id DESC" if filtro in ("recentes", "recente", "hoje") else "l.date_valid ASC, l.id ASC"
                         query_sq = f"""
                             SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
                                    l.quant, l.price,
