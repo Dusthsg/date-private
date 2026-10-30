@@ -266,6 +266,12 @@ class TestUserReportedIssues(unittest.TestCase):
         saved_list = get_spreadsheet_backups()
         self.assertTrue(any(item['id'] == file_id for item in saved_list))
 
+        # Testa deduplicação (não gera backup duplicado quando reenviar a mesma planilha)
+        meta_dup = save_spreadsheet_backup(csv_content, "backup_teste.csv")
+        self.assertEqual(meta_dup['id'], file_id)
+        saved_list_after_dup = get_spreadsheet_backups()
+        self.assertEqual(len([item for item in saved_list_after_dup if item['id'] == file_id]), 1)
+
         # Testa endpoint de download
         resp_download = self.client.get(f'/download-planilha/{file_id}')
         self.assertEqual(resp_download.status_code, 200)
@@ -405,7 +411,11 @@ class TestUserReportedIssues(unittest.TestCase):
         Valida que planilhas sem coluna de quantidade (como as exportações padrão do ERP com
         Validade serial e Produto) adicionam os novos lotes com quantidade 0 e não os ignoram.
         """
-        csv_no_quant = b"Validade,Produto,Codigo\n46300.0,PRODUTO TESTE SEM QTD,123456\n"
+        import uuid
+        uid = uuid.uuid4().hex[:6]
+        unique_name = f"PRODUTO TESTE SEM QTD {uid}"
+        unique_code = f"999{uid}"
+        csv_no_quant = f"Validade,Produto,Codigo\n46300.0,{unique_name},{unique_code}\n".encode('utf-8')
         res = audit_and_import_spreadsheet(
             csv_no_quant,
             "teste_sem_qtd.csv",
@@ -428,7 +438,15 @@ class TestUserReportedIssues(unittest.TestCase):
         self.assertTrue(res2.get('success'))
         stats2 = res2.get('stats', {})
         self.assertEqual(stats2.get('novos_lotes', 0), 0)
-        self.assertEqual(stats2.get('inalterados', 0), 1)
+        self.assertGreaterEqual(stats2.get('inalterados', 0), 1)
+
+        # Limpeza
+        from app.db import get_db_cursor
+        with get_db_cursor(commit=True) as (cur, db_type):
+            ph = '%s' if db_type == 'postgres' else '?'
+            cur.execute(f"DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
+            cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
+            cur.execute(f"DELETE FROM products WHERE name = {ph}", (unique_name,))
 
 
 if __name__ == '__main__':

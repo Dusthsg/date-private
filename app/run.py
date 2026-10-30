@@ -506,11 +506,13 @@ def import_planilha():
             logs=result.get("logs", [])
         )
         total_rows = result["stats"].get("total_linhas", 0)
+        novos_lotes = result["stats"].get("novos_lotes", 0)
         update_spreadsheet_backup_status(
             file_id,
             status="SUCESSO",
-            details=f"{total_rows} linhas processadas com sucesso",
-            total_rows=total_rows
+            details=f"{total_rows} linhas processadas ({novos_lotes} novas remessas)",
+            total_rows=total_rows,
+            novos_lotes=novos_lotes
         )
         broadcast_reload("planilha_importada")
         return jsonify({
@@ -597,11 +599,13 @@ def reprocess_planilha(file_id):
             logs=result.get("logs", [])
         )
         total_rows = result["stats"].get("total_linhas", 0)
+        novos_lotes = result["stats"].get("novos_lotes", 0)
         update_spreadsheet_backup_status(
             file_id,
             status="SUCESSO",
-            details=f"{total_rows} linhas processadas com sucesso",
-            total_rows=total_rows
+            details=f"{total_rows} linhas processadas ({novos_lotes} novas remessas)",
+            total_rows=total_rows,
+            novos_lotes=novos_lotes
         )
         broadcast_reload("planilha_importada")
         return jsonify({

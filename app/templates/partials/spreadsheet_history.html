@@ -29,6 +29,9 @@
                                 <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800" title="{{ item.details }}">
                                     <span>✅ Sucesso</span>
                                     {% if item.total_rows %}<span class="font-normal font-mono">({{ item.total_rows }} un)</span>{% endif %}
+                                    {% if item.novos_lotes is defined and item.novos_lotes is not none %}
+                                        <span class="text-emerald-700 dark:text-emerald-300 font-extrabold ml-0.5 bg-emerald-200/60 dark:bg-emerald-800/60 px-1 rounded">(+{{ item.novos_lotes }} remessas)</span>
+                                    {% endif %}
                                 </span>
                             {% elif item.status == 'MAPEAMENTO_PENDENTE' %}
                                 <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title="{{ item.details }}">

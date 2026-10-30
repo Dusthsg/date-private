@@ -11,6 +11,7 @@ tenha uma cópia de segurança salva em disco no servidor, permitindo:
 import os
 import json
 import re
+import hashlib
 from pathlib import Path
 from datetime import datetime
 from uuid import uuid4
@@ -71,17 +72,52 @@ def save_spreadsheet_backup(
     original_filename: str,
     status: str = "RECEBIDO",
     details: str = "",
-    total_rows: int = 0
+    total_rows: int = 0,
+    novos_lotes: int = None
 ) -> dict:
     """
     Salva uma cópia física da planilha no diretório de backups e registra seus metadados.
-    Executa rotação automática mantendo até MAX_SAVED_SPREADSHEETS arquivos.
+    Executa deduplicação por hash SHA-256 e rotação automática mantendo até MAX_SAVED_SPREADSHEETS.
     """
     _ensure_dir()
 
     now = datetime.now()
-    file_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
     clean_name = sanitize_filename(original_filename)
+
+    entries = _load_index()
+
+    # Deduplicação: se a mesma planilha já foi enviada/armazenada anteriormente,
+    # reutiliza e atualiza o registro existente sem gerar arquivo duplicado em disco.
+    existing_entry = None
+    for item in entries:
+        if item.get("sha256") == file_hash or (
+            item.get("original_filename") == original_filename and item.get("size_bytes") == len(file_bytes)
+        ):
+            stored_path = BACKUP_DIR / item.get("stored_filename", "")
+            if stored_path.exists():
+                existing_entry = item
+                break
+
+    if existing_entry:
+        existing_entry["timestamp"] = now.isoformat()
+        existing_entry["timestamp_display"] = now.strftime("%d/%m/%Y %H:%M:%S")
+        existing_entry["status"] = status
+        if details:
+            existing_entry["details"] = details
+        if total_rows:
+            existing_entry["total_rows"] = total_rows
+        if novos_lotes is not None:
+            existing_entry["novos_lotes"] = novos_lotes
+        existing_entry["sha256"] = file_hash
+
+        # Reordena para o início da lista como mais recente
+        entries.remove(existing_entry)
+        entries.insert(0, existing_entry)
+        _save_index(entries)
+        return existing_entry
+
+    file_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
     stored_filename = f"{file_id}_{clean_name}"
     file_path = BACKUP_DIR / stored_filename
 
@@ -94,6 +130,7 @@ def save_spreadsheet_backup(
         "id": file_id,
         "original_filename": original_filename,
         "stored_filename": stored_filename,
+        "sha256": file_hash,
         "size_bytes": size_bytes,
         "size_display": format_bytes(size_bytes),
         "timestamp": now.isoformat(),
@@ -102,9 +139,10 @@ def save_spreadsheet_backup(
         "details": details,
         "total_rows": total_rows
     }
+    if novos_lotes is not None:
+        entry["novos_lotes"] = novos_lotes
 
     # Atualiza índice
-    entries = _load_index()
     entries.insert(0, entry)
 
     # Rotação automática para liberar espaço em disco
@@ -127,9 +165,10 @@ def update_spreadsheet_backup_status(
     file_id: str,
     status: str,
     details: str = None,
-    total_rows: int = None
+    total_rows: int = None,
+    novos_lotes: int = None
 ) -> dict | None:
-    """Atualiza o status e os detalhes de auditoria de uma planilha salva."""
+    """Atualiza o status, remessas e os detalhes de auditoria de uma planilha salva."""
     entries = _load_index()
     target = None
     for item in entries:
@@ -140,6 +179,8 @@ def update_spreadsheet_backup_status(
                 item["details"] = details
             if total_rows is not None:
                 item["total_rows"] = total_rows
+            if novos_lotes is not None:
+                item["novos_lotes"] = novos_lotes
             break
 
     if target:

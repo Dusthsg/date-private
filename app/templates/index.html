@@ -827,11 +827,24 @@ function submitImportPlanilha(event, customMapping = null) {
         }
 
         // Conclusão com sucesso total
+        const novosLotes = (data.stats && data.stats.novos_lotes !== undefined) ? data.stats.novos_lotes : 0;
+        const totalLinhas = (data.stats && data.stats.total_linhas !== undefined) ? data.stats.total_linhas : 0;
+        const inalterados = (data.stats && data.stats.inalterados !== undefined) ? data.stats.inalterados : 0;
+        const bloqueados = (data.stats && data.stats.bloqueados_zumbi !== undefined) ? data.stats.bloqueados_zumbi : 0;
+
         if (progressBar) progressBar.style.width = '100%';
         if (percentEl) percentEl.innerText = '100%';
         if (spinner) spinner.innerText = '✅';
-        if (stageEl) stageEl.innerText = `Auditoria concluída! ${data.stats ? data.stats.total_linhas : 0} linhas processadas instantaneamente`;
-        if (countEl) countEl.innerText = `📦 ${data.stats ? data.stats.total_linhas : 0} linhas auditadas com sucesso`;
+        if (stageEl) {
+            stageEl.innerHTML = `Auditoria concluída! <b class="text-emerald-700 dark:text-emerald-400">${novosLotes} novas remessas cadastradas</b> no Galpão (${totalLinhas} linhas processadas)`;
+        }
+        if (countEl) {
+            countEl.innerHTML = `📦 <b class="text-emerald-800 dark:text-emerald-300">${novosLotes} novas remessas adicionadas</b> • ${inalterados} inalteradas • ${bloqueados} zumbis bloqueados`;
+        }
+        const miniStats = document.getElementById('import-progress-mini-stats');
+        if (miniStats) {
+            miniStats.innerHTML = `<span class="bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-extrabold">✨ +${novosLotes} Novas Remessas</span>`;
+        }
 
         let backupLinkHtml = '';
         if (data.file_id) {
@@ -969,11 +982,24 @@ async function reprocessSavedSpreadsheet(fileId, filename, customMapping = null)
             throw new Error(data.error || `Erro HTTP ${resp.status}`);
         }
 
+        const novosLotes = (data.stats && data.stats.novos_lotes !== undefined) ? data.stats.novos_lotes : 0;
+        const totalLinhas = (data.stats && data.stats.total_linhas !== undefined) ? data.stats.total_linhas : 0;
+        const inalterados = (data.stats && data.stats.inalterados !== undefined) ? data.stats.inalterados : 0;
+        const bloqueados = (data.stats && data.stats.bloqueados_zumbi !== undefined) ? data.stats.bloqueados_zumbi : 0;
+
         if (progressBar) progressBar.style.width = '100%';
         if (percentEl) percentEl.innerText = '100%';
         if (spinner) spinner.innerText = '✅';
-        if (stageEl) stageEl.innerText = `Re-processamento concluído! ${data.stats ? data.stats.total_linhas : 0} linhas conciliadas com sucesso`;
-        if (countEl) countEl.innerText = `📦 ${data.stats ? data.stats.total_linhas : 0} linhas auditadas`;
+        if (stageEl) {
+            stageEl.innerHTML = `Re-processamento concluído! <b class="text-emerald-700 dark:text-emerald-400">${novosLotes} novas remessas cadastradas</b> no Galpão (${totalLinhas} linhas conciliadas)`;
+        }
+        if (countEl) {
+            countEl.innerHTML = `📦 <b class="text-emerald-800 dark:text-emerald-300">${novosLotes} novas remessas adicionadas</b> • ${inalterados} inalteradas • ${bloqueados} zumbis bloqueados`;
+        }
+        const miniStatsReproc = document.getElementById('import-progress-mini-stats');
+        if (miniStatsReproc) {
+            miniStatsReproc.innerHTML = `<span class="bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-extrabold">✨ +${novosLotes} Novas Remessas</span>`;
+        }
 
         const backupLinkHtml = `
             <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-lg shadow-2xs">
