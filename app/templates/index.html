@@ -415,8 +415,8 @@ function onSearchInput(val) {
     }
 
     clearTimeout(searchDebounceTimer);
-    // Debounce balanceado (220ms) para resposta ágil sem sobrecarregar a rede
-    searchDebounceTimer = setTimeout(() => performSearch(false), 220);
+    // Debounce balanceado (260ms) para resposta suave e sem sobrecarga
+    searchDebounceTimer = setTimeout(() => performSearch(false), 260);
 }
 
 function submitSearch() {

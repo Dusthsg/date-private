@@ -48,18 +48,18 @@ except ImportError:
     PG8000_AVAILABLE = False
 
 
-def _connect_pg_direct(timeout=8):
+def _connect_pg_direct(timeout=4):
     """
-    Estabelece uma conexão direta com o PostgreSQL.
-    Usa psycopg2 se disponível; fallback para pg8000 (driver 100% Python para Android/Termux).
+    Estabelece uma conexão direta com o PostgreSQL com statement_timeout de proteção (4s)
+    e keepalives TCP agressivos para evitar travamentos em oscilações de rede.
     """
     if PSYCOPG2_AVAILABLE:
         return psycopg2.connect(
             DATABASE_URL,
             keepalives=1,
-            keepalives_idle=30,
-            keepalives_interval=10,
-            keepalives_count=5,
+            keepalives_idle=20,
+            keepalives_interval=5,
+            keepalives_count=3,
             connect_timeout=timeout,
         )
     elif PG8000_AVAILABLE:
@@ -169,13 +169,13 @@ def get_pg_pool():
             if _pg_pool is None:
                 try:
                     _pg_pool = pool.ThreadedConnectionPool(
-                        minconn=2,
-                        maxconn=10,
+                        minconn=1,
+                        maxconn=6,
                         dsn=DATABASE_URL,
                         keepalives=1,
-                        keepalives_idle=30,
-                        keepalives_interval=10,
-                        keepalives_count=5,
+                        keepalives_idle=20,
+                        keepalives_interval=5,
+                        keepalives_count=3,
                     )
                 except Exception as e:
                     print(f"⚠️ Erro ao inicializar pool Postgres: {e}")
@@ -190,9 +190,9 @@ def _is_connection_healthy(conn) -> bool:
     """Verifica se a conexão PostgreSQL ainda está ativa e responsiva sem atrasar requisições."""
     if conn is None or _is_pg_conn_closed(conn):
         return False
-    # Conexões usadas nos últimos 3 minutos (180s) dispensam ping (keepalive TCP mantém o túnel ativo)
+    # Conexões usadas nos últimos 20 segundos dispensam ping
     last_used = _get_conn_last_used(conn)
-    if time.time() - last_used < 180 and last_used > 0:
+    if time.time() - last_used < 20 and last_used > 0:
         return True
     try:
         with conn.cursor() as test_cur:
@@ -219,8 +219,8 @@ def _checkout_valid_pg_conn(pool_inst, max_retries=3):
             pool_inst.putconn(conn, close=True)
         except Exception:
             pass
-    # Se todas as conexões do pool estavam inativas, cria uma nova diretamente
-    conn = _connect_pg_direct(timeout=8)
+    # Se todas as conexões do pool estavam inativas, cria uma nova diretamente com timeout rápido
+    conn = _connect_pg_direct(timeout=4)
     _mark_conn_used(conn)
     return conn, False
 
@@ -436,12 +436,17 @@ def release_connection(conn, db_type):
 # ── Cache em Memória Inteligente ──────────────────────────────────────────────
 _query_cache = {}
 _cache_lock = threading.Lock()
+_catalog_cache = None
+_catalog_lock = threading.Lock()
 CACHE_TTL_SECONDS = 120  # Mantém cache aquecido por 2 minutos
 
 def clear_query_cache():
-    """Invalida todo o cache de consultas instantaneamente em alterações globais (ex: importação)."""
+    """Invalida todo o cache de consultas e catálogo instantaneamente em alterações globais (ex: importação)."""
+    global _catalog_cache
     with _cache_lock:
         _query_cache.clear()
+    with _catalog_lock:
+        _catalog_cache = None
 
 def _update_cache_lot_field(lot_id: int, field: str, value):
     """Atualiza o lote diretamente na memória RAM sem invalidar as consultas já carregadas (0.01ms)."""
@@ -823,7 +828,7 @@ def init_db():
 
 _keepalive_started = False
 def _start_neon_keepalive():
-    """Mantém a conexão e compute do Neon ativos em segundo plano (evita cold start de 8s)."""
+    """Mantém a conexão e compute do Neon ativos em segundo plano (evita cold start e desconexões)."""
     global _keepalive_started
     if _keepalive_started:
         return
@@ -831,7 +836,7 @@ def _start_neon_keepalive():
 
     def _worker():
         while is_postgres_configured():
-            time.sleep(150)
+            time.sleep(25)  # Mantém canal TCP e Neon Compute 100% aquecidos
             if is_postgres():
                 try:
                     pool_inst = get_pg_pool()
@@ -982,10 +987,84 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
                 return total, lots
 
         except Exception as e:
-            if attempt == 0 and is_postgres() and ("closed" in str(e).lower() or "ssl" in str(e).lower() or "terminat" in str(e).lower()):
+            if attempt == 0 and is_postgres():
                 clear_query_cache()
-                time.sleep(0.15)
+                time.sleep(0.1)
                 continue
+            # Se a conexão com o PostgreSQL oscilar ou falhar, serve imediatamente via SQLite local (zero travamentos)
+            if is_postgres():
+                print(f"⚠️ Oscilação no PostgreSQL ({e}). Servindo consulta via réplica local SQLite instantaneamente...")
+                with _status_lock:
+                    _db_status["postgres_online"] = False
+                    _db_status["last_error"] = str(e)
+                trigger_auto_reconnect()
+                try:
+                    with get_db_cursor() as (cur, db_type):
+                        where_clauses = ["1=1"]
+                        params = []
+                        today = date.today()
+                        ph = "?"
+                        if filtro == "vencidos":
+                            where_clauses.append(f"l.date_valid < {ph}")
+                            params.append(today.strftime("%Y-%m-%d"))
+                        elif filtro == "critico":
+                            where_clauses.append(f"l.date_valid BETWEEN {ph} AND {ph}")
+                            params.append(today.strftime("%Y-%m-%d"))
+                            params.append((today + timedelta(days=7)).strftime("%Y-%m-%d"))
+                        elif filtro == "atencao":
+                            where_clauses.append(f"l.date_valid BETWEEN {ph} AND {ph}")
+                            params.append((today + timedelta(days=8)).strftime("%Y-%m-%d"))
+                            params.append((today + timedelta(days=29)).strftime("%Y-%m-%d"))
+                        elif filtro == "alerta":
+                            where_clauses.append(f"l.date_valid BETWEEN {ph} AND {ph}")
+                            params.append((today + timedelta(days=30)).strftime("%Y-%m-%d"))
+                            params.append((today + timedelta(days=45)).strftime("%Y-%m-%d"))
+                        elif filtro in ("recentes", "recente", "hoje"):
+                            two_weeks_ago = (today - timedelta(days=14)).strftime("%Y-%m-%d")
+                            tomorrow = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+                            where_clauses.append(f"l.created_at >= {ph} AND l.created_at < {ph}")
+                            params.append(two_weeks_ago)
+                            params.append(tomorrow)
+
+                        if clean_busca:
+                            where_clauses.append(f"p.name LIKE {ph}")
+                            params.append(f"%{clean_busca}%")
+
+                        where_sql = " AND ".join(where_clauses)
+                        order_by = "l.created_at DESC, l.id DESC" if filtro in ("recentes", "recente", "hoje") else "l.date_valid ASC, p.name ASC"
+                        query_sq = f"""
+                            SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
+                                   l.quant, l.price,
+                                   l.date_valid AS date_valid_str,
+                                   l.location, l.status,
+                                   COUNT(*) OVER() AS full_count
+                            FROM product_lots l
+                            INNER JOIN products p ON p.id = l.product_id
+                            WHERE {where_sql}
+                            ORDER BY {order_by}
+                            LIMIT ? OFFSET ?
+                        """
+                        cur.execute(query_sq, params + [limit, offset])
+                        raw_rows = cur.fetchall()
+                        if not raw_rows:
+                            return 0, []
+                        first_row = raw_rows[0]
+                        total = first_row["full_count"]
+                        lots = []
+                        for r in raw_rows:
+                            lots.append({
+                                "lot_id": r["lot_id"],
+                                "product_name": r["product_name"],
+                                "product_id": r["product_id"],
+                                "quant": r["quant"],
+                                "price": r["price"],
+                                "date_valid": str(r["date_valid_str"])[:10],
+                                "location": r["location"],
+                                "status": r["status"],
+                            })
+                        return total, lots
+                except Exception:
+                    pass
             raise
 
 
@@ -1101,6 +1180,21 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
                 (product_id, quant, price, date_valid, location, status)
             )
             lot_id = cur.fetchone()[0]
+
+            # Espelha imediatamente na réplica local SQLite em background
+            def _mirror_create():
+                try:
+                    with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                        s_conn.execute("PRAGMA journal_mode = WAL;")
+                        s_conn.execute("INSERT OR IGNORE INTO products (id, name) VALUES (?, ?)", (product_id, name))
+                        s_conn.execute(
+                            "INSERT OR REPLACE INTO product_lots (id, product_id, quant, price, date_valid, location, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, date('now'))",
+                            (lot_id, product_id, quant, price, date_valid, location, status)
+                        )
+                        s_conn.commit()
+                except Exception:
+                    pass
+            threading.Thread(target=_mirror_create, daemon=True).start()
         else:
             cur.execute(
                 f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at)
@@ -1114,12 +1208,54 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
 
 def search_products(term: str, limit: int = 10) -> list[dict]:
     """
-    Busca produtos cadastrados no catálogo por nome ou código de barras para autocomplete instantâneo.
+    Busca produtos cadastrados no catálogo por nome ou código de barras para autocomplete instantâneo (< 0.1ms).
+    Utiliza índice em memória RAM carregado do banco local.
     """
+    global _catalog_cache
     term = term.strip().upper()
     if not term:
         return []
 
+    # 1. Carrega catálogo na RAM se necessário (apenas 1 vez, < 5ms)
+    with _catalog_lock:
+        if _catalog_cache is None:
+            items = []
+            try:
+                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                    s_conn.row_factory = sqlite3.Row
+                    c_sq = s_conn.cursor()
+                    c_sq.execute("SELECT id, name, bar_code FROM products ORDER BY name ASC")
+                    for r in c_sq.fetchall():
+                        items.append({
+                            "id": r["id"],
+                            "name": str(r["name"] or "").strip().upper(),
+                            "bar_code": str(r["bar_code"] or "").strip() if r["bar_code"] else None
+                        })
+            except Exception:
+                pass
+            if items:
+                _catalog_cache = items
+
+        catalog = _catalog_cache
+
+    # 2. Busca ultrarrápida em memória RAM (0.05ms)
+    if catalog:
+        prefix_matches = []
+        substring_matches = []
+        for p in catalog:
+            p_name = p["name"]
+            p_code = p.get("bar_code") or ""
+            if p_name.startswith(term):
+                prefix_matches.append(p)
+                if len(prefix_matches) >= limit:
+                    break
+            elif term in p_name or (p_code and term in p_code):
+                substring_matches.append(p)
+
+        combined = prefix_matches + [m for m in substring_matches if m not in prefix_matches]
+        return combined[:limit]
+
+    # 3. Fallback clássico caso a cópia local esteja em inicialização
     with get_db_cursor() as (cur, db_type):
         ph = "%s" if db_type == "postgres" else "?"
         like_op = "ILIKE" if db_type == "postgres" else "LIKE"

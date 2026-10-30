@@ -188,7 +188,7 @@ def ws_handler(ws):
                 total, lots = query_lots(filtro=filtro, busca=busca, limit=limit, offset=0)
                 has_more = len(lots) < total
 
-                if has_more:
+                if has_more and not busca:
                     threading.Thread(target=_prefetch_next_chunk, args=(filtro, busca, 2, limit), daemon=True).start()
 
                 html = render_template(
