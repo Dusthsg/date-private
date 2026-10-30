@@ -38,15 +38,17 @@ def migrate():
     s_conn = sqlite3.connect(str(SQLITE_PATH))
     s_cur = s_conn.cursor()
 
-    # Ler products (com bar_code se existir)
+    # Ler products (com bar_code e price se existirem)
     s_cur.execute("PRAGMA table_info(products);")
     p_cols = [c[1] for c in s_cur.fetchall()]
-    if "bar_code" in p_cols:
-        s_cur.execute("SELECT id, name, bar_code FROM products ORDER BY id ASC")
-        products = s_cur.fetchall()
-    else:
-        s_cur.execute("SELECT id, name, NULL FROM products ORDER BY id ASC")
-        products = s_cur.fetchall()
+    has_barcode = "bar_code" in p_cols
+    has_prod_price = "price" in p_cols
+
+    cols_select = ["id", "name"]
+    cols_select.append("bar_code" if has_barcode else "NULL")
+    cols_select.append("price" if has_prod_price else "0.0")
+    s_cur.execute(f"SELECT {', '.join(cols_select)} FROM products ORDER BY id ASC")
+    products = s_cur.fetchall()
     print(f"   Encontrados {len(products)} produtos no SQLite.")
 
     # Ler lots (com created_at e updated_at se existirem)
@@ -95,9 +97,11 @@ def migrate():
         CREATE TABLE IF NOT EXISTS products (
             id SERIAL PRIMARY KEY,
             name TEXT UNIQUE NOT NULL,
-            bar_code TEXT UNIQUE
+            bar_code TEXT UNIQUE,
+            price REAL DEFAULT 0.0
         );
     """)
+    p_cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
     p_cur.execute("""
         CREATE TABLE IF NOT EXISTS product_lots (
             id SERIAL PRIMARY KEY,
@@ -126,9 +130,9 @@ def migrate():
     execute_values(
         p_cur,
         """
-        INSERT INTO products (id, name, bar_code)
+        INSERT INTO products (id, name, bar_code, price)
         VALUES %s
-        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, bar_code = EXCLUDED.bar_code
+        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, bar_code = EXCLUDED.bar_code, price = EXCLUDED.price
         """,
         products,
         page_size=500

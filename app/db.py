@@ -451,9 +451,18 @@ def clear_query_cache():
 def _update_cache_lot_field(lot_id: int, field: str, value):
     """Atualiza o lote diretamente na memória RAM sem invalidar as consultas já carregadas (0.01ms)."""
     with _cache_lock:
+        target_prod_id = None
         for key, (t, total, lots) in _query_cache.items():
             for lot in lots:
                 if lot.get("lot_id") == lot_id:
+                    target_prod_id = lot.get("product_id")
+                    break
+            if target_prod_id is not None:
+                break
+
+        for key, (t, total, lots) in _query_cache.items():
+            for lot in lots:
+                if lot.get("lot_id") == lot_id or (field == "price" and target_prod_id is not None and lot.get("product_id") == target_prod_id):
                     lot[field] = value
 
 def _remove_cache_lot(lot_id: int):
@@ -492,7 +501,8 @@ def init_sqlite_db():
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT UNIQUE NOT NULL,
-            bar_code TEXT UNIQUE
+            bar_code TEXT UNIQUE,
+            price REAL DEFAULT 0.0
         );
     """)
     cur.execute("""
@@ -519,6 +529,23 @@ def init_sqlite_db():
     p_cols = [col[1] for col in cur.fetchall()]
     if "bar_code" not in p_cols:
         cur.execute("ALTER TABLE products ADD COLUMN bar_code TEXT;")
+    if "price" not in p_cols:
+        cur.execute("ALTER TABLE products ADD COLUMN price REAL DEFAULT 0.0;")
+        cur.execute("""
+            UPDATE products
+            SET price = COALESCE((
+                SELECT l.price 
+                FROM product_lots l 
+                WHERE l.product_id = products.id AND l.price > 0
+                ORDER BY l.id DESC 
+                LIMIT 1
+            ), 0.0)
+            WHERE EXISTS (
+                SELECT 1 
+                FROM product_lots l 
+                WHERE l.product_id = products.id AND l.price > 0
+            );
+        """)
 
     cur.execute("PRAGMA table_info(product_lots);")
     l_cols = [col[1] for col in cur.fetchall()]
@@ -577,7 +604,8 @@ def init_pg_db():
             CREATE TABLE IF NOT EXISTS products (
                 id SERIAL PRIMARY KEY,
                 name TEXT UNIQUE NOT NULL,
-                bar_code TEXT UNIQUE
+                bar_code TEXT UNIQUE,
+                price REAL DEFAULT 0.0
             );
         """)
         cur.execute("""
@@ -603,6 +631,22 @@ def init_pg_db():
         except Exception:
             conn.rollback()
 
+        cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
+        cur.execute("""
+            UPDATE products
+            SET price = COALESCE((
+                SELECT l.price 
+                FROM product_lots l 
+                WHERE l.product_id = products.id AND l.price > 0
+                ORDER BY l.id DESC 
+                LIMIT 1
+            ), 0.0)
+            WHERE EXISTS (
+                SELECT 1 
+                FROM product_lots l 
+                WHERE l.product_id = products.id AND l.price > 0
+            ) AND (price IS NULL OR price = 0.0);
+        """)
         cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
         cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS created_at DATE DEFAULT CURRENT_DATE;")
         cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
@@ -676,7 +720,7 @@ def pull_cloud_to_sqlite() -> dict:
         pg_cur = pg_conn.cursor()
         pg_cur.execute("""
             SELECT
-                COALESCE((SELECT json_agg(p) FROM (SELECT id, name, bar_code FROM products) p), '[]'::json) AS prods,
+                COALESCE((SELECT json_agg(p) FROM (SELECT id, name, bar_code, price FROM products) p), '[]'::json) AS prods,
                 COALESCE((SELECT json_agg(l) FROM (SELECT id, product_id, quant, price, date_valid::TEXT, location, status, created_at::TEXT, updated_at::TEXT FROM product_lots) l), '[]'::json) AS lots,
                 COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves;
         """)
@@ -725,8 +769,8 @@ def pull_cloud_to_sqlite() -> dict:
         sqlite_cur.execute("DELETE FROM products;")
         if products:
             sqlite_cur.executemany(
-                "INSERT INTO products (id, name, bar_code) VALUES (?, ?, ?);",
-                [(p["id"], p["name"], p.get("bar_code")) for p in products]
+                "INSERT INTO products (id, name, bar_code, price) VALUES (?, ?, ?, ?);",
+                [(p["id"], p["name"], p.get("bar_code"), p.get("price", 0.0)) for p in products]
             )
 
         sqlite_cur.execute("DELETE FROM product_lots;")
@@ -931,7 +975,7 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
 
             query_sq = f"""
                 SELECT l.id AS lot_id, p.name AS product_name, p.id AS product_id,
-                       l.quant, l.price,
+                       l.quant, p.price,
                        l.date_valid AS date_valid_str,
                        l.location, l.status,
                        COUNT(*) OVER() AS full_count
@@ -973,7 +1017,7 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
         # Fallback de segurança para PostgreSQL caso ocorra algum problema no SQLite local
         with get_db_cursor() as (cur, db_type):
             ph = "%s" if db_type == "postgres" else "?"
-            cur.execute(f"SELECT l.id, p.name, l.quant, l.price, l.date_valid::TEXT, l.location, l.status FROM product_lots l JOIN products p ON p.id = l.product_id LIMIT {ph} OFFSET {ph}", (limit, offset))
+            cur.execute(f"SELECT l.id, p.name, l.quant, p.price, l.date_valid::TEXT, l.location, l.status FROM product_lots l JOIN products p ON p.id = l.product_id LIMIT {ph} OFFSET {ph}", (limit, offset))
             rows = cur.fetchall()
             lots = [{"lot_id": r[0], "product_name": r[1], "quant": r[2], "price": r[3], "date_valid": str(r[4])[:10], "location": r[5], "status": r[6]} for r in rows]
             return len(lots), lots
@@ -1002,7 +1046,8 @@ def update_lot_quant(lot_id: int, quant: int) -> bool:
 def update_lot_price(lot_id: int, price: float) -> bool:
     # 1. Atualiza cache em RAM instantaneamente (0.01ms)
     _update_cache_lot_field(lot_id, "price", price)
-    # 2. Grava no SQLite local em WAL mode (< 1ms)
+    # 2. Grava no SQLite local: atualiza products e espelha em product_lots (< 1ms)
+    _mirror_to_sqlite("UPDATE products SET price = ? WHERE id = (SELECT product_id FROM product_lots WHERE id = ?)", (price, lot_id))
     _mirror_to_sqlite("UPDATE product_lots SET price = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (price, lot_id))
     # 3. Sincroniza com PostgreSQL na nuvem em segundo plano sem travar a resposta HTTP
     if is_postgres():
@@ -1010,6 +1055,7 @@ def update_lot_price(lot_id: int, price: float) -> bool:
             try:
                 with get_db_cursor(commit=True) as (cur, db_type):
                     if db_type == "postgres":
+                        cur.execute("UPDATE products SET price = %s WHERE id = (SELECT product_id FROM product_lots WHERE id = %s)", (price, lot_id))
                         cur.execute("UPDATE product_lots SET price = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (price, lot_id))
             except Exception as e:
                 print(f"⚠️ Erro ao sincronizar preço no Postgres: {e}")
@@ -1071,16 +1117,19 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
         ph = "%s" if db_type == "postgres" else "?"
 
         # 1. Encontra ou cria produto (sempre normalizado em UPPERCASE)
-        cur.execute(f"SELECT id FROM products WHERE UPPER(name) = {ph}", (name,))
+        cur.execute(f"SELECT id, price FROM products WHERE UPPER(name) = {ph}", (name,))
         row = cur.fetchone()
         if row:
             product_id = row[0]
+            curr_price = row[1] if len(row) > 1 and row[1] is not None else 0.0
+            if price > 0 and curr_price == 0.0:
+                cur.execute(f"UPDATE products SET price = {ph} WHERE id = {ph}", (price, product_id))
         else:
             if db_type == "postgres":
-                cur.execute(f"INSERT INTO products (name) VALUES ({ph}) RETURNING id", (name,))
+                cur.execute(f"INSERT INTO products (name, price) VALUES ({ph}, {ph}) RETURNING id", (name, price))
                 product_id = cur.fetchone()[0]
             else:
-                cur.execute(f"INSERT INTO products (name) VALUES ({ph})", (name,))
+                cur.execute(f"INSERT INTO products (name, price) VALUES ({ph}, {ph})", (name, price))
                 product_id = cur.lastrowid
 
         # 2. Cria lote com created_at = CURRENT_DATE
@@ -1097,7 +1146,8 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
                 try:
                     with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
                         s_conn.execute("PRAGMA journal_mode = WAL;")
-                        s_conn.execute("INSERT OR IGNORE INTO products (id, name) VALUES (?, ?)", (product_id, name))
+                        s_conn.execute("INSERT OR IGNORE INTO products (id, name, price) VALUES (?, ?, ?)", (product_id, name, price))
+                        s_conn.execute("UPDATE products SET price = ? WHERE id = ? AND (price IS NULL OR price = 0.0)", (price, product_id))
                         s_conn.execute(
                             "INSERT OR REPLACE INTO product_lots (id, product_id, quant, price, date_valid, location, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, date('now'))",
                             (lot_id, product_id, quant, price, date_valid, location, status)
@@ -1135,12 +1185,13 @@ def search_products(term: str, limit: int = 10) -> list[dict]:
                 with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
                     s_conn.row_factory = sqlite3.Row
                     c_sq = s_conn.cursor()
-                    c_sq.execute("SELECT id, name, bar_code FROM products ORDER BY name ASC")
+                    c_sq.execute("SELECT id, name, bar_code, price FROM products ORDER BY name ASC")
                     for r in c_sq.fetchall():
                         items.append({
                             "id": r["id"],
                             "name": str(r["name"] or "").strip().upper(),
-                            "bar_code": str(r["bar_code"] or "").strip() if r["bar_code"] else None
+                            "bar_code": str(r["bar_code"] or "").strip() if r["bar_code"] else None,
+                            "price": float(r["price"] or 0.0)
                         })
             except Exception:
                 pass

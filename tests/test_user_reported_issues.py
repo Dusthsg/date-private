@@ -309,6 +309,12 @@ class TestUserReportedIssues(unittest.TestCase):
         self.assertIn('quant', cols_mov)
         self.assertIn('created_at', cols_mov)
 
+        # Verifica tabela products
+        cursor.execute("PRAGMA table_info(products)")
+        cols_prods = [row[1] for row in cursor.fetchall()]
+        self.assertIn('name', cols_prods)
+        self.assertIn('price', cols_prods)
+
         # Verifica tabela product_lots
         cursor.execute("PRAGMA table_info(product_lots)")
         cols_lots = [row[1] for row in cursor.fetchall()]
