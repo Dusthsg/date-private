@@ -37,10 +37,13 @@ from app.db import (
     DATABASE_URL
 )
 
+from functools import lru_cache
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+@lru_cache(maxsize=1)
 def get_local_ip():
-    """Detecta o IP local da máquina na rede Wi-Fi/Ethernet."""
+    """Detecta o IP local da máquina na rede Wi-Fi/Ethernet com cache para zero sobrecarga."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
