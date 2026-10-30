@@ -397,6 +397,39 @@ class TestUserReportedIssues(unittest.TestCase):
         self.assertIn('db_name', data_status)
         self.assertIn('postgres_online', data_status)
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # 15. ERRO: Importação de planilha sem coluna de quantidade não adicionava itens (Msg 77)
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_15_import_spreadsheet_without_quantity_column(self):
+        """
+        Valida que planilhas sem coluna de quantidade (como as exportações padrão do ERP com
+        Validade serial e Produto) adicionam os novos lotes com quantidade 0 e não os ignoram.
+        """
+        csv_no_quant = b"Validade,Produto,Codigo\n46300.0,PRODUTO TESTE SEM QTD,123456\n"
+        res = audit_and_import_spreadsheet(
+            csv_no_quant,
+            "teste_sem_qtd.csv",
+            custom_col_prod='Produto',
+            custom_col_valid='Validade',
+            custom_col_code='Codigo'
+        )
+        self.assertTrue(res.get('success'))
+        stats = res.get('stats', {})
+        self.assertGreaterEqual(stats.get('novos_lotes', 0), 1)
+
+        # Na segunda importação idêntica, deve marcar inalterado e não duplicar
+        res2 = audit_and_import_spreadsheet(
+            csv_no_quant,
+            "teste_sem_qtd.csv",
+            custom_col_prod='Produto',
+            custom_col_valid='Validade',
+            custom_col_code='Codigo'
+        )
+        self.assertTrue(res2.get('success'))
+        stats2 = res2.get('stats', {})
+        self.assertEqual(stats2.get('novos_lotes', 0), 0)
+        self.assertEqual(stats2.get('inalterados', 0), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

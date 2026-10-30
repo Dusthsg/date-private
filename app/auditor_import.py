@@ -549,6 +549,8 @@ def audit_and_import_spreadsheet_stream(
                 if raw_prod_val is None or pd.isna(raw_prod_val):
                     continue
                 raw_prod = str(raw_prod_val).strip()
+                if not raw_prod:
+                    continue
                 raw_valid = row[col_valid_idx]
                 raw_code = None
                 if col_code_idx is not None:
@@ -621,31 +623,35 @@ def audit_and_import_spreadsheet_stream(
                     lotes_locais = lots_by_key.get(lot_key, [])
 
                     if not lotes_locais:
-                        # O lote NÃO existe no banco.
-                        # REGRA DE PROTEÇÃO: Só cria lote novo se a planilha tiver coluna de quantidade E quant > 0!
-                        # Se for uma lista de presença/relatório sem quantidade, ou quant <= 0,
-                        # NUNCA cria novo lote (evita ressuscitar itens que já foram eliminados/baixados da loja)!
-                        if has_quant_col and sheet_quant is not None and sheet_quant > 0:
+                        # O lote NÃO existe no banco e NÃO foi baixado anteriormente (não está em tombstone_set).
+                        # Determina se deve criar o novo lote:
+                        # - Se a planilha tem coluna de quantidade: cria se a quantidade for > 0 (ignora se a planilha indicar 0 un)
+                        # - Se a planilha NÃO tem coluna de quantidade (lista de validades do sistema): SEMPRE cadastra com quant = 0!
+                        should_create = (not has_quant_col) or (has_quant_col and sheet_quant is not None and sheet_quant > 0)
+
+                        if should_create:
+                            initial_quant = sheet_quant if (has_quant_col and sheet_quant is not None and sheet_quant > 0) else 0
+
                             if db_type == "postgres":
                                 cur.execute(
                                     f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at, updated_at)
                                         VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', CURRENT_DATE, CURRENT_TIMESTAMP)
                                         RETURNING id""",
-                                    (product_id, sheet_quant, valid_str)
+                                    (product_id, initial_quant, valid_str)
                                 )
                                 novo_id = cur.fetchone()[0]
                             else:
                                 cur.execute(
                                     f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at, updated_at)
                                         VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', date('now'), datetime('now', 'localtime'))""",
-                                    (product_id, sheet_quant, valid_str)
+                                    (product_id, initial_quant, valid_str)
                                 )
                                 novo_id = cur.lastrowid
 
                             cur.execute(
                                 f"""INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid)
                                     VALUES ({ph}, {ph}, 'ENTRADA', {ph}, {ph})""",
-                                (product_id, novo_id, sheet_quant, valid_str)
+                                (product_id, novo_id, initial_quant, valid_str)
                             )
 
                             # Atualiza hashmap em memória para próximas linhas com mesmo lote
@@ -653,19 +659,20 @@ def audit_and_import_spreadsheet_stream(
                                 lots_by_key[lot_key] = []
                             lots_by_key[lot_key].append({
                                 "id": novo_id,
-                                "quant": sheet_quant,
+                                "quant": initial_quant,
                                 "location": "GALPAO"
                             })
 
                             stats["novos_lotes"] += 1
+                            detalhe_msg = f"Remessa nova inserida no GALPÃO ({initial_quant} un)." if initial_quant > 0 else "Novo lote cadastrado no GALPÃO (sem quantidade na planilha)."
                             audit_logs.append({
                                 "produto": raw_prod,
                                 "validade": valid_str,
                                 "tipo": "NOVO_GALPAO",
-                                "detalhe": f"Remessa nova inserida no GALPÃO ({sheet_quant} un)."
+                                "detalhe": detalhe_msg
                             })
                         else:
-                            # Sem coluna de quantidade ou item eliminado -> Mantém inalterado, sem criar lote fantasma!
+                            # Planilha possui coluna de quantidade, mas o item veio com 0 ou nulo -> Mantém inalterado
                             stats["inalterados"] += 1
 
                     else:
