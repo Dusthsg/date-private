@@ -12,6 +12,7 @@ import io
 import json
 import sqlite3
 import datetime
+import uuid
 
 # Importa a aplicação Flask e camada de banco
 from app.run import app
@@ -120,7 +121,8 @@ class TestUserReportedIssues(unittest.TestCase):
     # ──────────────────────────────────────────────────────────────────────────
     def test_issue_04_filtro_adicionados_recentemente_14_days(self):
         """
-        Valida que o filtro 'recentes' filtra os itens criados nas últimas 2 semanas (14 dias).
+        Valida que o filtro 'recentes' filtra os itens criados nas últimas 2 semanas (14 dias)
+        e retorna APENAS itens criados manualmente (origin == 'MANUAL'), excluindo importações.
         """
         response = self.client.get('/?filtro=recentes')
         self.assertEqual(response.status_code, 200)
@@ -128,6 +130,19 @@ class TestUserReportedIssues(unittest.TestCase):
         
         # Verifica que o botão tem o label 'Adicionados Recentemente'
         self.assertIn('Adicionados Recentemente', html)
+
+        # Valida que todos os lotes retornados pela query com filtro 'recentes' possuem origin == 'MANUAL'
+        from app.db import query_lots
+        total, lots = query_lots(filtro='recentes', limit=50)
+        # Se houver lotes, nenhum pode ser de importação
+        conn = sqlite3.connect(SQLITE_PATH)
+        cur = conn.cursor()
+        for l in lots:
+            cur.execute("SELECT origin FROM product_lots WHERE id = ?", (l['lot_id'],))
+            row = cur.fetchone()
+            if row:
+                self.assertEqual(row[0], 'MANUAL')
+        conn.close()
 
     # ──────────────────────────────────────────────────────────────────────────
     # 5. ERRO: Erro 400 ao importar .xls / Suporte a XML Spreadsheet e HTML (Msg 48, 50, 70)
@@ -453,6 +468,73 @@ class TestUserReportedIssues(unittest.TestCase):
             cur.execute(f"DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
             cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
             cur.execute(f"DELETE FROM products WHERE name = {ph}", (unique_name,))
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # 16. REGRA: Produto já existente preserva preço e atualiza/cria lote sem alterar preço
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_16_create_lot_existing_product_preserves_price_and_increments_quantity(self):
+        """
+        Valida que:
+        1. Ao criar lote para um produto que já existe, o preço do produto NÃO é alterado.
+        2. Se o lote para aquele produto com a mesma validade e localização já existe, incrementa a quantidade.
+        3. Se for uma nova validade, cria um novo lote preservando o preço do produto e com origin == 'MANUAL'.
+        """
+        from app.db import create_lot, get_db_cursor, SQLITE_PATH
+        unique_name = f"PROD PRECO INTACTO {uuid.uuid4().hex[:6].upper()}"
+        d_valid_1 = (datetime.date.today() + datetime.timedelta(days=40)).strftime("%Y-%m-%d")
+        d_valid_2 = (datetime.date.today() + datetime.timedelta(days=60)).strftime("%Y-%m-%d")
+
+        try:
+            # 1. Cria produto inicial com preço R$ 19.90 e lote inicial de 10 unidades
+            prod_id_1, lot_id_1 = create_lot(unique_name, quant=10, price=19.90, date_valid=d_valid_1, location="LOJA")
+            
+            # Verifica preço do produto
+            conn = sqlite3.connect(SQLITE_PATH)
+            cur = conn.cursor()
+            cur.execute("SELECT price FROM products WHERE id = ?", (prod_id_1,))
+            self.assertAlmostEqual(cur.fetchone()[0], 19.90, places=2)
+
+            # 2. Usuário tenta criar novo lote para o mesmo produto informando um preço diferente (R$ 99.99) e mesma validade
+            prod_id_2, lot_id_2 = create_lot(unique_name, quant=5, price=99.99, date_valid=d_valid_1, location="LOJA")
+
+            # ID do produto deve ser o mesmo
+            self.assertEqual(prod_id_1, prod_id_2)
+            # ID do lote deve ser o mesmo (atualizou a quantidade existente)
+            self.assertEqual(lot_id_1, lot_id_2)
+
+            # Preço do produto na tabela products DEVE CONTINUAR 19.90 (não alterado)
+            cur.execute("SELECT price FROM products WHERE id = ?", (prod_id_1,))
+            self.assertAlmostEqual(cur.fetchone()[0], 19.90, places=2)
+
+            # Quantidade do lote deve ser 15 (10 + 5)
+            cur.execute("SELECT quant, origin FROM product_lots WHERE id = ?", (lot_id_1,))
+            row_lot = cur.fetchone()
+            self.assertEqual(row_lot[0], 15)
+            self.assertEqual(row_lot[1], 'MANUAL')
+
+            # 3. Cria lote para o mesmo produto com validade diferente
+            prod_id_3, lot_id_3 = create_lot(unique_name, quant=8, price=77.00, date_valid=d_valid_2, location="LOJA")
+            self.assertEqual(prod_id_1, prod_id_3)
+            self.assertNotEqual(lot_id_1, lot_id_3)
+
+            # Preço do produto ainda DEVE CONTINUAR 19.90
+            cur.execute("SELECT price FROM products WHERE id = ?", (prod_id_1,))
+            self.assertAlmostEqual(cur.fetchone()[0], 19.90, places=2)
+
+            # Lote 3 deve ter 8 unidades e origin == 'MANUAL'
+            cur.execute("SELECT quant, origin FROM product_lots WHERE id = ?", (lot_id_3,))
+            row_lot3 = cur.fetchone()
+            self.assertEqual(row_lot3[0], 8)
+            self.assertEqual(row_lot3[1], 'MANUAL')
+
+            conn.close()
+
+        finally:
+            with get_db_cursor(commit=True) as (cur, db_type):
+                ph = '%s' if db_type == 'postgres' else '?'
+                cur.execute(f"DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
+                cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
+                cur.execute(f"DELETE FROM products WHERE name = {ph}", (unique_name,))
 
 
 if __name__ == '__main__':

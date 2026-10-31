@@ -57,6 +57,7 @@ def migrate():
     has_created = "created_at" in l_cols
     has_updated = "updated_at" in l_cols
     has_price = "price" in l_cols
+    has_origin = "origin" in l_cols
 
     s_cur.execute("SELECT id, product_id, quant, date_valid, location, status FROM product_lots ORDER BY id ASC")
     raw_lots = s_cur.fetchall()
@@ -67,12 +68,19 @@ def migrate():
         price = 0.0
         c_at = None
         u_at = None
+        origin = 'MANUAL'
         if has_price:
             try:
                 s_cur.execute("SELECT price FROM product_lots WHERE id = ?", (l_id,))
                 price = s_cur.fetchone()[0] or 0.0
             except Exception:
                 price = 0.0
+        if has_origin:
+            try:
+                s_cur.execute("SELECT origin FROM product_lots WHERE id = ?", (l_id,))
+                origin = s_cur.fetchone()[0] or 'MANUAL'
+            except Exception:
+                origin = 'MANUAL'
         if has_created:
             try:
                 s_cur.execute("SELECT created_at FROM product_lots WHERE id = ?", (l_id,))
@@ -85,7 +93,7 @@ def migrate():
                 u_at = s_cur.fetchone()[0]
             except Exception:
                 u_at = None
-        lots_formatted.append((l_id, p_id, quant, price, str(d_valid)[:10], loc or 'LOJA', st or 'NORMAL', c_at, u_at))
+        lots_formatted.append((l_id, p_id, quant, price, str(d_valid)[:10], loc or 'LOJA', st or 'NORMAL', origin, c_at, u_at))
     print(f"   Encontrados {len(lots_formatted)} lotes no SQLite.")
 
     print(f"🔌 Conectando ao PostgreSQL...")
@@ -111,13 +119,16 @@ def migrate():
             date_valid DATE NOT NULL,
             location TEXT DEFAULT 'LOJA',
             status TEXT DEFAULT 'NORMAL',
+            origin VARCHAR(20) DEFAULT 'MANUAL',
             created_at DATE DEFAULT CURRENT_DATE,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+    p_cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS origin VARCHAR(20) DEFAULT 'MANUAL';")
     p_cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid ON product_lots(date_valid);")
     p_cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
     p_cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
+    p_cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_origin ON product_lots(origin);")
 
     # Limpa dados antigos para sobreescrever exatamente com o banco mais atualizado do celular
     print("🧹 Atualizando PostgreSQL com os dados mais recentes do SQLite...")
@@ -142,13 +153,13 @@ def migrate():
     # Inserir lotes
     print("⏳ Migrando lotes...")
     lots_payload = [
-        (l[0], l[1], l[2], l[3], l[4], l[5], l[6], l[7] or '2026-10-22')
+        (l[0], l[1], l[2], l[3], l[4], l[5], l[6], l[7], l[8] or '2026-10-22')
         for l in lots_formatted
     ]
     execute_values(
         p_cur,
         """
-        INSERT INTO product_lots (id, product_id, quant, price, date_valid, location, status, created_at)
+        INSERT INTO product_lots (id, product_id, quant, price, date_valid, location, status, origin, created_at)
         VALUES %s
         ON CONFLICT (id) DO UPDATE SET
             product_id = EXCLUDED.product_id,
@@ -157,6 +168,7 @@ def migrate():
             date_valid = EXCLUDED.date_valid,
             location = EXCLUDED.location,
             status = EXCLUDED.status,
+            origin = EXCLUDED.origin,
             created_at = EXCLUDED.created_at
         """,
         lots_payload,

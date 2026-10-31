@@ -634,16 +634,16 @@ def audit_and_import_spreadsheet_stream(
 
                             if db_type == "postgres":
                                 cur.execute(
-                                    f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at, updated_at)
-                                        VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', CURRENT_DATE, CURRENT_TIMESTAMP)
+                                    f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
+                                        VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', 'IMPORTACAO', CURRENT_DATE, CURRENT_TIMESTAMP)
                                         RETURNING id""",
                                     (product_id, initial_quant, valid_str)
                                 )
                                 novo_id = cur.fetchone()[0]
                             else:
                                 cur.execute(
-                                    f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at, updated_at)
-                                        VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', date('now'), datetime('now', 'localtime'))""",
+                                    f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
+                                        VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', 'IMPORTACAO', date('now'), datetime('now', 'localtime'))""",
                                     (product_id, initial_quant, valid_str)
                                 )
                                 novo_id = cur.lastrowid
@@ -696,16 +696,16 @@ def audit_and_import_spreadsheet_stream(
                             else:
                                 if db_type == "postgres":
                                     cur.execute(
-                                        f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at, updated_at)
-                                            VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', CURRENT_DATE, CURRENT_TIMESTAMP)
+                                        f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
+                                            VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', 'IMPORTACAO', CURRENT_DATE, CURRENT_TIMESTAMP)
                                             RETURNING id""",
                                         (product_id, delta, valid_str)
                                     )
                                     target_lot_id = cur.fetchone()[0]
                                 else:
                                     cur.execute(
-                                        f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at, updated_at)
-                                            VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', date('now'), datetime('now', 'localtime'))""",
+                                        f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
+                                            VALUES ({ph}, {ph}, 0.0, {ph}, 'GALPAO', 'NORMAL', 'IMPORTACAO', date('now'), datetime('now', 'localtime'))""",
                                         (product_id, delta, valid_str)
                                     )
                                     target_lot_id = cur.lastrowid

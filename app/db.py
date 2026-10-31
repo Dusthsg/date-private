@@ -514,6 +514,7 @@ def init_sqlite_db():
             date_valid TEXT NOT NULL,
             location TEXT DEFAULT 'LOJA',
             status TEXT DEFAULT 'NORMAL',
+            origin TEXT DEFAULT 'MANUAL',
             created_at TEXT DEFAULT (date('now')),
             updated_at TEXT DEFAULT (datetime('now', 'localtime')),
             FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
@@ -551,6 +552,10 @@ def init_sqlite_db():
     l_cols = [col[1] for col in cur.fetchall()]
     if "price" not in l_cols:
         cur.execute("ALTER TABLE product_lots ADD COLUMN price REAL DEFAULT 0.0;")
+    if "origin" not in l_cols:
+        cur.execute("ALTER TABLE product_lots ADD COLUMN origin TEXT DEFAULT 'MANUAL';")
+        cur.execute("UPDATE product_lots SET origin = 'IMPORTACAO' WHERE location = 'GALPAO';")
+        cur.execute("UPDATE product_lots SET origin = 'MANUAL' WHERE origin IS NULL;")
     if "created_at" not in l_cols:
         cur.execute("ALTER TABLE product_lots ADD COLUMN created_at TEXT;")
         cur.execute("UPDATE product_lots SET created_at = date('now') WHERE created_at IS NULL;")
@@ -559,6 +564,7 @@ def init_sqlite_db():
         cur.execute("UPDATE product_lots SET updated_at = datetime('now', 'localtime') WHERE updated_at IS NULL;")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created_id ON product_lots(created_at, id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_origin ON product_lots(origin);")
 
     # Tabela de movimentações e filtro de lápide para SQLite
     cur.execute("""
@@ -617,6 +623,7 @@ def init_pg_db():
                 date_valid DATE NOT NULL,
                 location TEXT DEFAULT 'LOJA',
                 status TEXT DEFAULT 'NORMAL',
+                origin VARCHAR(20) DEFAULT 'MANUAL',
                 created_at DATE DEFAULT CURRENT_DATE,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -648,10 +655,12 @@ def init_pg_db():
             ) AND (price IS NULL OR price = 0.0);
         """)
         cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
+        cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS origin VARCHAR(20) DEFAULT 'MANUAL';")
         cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS created_at DATE DEFAULT CURRENT_DATE;")
         cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created_id ON product_lots(created_at, id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_origin ON product_lots(origin);")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS stock_movements (
@@ -721,7 +730,7 @@ def pull_cloud_to_sqlite() -> dict:
         pg_cur.execute("""
             SELECT
                 COALESCE((SELECT json_agg(p) FROM (SELECT id, name, bar_code, price FROM products) p), '[]'::json) AS prods,
-                COALESCE((SELECT json_agg(l) FROM (SELECT id, product_id, quant, price, date_valid::TEXT, location, status, created_at::TEXT, updated_at::TEXT FROM product_lots) l), '[]'::json) AS lots,
+                COALESCE((SELECT json_agg(l) FROM (SELECT id, product_id, quant, price, date_valid::TEXT, location, status, origin, created_at::TEXT, updated_at::TEXT FROM product_lots) l), '[]'::json) AS lots,
                 COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves;
         """)
         raw_row = pg_cur.fetchone()
@@ -776,8 +785,8 @@ def pull_cloud_to_sqlite() -> dict:
         sqlite_cur.execute("DELETE FROM product_lots;")
         if lots:
             sqlite_cur.executemany("""
-                INSERT INTO product_lots (id, product_id, quant, price, date_valid, location, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+                INSERT INTO product_lots (id, product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """, [
                 (
                     l["id"],
@@ -787,6 +796,7 @@ def pull_cloud_to_sqlite() -> dict:
                     str(l["date_valid"])[:10],
                     l.get("location", "LOJA"),
                     l.get("status", "NORMAL"),
+                    l.get("origin", "MANUAL"),
                     l.get("created_at"),
                     l.get("updated_at")
                 )
@@ -962,7 +972,7 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
             elif filtro in ("recentes", "recente", "hoje"):
                 two_weeks_ago = (today - timedelta(days=14)).strftime("%Y-%m-%d")
                 tomorrow = (today + timedelta(days=1)).strftime("%Y-%m-%d")
-                where_clauses.append("l.created_at >= ? AND l.created_at < ?")
+                where_clauses.append("l.created_at >= ? AND l.created_at < ? AND l.origin = 'MANUAL'")
                 params.append(two_weeks_ago)
                 params.append(tomorrow)
 
@@ -1113,18 +1123,22 @@ def delete_lot(lot_id: int) -> bool:
 def create_lot(name: str, quant: int, price: float, date_valid: str, location: str = "LOJA", status: str = "NORMAL"):
     clear_query_cache()
     name = name.strip().upper()
+    location = (location or "LOJA").strip().upper()
+    status = (status or "NORMAL").strip().upper()
+
     with get_db_cursor(commit=True) as (cur, db_type):
         ph = "%s" if db_type == "postgres" else "?"
 
         # 1. Encontra ou cria produto (sempre normalizado em UPPERCASE)
         cur.execute(f"SELECT id, price FROM products WHERE UPPER(name) = {ph}", (name,))
         row = cur.fetchone()
+        product_exists = False
         if row:
             product_id = row[0]
-            curr_price = row[1] if len(row) > 1 and row[1] is not None else 0.0
-            if price > 0 and curr_price == 0.0:
-                cur.execute(f"UPDATE products SET price = {ph} WHERE id = {ph}", (price, product_id))
+            product_exists = True
+            # Regra: se o produto já existe, NUNCA altera o preço do produto!
         else:
+            # Produto novo: cadastra na tabela products com o preço informado
             if db_type == "postgres":
                 cur.execute(f"INSERT INTO products (name, price) VALUES ({ph}, {ph}) RETURNING id", (name, price))
                 product_id = cur.fetchone()[0]
@@ -1132,37 +1146,66 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
                 cur.execute(f"INSERT INTO products (name, price) VALUES ({ph}, {ph})", (name, price))
                 product_id = cur.lastrowid
 
-        # 2. Cria lote com created_at = CURRENT_DATE
-        if db_type == "postgres":
-            cur.execute(
-                f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at)
-                    VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, CURRENT_DATE) RETURNING id""",
-                (product_id, quant, price, date_valid, location, status)
-            )
-            lot_id = cur.fetchone()[0]
+        # 2. Verifica se já existe um lote para este produto com a mesma validade e localização
+        cur.execute(
+            f"SELECT id, quant FROM product_lots WHERE product_id = {ph} AND date_valid = {ph} AND location = {ph} LIMIT 1",
+            (product_id, date_valid, location)
+        )
+        existing_lot = cur.fetchone()
 
-            # Espelha imediatamente na réplica local SQLite em background
+        if existing_lot:
+            lot_id = existing_lot[0]
+            old_quant = existing_lot[1] or 0
+            new_quant = old_quant + quant
+            now_sql = "CURRENT_TIMESTAMP" if db_type == "postgres" else "datetime('now', 'localtime')"
+            cur.execute(
+                f"UPDATE product_lots SET quant = {ph}, updated_at = {now_sql} WHERE id = {ph}",
+                (new_quant, lot_id)
+            )
+            is_new_lot = False
+        else:
+            # 3. Cria novo lote com origin = 'MANUAL'
+            if db_type == "postgres":
+                cur.execute(
+                    f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
+                        VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, 'MANUAL', CURRENT_DATE, CURRENT_TIMESTAMP) RETURNING id""",
+                    (product_id, quant, price, date_valid, location, status)
+                )
+                lot_id = cur.fetchone()[0]
+            else:
+                cur.execute(
+                    f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
+                        VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, 'MANUAL', date('now'), datetime('now', 'localtime'))""",
+                    (product_id, quant, price, date_valid, location, status)
+                )
+                lot_id = cur.lastrowid
+            is_new_lot = True
+
+        # Se estamos no Postgres, espelha imediatamente na réplica local SQLite em background
+        if db_type == "postgres":
             def _mirror_create():
                 try:
                     with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
                         s_conn.execute("PRAGMA journal_mode = WAL;")
-                        s_conn.execute("INSERT OR IGNORE INTO products (id, name, price) VALUES (?, ?, ?)", (product_id, name, price))
-                        s_conn.execute("UPDATE products SET price = ? WHERE id = ? AND (price IS NULL OR price = 0.0)", (price, product_id))
-                        s_conn.execute(
-                            "INSERT OR REPLACE INTO product_lots (id, product_id, quant, price, date_valid, location, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, date('now'))",
-                            (lot_id, product_id, quant, price, date_valid, location, status)
-                        )
+                        if not product_exists:
+                            s_conn.execute("INSERT OR IGNORE INTO products (id, name, price) VALUES (?, ?, ?)", (product_id, name, price))
+                        else:
+                            s_conn.execute("INSERT OR IGNORE INTO products (id, name) VALUES (?, ?)", (product_id, name))
+
+                        if is_new_lot:
+                            s_conn.execute(
+                                "INSERT OR REPLACE INTO product_lots (id, product_id, quant, price, date_valid, location, status, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'MANUAL', date('now'), datetime('now', 'localtime'))",
+                                (lot_id, product_id, quant, price, date_valid, location, status)
+                            )
+                        else:
+                            s_conn.execute(
+                                "UPDATE product_lots SET quant = quant + ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
+                                (quant, lot_id)
+                            )
                         s_conn.commit()
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"⚠️ Erro no espelhamento do create_lot para SQLite: {e}")
             threading.Thread(target=_mirror_create, daemon=True).start()
-        else:
-            cur.execute(
-                f"""INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, created_at)
-                    VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, date('now'))""",
-                (product_id, quant, price, date_valid, location, status)
-            )
-            lot_id = cur.lastrowid
 
         return product_id, lot_id
 
