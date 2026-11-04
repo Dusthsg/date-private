@@ -490,6 +490,7 @@ class TestUserReportedIssues(unittest.TestCase):
             
             # Verifica preço do produto
             conn = sqlite3.connect(SQLITE_PATH)
+            conn.isolation_level = None
             cur = conn.cursor()
             cur.execute("SELECT price FROM products WHERE id = ?", (prod_id_1,))
             self.assertAlmostEqual(cur.fetchone()[0], 19.90, places=2)
@@ -598,6 +599,75 @@ class TestUserReportedIssues(unittest.TestCase):
                 cur.execute(f"DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
                 cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
                 cur.execute(f"DELETE FROM products WHERE name = {ph}", (unique_name,))
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # 18. PREÇO EM PRODUCTS: Auto-pull ao adicionar lote e persistência
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_18_product_price_autopull_and_persistence(self):
+        """
+        Valida que:
+        1. O preço de um novo produto é salvo na tabela products.
+        2. A rota de autocomplete /api/products/search?q=... retorna o preço cadastrado.
+        3. Um produto com preço 0.0 que recebe um lote com preço > 0 tem o preço atualizado em products.
+        4. O template index.html possui o input de preço com id 'input-add-lot-price' e gatilhos de auto-pull.
+        """
+        from app.db import create_lot, search_products, get_db_cursor, SQLITE_PATH
+        unique_name = f"PROD AUTOPULL {uuid.uuid4().hex[:6].upper()}"
+        d_valid = (datetime.date.today() + datetime.timedelta(days=90)).strftime("%Y-%m-%d")
+
+        try:
+            # 1. Cria produto com preço R$ 34.50
+            prod_id, lot_id = create_lot(unique_name, quant=20, price=34.50, date_valid=d_valid, location="LOJA")
+
+            # Verifica se o preço está salvo na tabela products
+            with sqlite3.connect(SQLITE_PATH) as s_conn:
+                c = s_conn.cursor()
+                c.execute("SELECT price FROM products WHERE id = ?", (prod_id,))
+                p_row = c.fetchone()
+                self.assertIsNotNone(p_row)
+                self.assertAlmostEqual(p_row[0], 34.50, places=2)
+
+            # 2. Testa busca no catálogo /api/products/search?q=... (auto-pull)
+            resp = self.client.get(f'/api/products/search?q={unique_name[:10]}')
+            self.assertEqual(resp.status_code, 200)
+            items = json.loads(resp.data.decode('utf-8'))
+            self.assertGreaterEqual(len(items), 1)
+            found = next((it for it in items if it['name'] == unique_name), None)
+            self.assertIsNotNone(found)
+            self.assertAlmostEqual(found['price'], 34.50, places=2)
+
+            # 3. Testa produto que tinha preço 0.0 (ex: importado) e recebe lote com preço
+            zero_name = f"PROD PRECO ZERO {uuid.uuid4().hex[:6].upper()}"
+            with get_db_cursor(commit=True) as (cur, db_type):
+                ph = '%s' if db_type == 'postgres' else '?'
+                cur.execute(f"INSERT INTO products (name, price) VALUES ({ph}, 0.0)", (zero_name,))
+                if db_type == 'postgres':
+                    with sqlite3.connect(SQLITE_PATH) as s_c:
+                        s_c.execute("INSERT OR IGNORE INTO products (name, price) VALUES (?, 0.0)", (zero_name,))
+                        s_c.commit()
+
+            # Adiciona lote com preço R$ 42.00 para este produto
+            prod_z_id, lot_z_id = create_lot(zero_name, quant=10, price=42.00, date_valid=d_valid, location="LOJA")
+
+            with sqlite3.connect(SQLITE_PATH) as s_conn:
+                c = s_conn.cursor()
+                c.execute("SELECT price FROM products WHERE name = ?", (zero_name,))
+                self.assertAlmostEqual(c.fetchone()[0], 42.00, places=2)
+
+            # 4. Valida elementos de auto-pull no HTML
+            resp_index = self.client.get('/')
+            self.assertEqual(resp_index.status_code, 200)
+            html = resp_index.data.decode('utf-8')
+            self.assertIn('id="input-add-lot-price"', html)
+            self.assertIn('onAddLotBlur', html)
+            self.assertIn('input-add-lot-price', html)
+
+        finally:
+            with get_db_cursor(commit=True) as (cur, db_type):
+                ph = '%s' if db_type == 'postgres' else '?'
+                cur.execute(f"DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name IN ({ph}, {ph}))", (unique_name, zero_name))
+                cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name IN ({ph}, {ph}))", (unique_name, zero_name))
+                cur.execute(f"DELETE FROM products WHERE name IN ({ph}, {ph})", (unique_name, zero_name))
 
 
 if __name__ == '__main__':

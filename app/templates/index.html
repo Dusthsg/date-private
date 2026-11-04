@@ -21,7 +21,7 @@
           hx-target="#lot-table-body"
           hx-include="#current-filtro, #current-busca"
           hx-on::before-request="const ni = document.getElementById('input-add-lot-name'); if(ni) ni.value = ni.value.trim().toUpperCase();"
-          hx-on::after-request="if(event.detail.successful) { this.reset(); clearAddLotSelection(); document.getElementById('form-add-msg').innerHTML = '<span class=\'text-emerald-600 dark:text-emerald-400 text-xs font-semibold\'>✅ Lote cadastrado com sucesso!</span>'; setTimeout(() => document.getElementById('form-add-msg').innerHTML='', 4000); }"
+          hx-on::after-request="if(event.detail.successful) { this.reset(); clearAddLotSelection(); const pi = document.getElementById('input-add-lot-price'); if(pi) pi.value='0.00'; document.getElementById('form-add-msg').innerHTML = '<span class=\'text-emerald-600 dark:text-emerald-400 text-xs font-semibold\'>✅ Lote cadastrado com sucesso!</span>'; setTimeout(() => document.getElementById('form-add-msg').innerHTML='', 4000); }"
           class="hidden mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
         
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2.5">
@@ -38,6 +38,7 @@
                            autocomplete="off"
                            placeholder="Digite para buscar no catálogo ou cadastrar novo..."
                            oninput="onAddLotInput(this)"
+                           onblur="onAddLotBlur(this)"
                            class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm uppercase dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 focus:ring-2 focus:ring-emerald-400 focus:outline-none">
                 </div>
 
@@ -55,7 +56,7 @@
 
             <div>
                 <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Preço (R$)</label>
-                <input type="number" step="0.01" name="price" value="0.00" min="0"
+                <input type="number" step="0.01" id="input-add-lot-price" name="price" value="0.00" min="0"
                        class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-emerald-400 focus:outline-none">
             </div>
 
@@ -1153,10 +1154,39 @@ function onAddLotSearch(val) {
             const resp = await fetch(`/api/products/search?q=${encodeURIComponent(q)}`);
             const items = await resp.json();
             renderAddLotDropdown(items, q);
+
+            // Se for correspondência exata de código de barras ou nome, já auto-preenche o preço
+            const exact = items.find(it => (it.name && it.name.toUpperCase() === q.toUpperCase()) || (it.bar_code && it.bar_code === q));
+            if (exact && exact.price > 0) {
+                const priceInput = document.getElementById('input-add-lot-price');
+                if (priceInput && (!priceInput.value || parseFloat(priceInput.value) === 0)) {
+                    priceInput.value = parseFloat(exact.price).toFixed(2);
+                    const badge = document.getElementById('badge-catalog-selected');
+                    if (badge) badge.classList.remove('hidden');
+                }
+            }
         } catch (e) {
             console.error("Erro na busca de produtos:", e);
         }
     }, 100);
+}
+
+async function onAddLotBlur(input) {
+    setTimeout(async () => {
+        const q = (input.value || '').trim();
+        if (!q) return;
+        try {
+            const resp = await fetch(`/api/products/search?q=${encodeURIComponent(q)}`);
+            const items = await resp.json();
+            if (!items || items.length === 0) return;
+            const match = items.find(it => (it.name && it.name.toUpperCase() === q.toUpperCase()) || (it.bar_code && it.bar_code === q));
+            if (match) {
+                selectProductToAdd(match.name, match.price);
+            }
+        } catch (e) {
+            console.error("Erro ao puxar preço no blur:", e);
+        }
+    }, 200);
 }
 
 function renderAddLotDropdown(items, query) {
@@ -1207,14 +1237,16 @@ function selectProductToAdd(name, price) {
     const dropdown = document.getElementById('dropdown-add-lot-results');
     const badge = document.getElementById('badge-catalog-selected');
     const quantInput = document.getElementById('input-add-lot-quant');
-    const priceInput = document.querySelector('input[name="price"]');
+    const priceInput = document.getElementById('input-add-lot-price') || document.querySelector('input[name="price"]');
 
     if (input) input.value = (name || '').toUpperCase();
     if (dropdown) dropdown.classList.add('hidden');
     if (badge) badge.classList.remove('hidden');
 
-    if (priceInput && price !== undefined && price !== null) {
-        priceInput.value = parseFloat(price).toFixed(2);
+    if (priceInput) {
+        priceInput.value = (price !== undefined && price !== null && parseFloat(price) > 0)
+            ? parseFloat(price).toFixed(2)
+            : '0.00';
     }
 
     if (quantInput) {

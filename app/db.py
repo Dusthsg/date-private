@@ -1133,8 +1133,11 @@ def update_lot_quant(lot_id: int, quant: int) -> bool:
 
 
 def update_lot_price(lot_id: int, price: float) -> bool:
+    global _catalog_cache
     # 1. Atualiza cache em RAM instantaneamente (0.01ms)
     _update_cache_lot_field(lot_id, "price", price)
+    with _catalog_lock:
+        _catalog_cache = None
     # 2. Grava no SQLite local: atualiza products e espelha em product_lots (< 1ms)
     _mirror_to_sqlite("UPDATE products SET price = ? WHERE id = (SELECT product_id FROM product_lots WHERE id = ?)", (price, lot_id))
     _mirror_to_sqlite("UPDATE product_lots SET price = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (price, lot_id))
@@ -1172,6 +1175,16 @@ def delete_lot(lot_id: int) -> bool:
             s_cur = s_conn.cursor()
             s_cur.execute("SELECT product_id, quant, date_valid FROM product_lots WHERE id = ?", (lot_id,))
             s_row = s_cur.fetchone()
+            if not s_row and is_postgres():
+                try:
+                    with get_db_cursor() as (cur_pg, db_type_pg):
+                        if db_type_pg == "postgres":
+                            cur_pg.execute("SELECT product_id, quant, date_valid::TEXT FROM product_lots WHERE id = %s", (lot_id,))
+                            pg_r = cur_pg.fetchone()
+                            if pg_r:
+                                s_row = (pg_r[0], pg_r[1], str(pg_r[2])[:10])
+                except Exception:
+                    pass
             if s_row:
                 p_id, q, d_valid = s_row[0], s_row[1], str(s_row[2])[:10]
                 row_info = (p_id, q, d_valid)
@@ -1184,21 +1197,19 @@ def delete_lot(lot_id: int) -> bool:
     except Exception as e:
         print(f"⚠️ Erro ao registrar baixa no SQLite: {e}")
 
-    # 3. Sincroniza com PostgreSQL em background
+    # 3. Sincroniza com PostgreSQL imediatamente
     if is_postgres():
-        def _sync_pg():
-            try:
-                with get_db_cursor(commit=True) as (cur, db_type):
-                    if db_type == "postgres":
-                        if row_info:
-                            cur.execute(
-                                "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid) VALUES (%s, %s, 'BAIXA', %s, %s)",
-                                (row_info[0], lot_id, row_info[1], row_info[2])
-                            )
-                        cur.execute("DELETE FROM product_lots WHERE id = %s", (lot_id,))
-            except Exception as e:
-                print(f"⚠️ Erro ao sincronizar baixa no Postgres: {e}")
-        threading.Thread(target=_sync_pg, daemon=True).start()
+        try:
+            with get_db_cursor(commit=True) as (cur, db_type):
+                if db_type == "postgres":
+                    if row_info:
+                        cur.execute(
+                            "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid) VALUES (%s, %s, 'BAIXA', %s, %s)",
+                            (row_info[0], lot_id, row_info[1], row_info[2])
+                        )
+                    cur.execute("DELETE FROM product_lots WHERE id = %s", (lot_id,))
+        except Exception as e:
+            print(f"⚠️ Erro ao sincronizar baixa no Postgres: {e}")
 
     return True
 
@@ -1223,6 +1234,19 @@ def restore_lot(movement_id: int) -> bool:
                 (movement_id,)
             )
             row = s_cur.fetchone()
+            if not row and is_postgres():
+                try:
+                    with get_db_cursor() as (cur_pg, db_type_pg):
+                        if db_type_pg == "postgres":
+                            cur_pg.execute(
+                                "SELECT product_id, quant, date_valid::TEXT FROM stock_movements WHERE id = %s AND action = 'BAIXA'",
+                                (movement_id,)
+                            )
+                            pg_r = cur_pg.fetchone()
+                            if pg_r:
+                                row = (pg_r[0], pg_r[1], str(pg_r[2])[:10])
+                except Exception:
+                    pass
             if not row:
                 return False
             p_id, quant, d_valid = row[0], row[1], str(row[2])[:10]
@@ -1250,25 +1274,23 @@ def restore_lot(movement_id: int) -> bool:
         return False
 
     if is_postgres() and info:
-        def _sync_pg():
-            try:
-                p_id, quant, price, d_valid, new_lot_id = info
-                with get_db_cursor(commit=True) as (cur, db_type):
-                    if db_type == "postgres":
-                        cur.execute(
-                            """INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
-                               VALUES (%s, %s, %s, %s, 'LOJA', 'NORMAL', 'MANUAL', CURRENT_DATE, CURRENT_TIMESTAMP) RETURNING id""",
-                            (p_id, quant, price, d_valid)
-                        )
-                        pg_lot_id = cur.fetchone()[0]
-                        cur.execute("UPDATE stock_movements SET action = 'RESTAURADO' WHERE id = %s", (movement_id,))
-                        cur.execute(
-                            "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid) VALUES (%s, %s, 'RESTAURACAO', %s, %s)",
-                            (p_id, pg_lot_id, quant, d_valid)
-                        )
-            except Exception as e:
-                print(f"⚠️ Erro ao sincronizar restauração no Postgres: {e}")
-        threading.Thread(target=_sync_pg, daemon=True).start()
+        try:
+            p_id, quant, price, d_valid, new_lot_id = info
+            with get_db_cursor(commit=True) as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute(
+                        """INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
+                           VALUES (%s, %s, %s, %s, 'LOJA', 'NORMAL', 'MANUAL', CURRENT_DATE, CURRENT_TIMESTAMP) RETURNING id""",
+                        (p_id, quant, price, d_valid)
+                    )
+                    pg_lot_id = cur.fetchone()[0]
+                    cur.execute("UPDATE stock_movements SET action = 'RESTAURADO' WHERE id = %s", (movement_id,))
+                    cur.execute(
+                        "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid) VALUES (%s, %s, 'RESTAURACAO', %s, %s)",
+                        (p_id, pg_lot_id, quant, d_valid)
+                    )
+        except Exception as e:
+            print(f"⚠️ Erro ao sincronizar restauração no Postgres: {e}")
 
     return True
 
@@ -1286,10 +1308,19 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
         cur.execute(f"SELECT id, price FROM products WHERE UPPER(name) = {ph}", (name,))
         row = cur.fetchone()
         product_exists = False
+        updated_product_price = False
         if row:
             product_id = row[0]
+            curr_price = float(row[1] or 0.0)
             product_exists = True
-            # Regra: se o produto já existe, NUNCA altera o preço do produto!
+            # Regra de ouro:
+            # - Se o preço atual em products é 0.0 e o usuário informou um preço > 0: salva o preço em products!
+            # - Se o produto já possui preço cadastrado (> 0), mantém o preço canônico em products
+            if curr_price == 0.0 and price > 0:
+                cur.execute(f"UPDATE products SET price = {ph} WHERE id = {ph}", (price, product_id))
+                updated_product_price = True
+            elif curr_price > 0 and price <= 0:
+                price = curr_price
         else:
             # Produto novo: cadastra na tabela products com o preço informado
             if db_type == "postgres":
@@ -1298,6 +1329,7 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
             else:
                 cur.execute(f"INSERT INTO products (name, price) VALUES ({ph}, {ph})", (name, price))
                 product_id = cur.lastrowid
+            updated_product_price = True
 
         # 2. Verifica se já existe um lote para este produto com a mesma validade e localização
         cur.execute(
@@ -1334,31 +1366,31 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
                 lot_id = cur.lastrowid
             is_new_lot = True
 
-        # Se estamos no Postgres, espelha imediatamente na réplica local SQLite em background
+        # Se estamos no Postgres, espelha imediatamente de forma síncrona na réplica local SQLite (< 1ms)
         if db_type == "postgres":
-            def _mirror_create():
-                try:
-                    with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
-                        s_conn.execute("PRAGMA journal_mode = WAL;")
-                        if not product_exists:
-                            s_conn.execute("INSERT OR IGNORE INTO products (id, name, price) VALUES (?, ?, ?)", (product_id, name, price))
-                        else:
-                            s_conn.execute("INSERT OR IGNORE INTO products (id, name) VALUES (?, ?)", (product_id, name))
+            try:
+                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                    s_conn.execute("PRAGMA journal_mode = WAL;")
+                    if not product_exists:
+                        s_conn.execute("INSERT OR IGNORE INTO products (id, name, price) VALUES (?, ?, ?)", (product_id, name, price))
+                    else:
+                        s_conn.execute("INSERT OR IGNORE INTO products (id, name) VALUES (?, ?)", (product_id, name))
+                        if updated_product_price:
+                            s_conn.execute("UPDATE products SET price = ? WHERE id = ?", (price, product_id))
 
-                        if is_new_lot:
-                            s_conn.execute(
-                                "INSERT OR REPLACE INTO product_lots (id, product_id, quant, price, date_valid, location, status, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'MANUAL', date('now'), datetime('now', 'localtime'))",
-                                (lot_id, product_id, quant, price, date_valid, location, status)
-                            )
-                        else:
-                            s_conn.execute(
-                                "UPDATE product_lots SET quant = quant + ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
-                                (quant, lot_id)
-                            )
-                        s_conn.commit()
-                except Exception as e:
-                    print(f"⚠️ Erro no espelhamento do create_lot para SQLite: {e}")
-            threading.Thread(target=_mirror_create, daemon=True).start()
+                    if is_new_lot:
+                        s_conn.execute(
+                            "INSERT OR REPLACE INTO product_lots (id, product_id, quant, price, date_valid, location, status, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'MANUAL', date('now'), datetime('now', 'localtime'))",
+                            (lot_id, product_id, quant, price, date_valid, location, status)
+                        )
+                    else:
+                        s_conn.execute(
+                            "UPDATE product_lots SET quant = quant + ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
+                            (quant, lot_id)
+                        )
+                    s_conn.commit()
+            except Exception as e:
+                print(f"⚠️ Erro no espelhamento do create_lot para SQLite: {e}")
 
         return product_id, lot_id
 
@@ -1378,7 +1410,8 @@ def search_products(term: str, limit: int = 10) -> list[dict]:
         if _catalog_cache is None:
             items = []
             try:
-                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                s_conn = sqlite3.connect(str(SQLITE_PATH), timeout=3.0)
+                try:
                     s_conn.row_factory = sqlite3.Row
                     c_sq = s_conn.cursor()
                     c_sq.execute("SELECT id, name, bar_code, price FROM products ORDER BY name ASC")
@@ -1389,6 +1422,8 @@ def search_products(term: str, limit: int = 10) -> list[dict]:
                             "bar_code": str(r["bar_code"] or "").strip() if r["bar_code"] else None,
                             "price": float(r["price"] or 0.0)
                         })
+                finally:
+                    s_conn.close()
             except Exception:
                 pass
             if items:
@@ -1420,7 +1455,7 @@ def search_products(term: str, limit: int = 10) -> list[dict]:
         like_val = f"%{term}%"
 
         query = f"""
-            SELECT id, name, bar_code
+            SELECT id, name, bar_code, price
             FROM products
             WHERE name {like_op} {ph} OR bar_code {like_op} {ph}
             ORDER BY
@@ -1434,11 +1469,12 @@ def search_products(term: str, limit: int = 10) -> list[dict]:
         results = []
         for r in rows:
             if db_type == "postgres":
-                results.append({"id": r[0], "name": r[1], "bar_code": r[2]})
+                results.append({"id": r[0], "name": r[1], "bar_code": r[2], "price": float(r[3] or 0.0)})
             else:
                 results.append({
                     "id": r["id"] if hasattr(r, "keys") else r[0],
                     "name": r["name"] if hasattr(r, "keys") else r[1],
-                    "bar_code": r["bar_code"] if hasattr(r, "keys") else r[2]
+                    "bar_code": r["bar_code"] if hasattr(r, "keys") else r[2],
+                    "price": float((r["price"] if hasattr(r, "keys") else r[3]) or 0.0)
                 })
         return results
