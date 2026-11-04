@@ -31,6 +31,7 @@ from app.db import (
     update_lot_quant,
     update_lot_price,
     delete_lot as db_delete_lot,
+    restore_lot,
     create_lot,
     search_products,
     clear_query_cache,
@@ -390,6 +391,21 @@ def delete_lot(lot_id: int):
     broadcast_reload("delete_lot", exclude_client_id=client_id)
 
     # Retorna string vazia — o HTMX vai remover a <tr> do DOM do cliente atual
+    return ""
+
+
+@app.route("/lote/restaurar/<int:movement_id>", methods=["POST"])
+def restore_lot_route(movement_id: int):
+    """Restaura um lote baixado (deletado) de volta para o estoque."""
+    try:
+        ok = restore_lot(movement_id)
+        if not ok:
+            return "Item não encontrado ou já restaurado.", 404
+    except Exception as e:
+        return f"Erro ao restaurar lote: {str(e)}", 500
+
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("restore_lot", exclude_client_id=client_id)
     return ""
 
 

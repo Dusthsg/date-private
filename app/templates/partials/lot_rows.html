@@ -9,8 +9,12 @@
 {% else %}
 <tr>
     <td colspan="8" class="px-4 py-12 text-center text-gray-400">
-        <div class="text-4xl mb-2">📭</div>
-        Nenhum lote encontrado com esses filtros.
+        <div class="text-4xl mb-2">{% if filtro in ('deletados', 'deletado', 'baixas') %}🛡️{% else %}📭{% endif %}</div>
+        {% if filtro in ('deletados', 'deletado', 'baixas') %}
+            Nenhum lote deletado/baixado no histórico de auditoria.
+        {% else %}
+            Nenhum lote encontrado com esses filtros.
+        {% endif %}
     </td>
 </tr>
 {% endfor %}

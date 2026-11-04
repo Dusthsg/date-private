@@ -1,12 +1,13 @@
 {# Partial: botões de filtro atualizáveis via OOB ou direto #}
 <div class="flex flex-wrap gap-2" id="filtros" hx-swap-oob="true">
     {% set filtros = [
-        ('todos',    '📋 Todos'),
-        ('recentes', '✨ Adicionados Recentemente'),
-        ('vencidos', '🔴 Vencidos'),
-        ('critico',  '🟠 Crítico (7d)'),
-        ('atencao',  '🟡 Atenção (8-29d)'),
-        ('alerta',   '🟢 Alerta (30-45d)')
+        ('todos',     '📋 Todos'),
+        ('recentes',  '✨ Adicionados Recentemente'),
+        ('vencidos',  '🔴 Vencidos'),
+        ('critico',   '🟠 Crítico (7d)'),
+        ('atencao',   '🟡 Atenção (8-29d)'),
+        ('alerta',    '🟢 Alerta (30-45d)'),
+        ('deletados', '🗑️ Deletados (Auditoria)')
     ] %}
     {% for key, label in filtros %}
         <button
@@ -18,8 +19,12 @@
             hx-push-url="true"
             onclick="setFiltro('{{ key }}', event);"
             class="filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition cursor-pointer select-none
-                   {% if filtro == key or (key == 'recentes' and filtro in ('hoje', 'recente')) %}
-                       bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm font-semibold
+                   {% if filtro == key or (key == 'recentes' and filtro in ('hoje', 'recente')) or (key == 'deletados' and filtro in ('deletado', 'baixas')) %}
+                       {% if key == 'deletados' %}
+                           bg-rose-600 dark:bg-rose-500 text-white shadow-sm font-semibold
+                       {% else %}
+                           bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm font-semibold
+                       {% endif %}
                    {% else %}
                        bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200
                    {% endif %}">

@@ -536,6 +536,69 @@ class TestUserReportedIssues(unittest.TestCase):
                 cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
                 cur.execute(f"DELETE FROM products WHERE name = {ph}", (unique_name,))
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # 17. AUDITORIA: Aba de itens deletados (Lápides) e fluxo de restauração
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_17_deleted_audit_tab_and_restore_workflow(self):
+        """
+        Valida que:
+        1. A aba/filtro 'deletados' exibe o histórico de lotes baixados/deletados para auditoria.
+        2. Um lote deletado exibe o badge de baixado e a data da exclusão.
+        3. A rota /lote/restaurar/<id> restaura o lote de volta ao estoque e o remove da auditoria de deletados.
+        """
+        from app.db import create_lot, query_lots, get_db_cursor, SQLITE_PATH
+        unique_name = f"PROD AUDITORIA DELETADO {uuid.uuid4().hex[:6].upper()}"
+        d_valid = (datetime.date.today() + datetime.timedelta(days=45)).strftime("%Y-%m-%d")
+
+        try:
+            # 1. Cria um lote
+            prod_id, lot_id = create_lot(unique_name, quant=25, price=8.50, date_valid=d_valid, location="LOJA")
+
+            # 2. Deleta o lote via DELETE /lote/<lot_id>
+            del_resp = self.client.delete(f'/lote/{lot_id}')
+            self.assertEqual(del_resp.status_code, 200)
+
+            # 3. Consulta a aba de deletados (auditoria)
+            total_del, lots_del = query_lots(filtro='deletados', busca=unique_name)
+            self.assertGreaterEqual(total_del, 1)
+            found = next((l for l in lots_del if l['product_name'] == unique_name), None)
+            self.assertIsNotNone(found)
+            self.assertEqual(found['quant'], 25)
+            self.assertTrue(found.get('is_deleted'))
+            self.assertTrue(bool(found.get('deleted_at')))
+
+            # 4. Renderiza a tela com o filtro 'deletados'
+            resp_html = self.client.get(f'/?filtro=deletados&busca={unique_name}')
+            self.assertEqual(resp_html.status_code, 200)
+            html = resp_html.data.decode('utf-8')
+            self.assertIn('Baixado', html)
+            self.assertIn('Restaurar', html)
+            self.assertIn(unique_name, html)
+
+            # 5. Restaura o lote através da rota /lote/restaurar/<movement_id>
+            movement_id = found['movement_id']
+            res_resp = self.client.post(f'/lote/restaurar/{movement_id}')
+            self.assertEqual(res_resp.status_code, 200)
+
+            # 6. Verifica que o lote não está mais na aba 'deletados'
+            total_del_after, lots_del_after = query_lots(filtro='deletados', busca=unique_name)
+            found_after = next((l for l in lots_del_after if l['product_name'] == unique_name), None)
+            self.assertIsNone(found_after)
+
+            # 7. Verifica que o lote retornou à listagem de lotes ativos
+            total_active, lots_active = query_lots(filtro='todos', busca=unique_name)
+            self.assertGreaterEqual(total_active, 1)
+            found_active = next((l for l in lots_active if l['product_name'] == unique_name), None)
+            self.assertIsNotNone(found_active)
+            self.assertEqual(found_active['quant'], 25)
+
+        finally:
+            with get_db_cursor(commit=True) as (cur, db_type):
+                ph = '%s' if db_type == 'postgres' else '?'
+                cur.execute(f"DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
+                cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
+                cur.execute(f"DELETE FROM products WHERE name = {ph}", (unique_name,))
+
 
 if __name__ == '__main__':
     unittest.main()

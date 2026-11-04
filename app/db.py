@@ -581,6 +581,7 @@ def init_sqlite_db():
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_prod_valid ON stock_movements(product_id, date_valid);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_action_id ON stock_movements(action, id DESC);")
 
     conn.commit()
     conn.close()
@@ -675,6 +676,7 @@ def init_pg_db():
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_prod_valid ON stock_movements(product_id, date_valid);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_action_id ON stock_movements(action, id DESC);")
 
         conn.commit()
         cur.close()
@@ -887,9 +889,9 @@ def init_db():
 
 
 def prewarm_filters_cache():
-    """Pré-aquece os 6 filtros principais em memória RAM para resposta em 0.005ms."""
+    """Pré-aquece os filtros principais em memória RAM para resposta em 0.005ms."""
     try:
-        for f in ("todos", "vencidos", "critico", "atencao", "alerta", "recentes"):
+        for f in ("todos", "vencidos", "critico", "atencao", "alerta", "recentes", "deletados"):
             query_lots(filtro=f, busca="", limit=50, offset=0)
     except Exception:
         pass
@@ -950,9 +952,57 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
         with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
             s_conn.row_factory = sqlite3.Row
             cur = s_conn.cursor()
+            today = date.today()
+
+            if filtro in ("deletados", "deletado", "baixas"):
+                where_clauses = ["sm.action = 'BAIXA'"]
+                params = []
+                if clean_busca:
+                    where_clauses.append("p.name LIKE ?")
+                    params.append(f"%{clean_busca}%")
+                where_sql = " AND ".join(where_clauses)
+                query_sq = f"""
+                    SELECT sm.id AS lot_id, sm.id AS movement_id,
+                           p.name AS product_name, p.id AS product_id,
+                           sm.quant, p.price,
+                           sm.date_valid AS date_valid_str,
+                           'BAIXA' AS location, 'DELETADO' AS status,
+                           sm.created_at AS deleted_at,
+                           COUNT(*) OVER() AS full_count
+                    FROM stock_movements sm
+                    INNER JOIN products p ON p.id = sm.product_id
+                    WHERE {where_sql}
+                    ORDER BY sm.id DESC
+                    LIMIT ? OFFSET ?
+                """
+                cur.execute(query_sq, params + [limit, offset])
+                raw_rows = cur.fetchall()
+                if not raw_rows:
+                    total = 0
+                    lots = []
+                else:
+                    total = raw_rows[0]["full_count"]
+                    lots = []
+                    for r in raw_rows:
+                        lots.append({
+                            "lot_id": r["lot_id"],
+                            "movement_id": r["movement_id"],
+                            "product_name": r["product_name"],
+                            "product_id": r["product_id"],
+                            "quant": r["quant"],
+                            "price": r["price"] or 0.0,
+                            "date_valid": str(r["date_valid_str"])[:10],
+                            "location": r["location"],
+                            "status": r["status"],
+                            "deleted_at": str(r["deleted_at"])[:19] if r["deleted_at"] else "",
+                            "is_deleted": True
+                        })
+                with _cache_lock:
+                    _query_cache[cache_key] = (now, total, lots)
+                return total, lots
+
             where_clauses = ["1=1"]
             params = []
-            today = date.today()
 
             if filtro == "vencidos":
                 where_clauses.append("l.date_valid < ?")
@@ -1027,6 +1077,35 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
         # Fallback de segurança para PostgreSQL caso ocorra algum problema no SQLite local
         with get_db_cursor() as (cur, db_type):
             ph = "%s" if db_type == "postgres" else "?"
+            if filtro in ("deletados", "deletado", "baixas"):
+                like_op = "ILIKE" if db_type == "postgres" else "LIKE"
+                w = ["sm.action = 'BAIXA'"]
+                p = []
+                if clean_busca:
+                    w.append(f"p.name {like_op} {ph}")
+                    p.append(f"%{clean_busca}%")
+                w_sql = " AND ".join(w)
+                cur.execute(
+                    f"""SELECT sm.id, p.name, sm.quant, p.price, sm.date_valid::TEXT, 'BAIXA', 'DELETADO', sm.created_at::TEXT
+                        FROM stock_movements sm JOIN products p ON p.id = sm.product_id
+                        WHERE {w_sql} ORDER BY sm.id DESC LIMIT {ph} OFFSET {ph}""",
+                    p + [limit, offset]
+                )
+                rows = cur.fetchall()
+                lots = [{
+                    "lot_id": r[0],
+                    "movement_id": r[0],
+                    "product_name": r[1],
+                    "quant": r[2],
+                    "price": r[3] or 0.0,
+                    "date_valid": str(r[4])[:10],
+                    "location": r[5],
+                    "status": r[6],
+                    "deleted_at": str(r[7])[:19] if len(r) > 7 and r[7] else "",
+                    "is_deleted": True
+                } for r in rows]
+                return len(lots), lots
+
             cur.execute(f"SELECT l.id, p.name, l.quant, p.price, l.date_valid::TEXT, l.location, l.status FROM product_lots l JOIN products p ON p.id = l.product_id LIMIT {ph} OFFSET {ph}", (limit, offset))
             rows = cur.fetchall()
             lots = [{"lot_id": r[0], "product_name": r[1], "quant": r[2], "price": r[3], "date_valid": str(r[4])[:10], "location": r[5], "status": r[6]} for r in rows]
@@ -1080,6 +1159,10 @@ def delete_lot(lot_id: int) -> bool:
     """
     # 1. Remove do cache em RAM imediatamente (0.01ms)
     _remove_cache_lot(lot_id)
+    with _cache_lock:
+        for k in list(_query_cache.keys()):
+            if k[0] in ("deletados", "deletado", "baixas"):
+                del _query_cache[k]
 
     # 2. Registra baixa e remove no SQLite local imediatamente (< 1ms)
     row_info = None
@@ -1115,6 +1198,76 @@ def delete_lot(lot_id: int) -> bool:
                         cur.execute("DELETE FROM product_lots WHERE id = %s", (lot_id,))
             except Exception as e:
                 print(f"⚠️ Erro ao sincronizar baixa no Postgres: {e}")
+        threading.Thread(target=_sync_pg, daemon=True).start()
+
+    return True
+
+
+def restore_lot(movement_id: int) -> bool:
+    """
+    Restaura um lote baixado (deletado) de volta para o estoque:
+    - Lê os dados de stock_movements (product_id, quant, date_valid).
+    - Recria o lote em product_lots com origin = 'MANUAL'.
+    - Atualiza a movimentação para 'RESTAURADO' para sair da lista de deletados.
+    - Registra a movimentação 'RESTAURACAO'.
+    - Invalida os caches necessários.
+    """
+    clear_query_cache()
+    info = None
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+            s_conn.execute("PRAGMA journal_mode = WAL;")
+            s_cur = s_conn.cursor()
+            s_cur.execute(
+                "SELECT product_id, quant, date_valid FROM stock_movements WHERE id = ? AND action = 'BAIXA'",
+                (movement_id,)
+            )
+            row = s_cur.fetchone()
+            if not row:
+                return False
+            p_id, quant, d_valid = row[0], row[1], str(row[2])[:10]
+
+            s_cur.execute("SELECT price FROM products WHERE id = ?", (p_id,))
+            p_row = s_cur.fetchone()
+            price = p_row[0] if p_row and p_row[0] is not None else 0.0
+
+            s_cur.execute(
+                """INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 'LOJA', 'NORMAL', 'MANUAL', date('now'), datetime('now', 'localtime'))""",
+                (p_id, quant, price, d_valid)
+            )
+            new_lot_id = s_cur.lastrowid
+
+            s_cur.execute("UPDATE stock_movements SET action = 'RESTAURADO' WHERE id = ?", (movement_id,))
+            s_cur.execute(
+                "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid) VALUES (?, ?, 'RESTAURACAO', ?, ?)",
+                (p_id, new_lot_id, quant, d_valid)
+            )
+            s_conn.commit()
+            info = (p_id, quant, price, d_valid, new_lot_id)
+    except Exception as e:
+        print(f"⚠️ Erro ao restaurar lote no SQLite: {e}")
+        return False
+
+    if is_postgres() and info:
+        def _sync_pg():
+            try:
+                p_id, quant, price, d_valid, new_lot_id = info
+                with get_db_cursor(commit=True) as (cur, db_type):
+                    if db_type == "postgres":
+                        cur.execute(
+                            """INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
+                               VALUES (%s, %s, %s, %s, 'LOJA', 'NORMAL', 'MANUAL', CURRENT_DATE, CURRENT_TIMESTAMP) RETURNING id""",
+                            (p_id, quant, price, d_valid)
+                        )
+                        pg_lot_id = cur.fetchone()[0]
+                        cur.execute("UPDATE stock_movements SET action = 'RESTAURADO' WHERE id = %s", (movement_id,))
+                        cur.execute(
+                            "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid) VALUES (%s, %s, 'RESTAURACAO', %s, %s)",
+                            (p_id, pg_lot_id, quant, d_valid)
+                        )
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar restauração no Postgres: {e}")
         threading.Thread(target=_sync_pg, daemon=True).start()
 
     return True

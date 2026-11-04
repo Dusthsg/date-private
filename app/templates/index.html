@@ -438,7 +438,7 @@ function clearSearch() {
 }
 
 function prewarmClientFilters() {
-    const filters = ['vencidos', 'critico', 'atencao', 'alerta', 'recentes'];
+    const filters = ['vencidos', 'critico', 'atencao', 'alerta', 'recentes', 'deletados'];
     filters.forEach((f, idx) => {
         setTimeout(() => {
             if (socket && socket.readyState === WebSocket.OPEN) {
@@ -460,7 +460,11 @@ function setFiltro(key, evt) {
     // Atualiza visual dos botões
     document.querySelectorAll('.filter-btn').forEach(btn => {
         if (btn.getAttribute('data-filtro') === key) {
-            btn.className = "filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm font-semibold cursor-pointer select-none";
+            if (key === 'deletados') {
+                btn.className = "filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-rose-600 dark:bg-rose-500 text-white shadow-sm font-semibold cursor-pointer select-none";
+            } else {
+                btn.className = "filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm font-semibold cursor-pointer select-none";
+            }
         } else {
             btn.className = "filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 cursor-pointer select-none";
         }
