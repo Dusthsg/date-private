@@ -440,6 +440,18 @@ _catalog_cache = None
 _catalog_lock = threading.Lock()
 CACHE_TTL_SECONDS = 120  # Mantém cache aquecido por 2 minutos
 
+_cache_clear_callbacks = []
+
+def register_cache_clear_callback(cb):
+    _cache_clear_callbacks.append(cb)
+
+def _notify_cache_clear():
+    for cb in list(_cache_clear_callbacks):
+        try:
+            cb()
+        except Exception:
+            pass
+
 def clear_query_cache():
     """Invalida todo o cache de consultas e catálogo instantaneamente em alterações globais (ex: importação)."""
     global _catalog_cache
@@ -447,9 +459,11 @@ def clear_query_cache():
         _query_cache.clear()
     with _catalog_lock:
         _catalog_cache = None
+    _notify_cache_clear()
 
 def _update_cache_lot_field(lot_id: int, field: str, value):
     """Atualiza o lote diretamente na memória RAM sem invalidar as consultas já carregadas (0.01ms)."""
+    _notify_cache_clear()
     with _cache_lock:
         target_prod_id = None
         for key, (t, total, lots) in _query_cache.items():
@@ -467,6 +481,7 @@ def _update_cache_lot_field(lot_id: int, field: str, value):
 
 def _remove_cache_lot(lot_id: int):
     """Remove um lote deletado do cache em memória RAM sem precisar recarregar o banco todo."""
+    _notify_cache_clear()
     with _cache_lock:
         for key, (t, total, lots) in list(_query_cache.items()):
             new_lots = [l for l in lots if l.get("lot_id") != lot_id]
