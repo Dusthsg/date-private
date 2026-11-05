@@ -1440,7 +1440,7 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
                     else:
                         s_conn.execute("INSERT OR IGNORE INTO products (id, name) VALUES (?, ?)", (product_id, name))
                         if updated_product_price:
-                            s_conn.execute("UPDATE products SET price = ? WHERE id = ?", (price, product_id))
+                            s_conn.execute("UPDATE products SET price = ? WHERE id = ? OR UPPER(name) = ?", (price, product_id, name))
 
                     if is_new_lot:
                         s_conn.execute(

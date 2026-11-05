@@ -18,8 +18,8 @@
           hx-post="/lote"
           hx-target="#lot-table-body"
           hx-include="#current-filtro, #current-busca"
-          hx-on::before-request="const ni = document.getElementById('input-add-lot-name'); if(ni) ni.value = ni.value.trim().toUpperCase();"
-          hx-on::after-request="if(event.detail.successful) { this.reset(); clearAddLotSelection(); const pi = document.getElementById('input-add-lot-price'); if(pi) pi.value='0.00'; document.getElementById('form-add-msg').innerHTML = '<span class=\'text-emerald-600 dark:text-emerald-400 text-xs font-semibold\'><span class='inline-flex items-center gap-1'><i data-lucide='check-circle-2' class='w-3.5 h-3.5'></i> Lote cadastrado com sucesso!</span></span>'; setTimeout(() => document.getElementById('form-add-msg').innerHTML='', 4000); }"
+          hx-on::before-request="onAddLotBeforeRequest(event)"
+          hx-on::after-request="onAddLotAfterRequest(event)"
           class="hidden mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
         
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2.5">
@@ -1526,6 +1526,51 @@ function clearAddLotSelection() {
     const badge = document.getElementById('badge-catalog-selected');
     if (dropdown) dropdown.classList.add('hidden');
     if (badge) badge.classList.add('hidden');
+}
+
+function onAddLotBeforeRequest(evt) {
+    const ni = document.getElementById('input-add-lot-name');
+    if (ni) ni.value = ni.value.trim().toUpperCase();
+}
+
+function onAddLotAfterRequest(evt) {
+    const msgDiv = document.getElementById('form-add-msg');
+    if (evt.detail && evt.detail.successful) {
+        // 1. Limpa todos os inputs do formulário
+        const form = document.getElementById('form-add-lot');
+        if (form) form.reset();
+        clearAddLotSelection();
+
+        const nameInput = document.getElementById('input-add-lot-name');
+        if (nameInput) {
+            nameInput.value = '';
+            nameInput.focus();
+        }
+        const quantInput = document.getElementById('input-add-lot-quant');
+        if (quantInput) quantInput.value = '0';
+        const priceInput = document.getElementById('input-add-lot-price');
+        if (priceInput) priceInput.value = '0.00';
+        const dateInput = document.getElementById('input-add-lot-date');
+        if (dateInput) dateInput.value = '';
+
+        // 2. Exibe confirmação visual de sucesso destacada
+        if (msgDiv) {
+            msgDiv.innerHTML = '<span class="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300 text-xs sm:text-sm font-semibold bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-700 px-3 py-1.5 rounded-lg shadow-xs"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i> Lote cadastrado com sucesso!</span>';
+            if (window.refreshIcons) window.refreshIcons();
+            setTimeout(() => {
+                if (msgDiv) msgDiv.innerHTML = '';
+            }, 5000);
+        }
+    } else {
+        const errorText = (evt.detail && evt.detail.xhr && evt.detail.xhr.responseText) ? evt.detail.xhr.responseText : 'Erro ao cadastrar lote.';
+        if (msgDiv) {
+            msgDiv.innerHTML = `<span class="inline-flex items-center gap-1.5 text-rose-700 dark:text-rose-300 text-xs sm:text-sm font-semibold bg-rose-50 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-700 px-3 py-1.5 rounded-lg shadow-xs"><i data-lucide="alert-circle" class="w-4 h-4 text-rose-500"></i> ${errorText}</span>`;
+            if (window.refreshIcons) window.refreshIcons();
+            setTimeout(() => {
+                if (msgDiv) msgDiv.innerHTML = '';
+            }, 6000);
+        }
+    }
 }
 
 // Fecha o dropdown se clicar fora

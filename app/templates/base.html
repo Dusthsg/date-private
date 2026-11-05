@@ -57,58 +57,73 @@
         }
     </style>
     <script>
-                // Suporte a Lucide Icons com re-renderização automática no DOM
-        window.refreshIcons = function(container) {
+                // Suporte a Lucide Icons com re-renderização automática e confiável no DOM
+        window.refreshIcons = function() {
             if (window.lucide && typeof window.lucide.createIcons === 'function') {
                 try {
-                    if (container) {
-                        window.lucide.createIcons({ root: container });
-                    } else {
-                        window.lucide.createIcons();
-                    }
-                } catch (_) {}
+                    window.lucide.createIcons();
+                } catch (e) {
+                    console.error("Erro ao renderizar Lucide icons:", e);
+                }
             }
         };
 
         document.addEventListener('DOMContentLoaded', () => window.refreshIcons());
-        document.addEventListener('htmx:afterSwap', (evt) => window.refreshIcons(evt.detail.target || evt.target));
-        document.addEventListener('htmx:afterSettle', (evt) => window.refreshIcons(evt.detail.target || evt.target));
+        document.addEventListener('htmx:afterSwap', () => window.refreshIcons());
+        document.addEventListener('htmx:afterSettle', () => window.refreshIcons());
+        document.addEventListener('htmx:load', () => window.refreshIcons());
 
         // Flag global de edição
         window.isEditingLot = false;
 
         function startEditing(lotId) {
             window.isEditingLot = true;
-            document.getElementById('view-quant-' + lotId).classList.add('hidden');
+            const viewDiv = document.getElementById('view-quant-' + lotId);
+            if (viewDiv) viewDiv.style.display = 'none';
             const editForm = document.getElementById('edit-quant-' + lotId);
-            editForm.classList.remove('hidden');
-            const input = document.getElementById('input-quant-' + lotId);
-            if (input) input.focus();
+            if (editForm) {
+                editForm.style.display = 'flex';
+                const input = document.getElementById('input-quant-' + lotId);
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }
+            window.refreshIcons();
         }
 
         function stopEditing(lotId) {
             window.isEditingLot = false;
             const editForm = document.getElementById('edit-quant-' + lotId);
-            if (editForm) editForm.classList.add('hidden');
+            if (editForm) editForm.style.display = 'none';
             const viewDiv = document.getElementById('view-quant-' + lotId);
-            if (viewDiv) viewDiv.classList.remove('hidden');
+            if (viewDiv) viewDiv.style.display = 'flex';
+            window.refreshIcons();
         }
 
         function startEditingPrice(lotId) {
             window.isEditingLot = true;
-            document.getElementById('view-price-' + lotId).classList.add('hidden');
+            const viewDiv = document.getElementById('view-price-' + lotId);
+            if (viewDiv) viewDiv.style.display = 'none';
             const editForm = document.getElementById('edit-price-' + lotId);
-            editForm.classList.remove('hidden');
-            const input = document.getElementById('input-price-' + lotId);
-            if (input) input.focus();
+            if (editForm) {
+                editForm.style.display = 'flex';
+                const input = document.getElementById('input-price-' + lotId);
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }
+            window.refreshIcons();
         }
 
         function stopEditingPrice(lotId) {
             window.isEditingLot = false;
             const editForm = document.getElementById('edit-price-' + lotId);
-            if (editForm) editForm.classList.add('hidden');
+            if (editForm) editForm.style.display = 'none';
             const viewDiv = document.getElementById('view-price-' + lotId);
-            if (viewDiv) viewDiv.classList.remove('hidden');
+            if (viewDiv) viewDiv.style.display = 'flex';
+            window.refreshIcons();
         }
 
         // Bloqueia qualquer requisição de polling (every 5s) se o usuário estiver editando ou com foco em input
@@ -119,7 +134,8 @@
                     evt.preventDefault();
                     return;
                 }
-                const openEditForms = document.querySelectorAll("form[id^='edit-quant-']:not(.hidden), form[id^='edit-price-']:not(.hidden)");
+                const openEditForms = Array.from(document.querySelectorAll("form[id^='edit-quant-'], form[id^='edit-price-']"))
+                    .filter(f => f.style.display === 'flex' || (!f.classList.contains('hidden') && f.style.display !== 'none'));
                 if (openEditForms && openEditForms.length > 0) {
                     window.isEditingLot = true;
                     evt.preventDefault();

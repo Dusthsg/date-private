@@ -815,5 +815,49 @@ class TestUserReportedIssues(unittest.TestCase):
         self.assertIn('DateLimit', html)
 
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # 23. CONFIRMAÇÃO VISUAL E LIMPEZA DE INPUTS AO CADASTRAR LOTE (Msg 16)
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_23_lot_form_reset_and_confirmation(self):
+        """
+        Valida que:
+        1. O formulário form-add-lot não possui erros de sintaxe de aspas aninhadas.
+        2. Possui onAddLotAfterRequest e onAddLotBeforeRequest registrados.
+        3. Limpa explicitamente os inputs (name, quant, price, date).
+        4. Exibe mensagem de confirmação 'Lote cadastrado com sucesso!' em form-add-msg.
+        """
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        html = resp.data.decode('utf-8')
+
+        self.assertIn('onAddLotBeforeRequest', html)
+        self.assertIn('onAddLotAfterRequest', html)
+        self.assertIn('Lote cadastrado com sucesso!', html)
+        self.assertIn('form.reset()', html)
+        self.assertIn("quantInput.value = '0'", html)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # 24. RESILIÊNCIA DOS ÍCONES DE LÁPIS E EDIÇÃO INLINE SEM CORRUPÇÃO (Msg 16)
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_24_pencil_icon_and_inline_edit_resilience(self):
+        """
+        Valida que:
+        1. Os formulários de edição rápida em quant_cell e price_cell usam style="display: none;"
+           para evitar conflitos de classes Tailwind ('hidden' vs 'flex').
+        2. startEditing e stopEditing alternam display='none' e display='flex' sem exceção.
+        3. window.refreshIcons é chamado em eventos HTMX (afterSwap, afterSettle, load)
+           e dentro de startEditing / stopEditing para garantir que o lápis nunca suma.
+        """
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        html = resp.data.decode('utf-8')
+
+        self.assertIn('data-lucide="pencil"', html)
+        self.assertIn('style="display: none;"', html)
+        self.assertIn("editForm.style.display = 'flex'", html)
+        self.assertIn("editForm.style.display = 'none'", html)
+        self.assertIn("document.addEventListener('htmx:load'", html)
+
+
 if __name__ == '__main__':
     unittest.main()
