@@ -209,9 +209,23 @@
     </main>
 
     <!-- Footer -->
-    <footer class="text-center text-gray-400 dark:text-gray-500 text-xs py-4 transition-colors">
-        DateLimit — Interface de Controle de Validade
+    <footer class="mt-8 border-t border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-800/60 backdrop-blur-xs py-5 text-center text-xs text-gray-500 dark:text-gray-400 transition-colors">
+        <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+            <div class="flex items-center gap-2 font-medium text-gray-600 dark:text-gray-300">
+                <i data-lucide="shield-check" class="w-4 h-4 text-indigo-500 dark:text-indigo-400"></i>
+                <span>DateLimit &mdash; Controle Inteligente de Validade</span>
+            </div>
+            <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <span>&copy; <span id="footer-year">2026</span> <strong class="font-semibold text-gray-700 dark:text-gray-200 tracking-wide">Reality</strong>. Todos os direitos reservados.</span>
+            </div>
+        </div>
     </footer>
+    <script>
+        (function() {
+            const fy = document.getElementById('footer-year');
+            if (fy) fy.textContent = new Date().getFullYear();
+        })();
+    </script>
 
 </body>
 </html>

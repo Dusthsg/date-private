@@ -794,5 +794,26 @@ class TestUserReportedIssues(unittest.TestCase):
         self.assertIn('scrollIntoView', html)
 
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # 22. FOOTER DIREITOS RESERVADOS À REALITY (Msg 15)
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_22_reality_copyright_footer(self):
+        """
+        Valida que o footer em base.html exibe o copyright e direitos reservados à Reality:
+        1. Menção a 'Reality'.
+        2. 'Todos os direitos reservados'.
+        3. 'DateLimit'.
+        4. Elemento de ano dinâmico 'footer-year'.
+        """
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        html = resp.data.decode('utf-8')
+
+        self.assertIn('Reality', html)
+        self.assertIn('Todos os direitos reservados', html)
+        self.assertIn('footer-year', html)
+        self.assertIn('DateLimit', html)
+
+
 if __name__ == '__main__':
     unittest.main()
