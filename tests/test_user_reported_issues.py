@@ -740,5 +740,28 @@ class TestUserReportedIssues(unittest.TestCase):
                 cur.execute(f"DELETE FROM products WHERE name = {ph}", (unique_name,))
 
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # 20. RESILIÊNCIA E RECONEXÃO AUTOMÁTICA WEBSOCKET (Msg 12)
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_20_bulletproof_websocket_heartbeat_and_reconnect(self):
+        """
+        Valida que o gerenciador de WebSocket no cliente possui:
+        1. Watchdog ativo com heartbeat agressivo (6s) para não cair em NAT/4G.
+        2. Ouvintes de eventos para desbloqueio de tela (visibilitychange) e rede (online).
+        3. Badge interativo com gatilho manual (onclick="initWebSocket(true)").
+        4. Fallback automático de busca para HTMX com reconexão em background.
+        """
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        html = resp.data.decode('utf-8')
+
+        self.assertIn('startWsWatchdog', html)
+        self.assertIn('visibilitychange', html)
+        self.assertIn("window.addEventListener('online'", html)
+        self.assertIn('onclick="initWebSocket(true)"', html)
+        self.assertIn('6000', html)
+        self.assertIn('scheduleWsReconnect', html)
+
+
 if __name__ == '__main__':
     unittest.main()
