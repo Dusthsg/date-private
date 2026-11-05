@@ -1,5 +1,5 @@
 {# Partial: botões de filtro atualizáveis via OOB ou direto com Lucide Icons #}
-<div class="flex flex-wrap gap-2" id="filtros" hx-swap-oob="true">
+<div class="flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth py-1 px-1 select-none touch-pan-x cursor-grab active:cursor-grabbing w-full" id="filtros" hx-swap-oob="true">
     {% set filtros = [
         ('todos',     'clipboard-list', 'Todos', ''),
         ('recentes',  'sparkles',       'Adicionados Recentemente', 'text-amber-500 dark:text-amber-400'),
@@ -14,7 +14,7 @@
             type="button"
             data-filtro="{{ key }}"
             onclick="setFiltro('{{ key }}', event);"
-            class="filter-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition cursor-pointer select-none
+            class="filter-btn shrink-0 flex-shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition cursor-pointer select-none
                    {% if filtro == key or (key == 'recentes' and filtro in ('hoje', 'recente')) or (key == 'deletados' and filtro in ('deletado', 'baixas')) %}
                        {% if key == 'deletados' %}
                            bg-rose-600 dark:bg-rose-500 text-white shadow-sm font-semibold

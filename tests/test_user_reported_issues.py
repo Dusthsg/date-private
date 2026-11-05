@@ -763,5 +763,36 @@ class TestUserReportedIssues(unittest.TestCase):
         self.assertIn('scheduleWsReconnect', html)
 
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # 21. CARROSSEL ARRASTÁVEL E ROLAGEM HORIZONTAL NOS FILTROS (Msg 14)
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_21_filter_selection_drag_scroll_carousel(self):
+        """
+        Valida que os botões de filtro formam um carrossel horizontal arrastável:
+        1. Container possui overflow-x-auto, no-scrollbar, touch-pan-x e cursor-grab.
+        2. Botões individuais possuem shrink-0 e whitespace-nowrap para não quebrar linha.
+        3. Botões de navegação lateral (setas chevron desktop) com scrollFilters().
+        4. Suporte a arraste por mouse (initFilterDragScroll) e auto-centralização (scrollIntoView).
+        """
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        html = resp.data.decode('utf-8')
+
+        # Container
+        self.assertIn('overflow-x-auto', html)
+        self.assertIn('no-scrollbar', html)
+        self.assertIn('touch-pan-x', html)
+        self.assertIn('cursor-grab', html)
+
+        # Botões não quebram
+        self.assertIn('shrink-0 flex-shrink-0 whitespace-nowrap', html)
+
+        # Navegação e scripts
+        self.assertIn("scrollFilters('left')", html)
+        self.assertIn("scrollFilters('right')", html)
+        self.assertIn('initFilterDragScroll', html)
+        self.assertIn('scrollIntoView', html)
+
+
 if __name__ == '__main__':
     unittest.main()

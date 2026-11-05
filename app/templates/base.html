@@ -47,6 +47,14 @@
         html:not(.dark) {
             color-scheme: light;
         }
+        /* Oculta scrollbars nativas mas mantém rolagem e arraste por toque e mouse */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
     </style>
     <script>
                 // Suporte a Lucide Icons com re-renderização automática no DOM
