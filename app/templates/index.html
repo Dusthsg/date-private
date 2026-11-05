@@ -7,12 +7,10 @@
     <div class="flex items-center justify-between cursor-pointer select-none"
          onclick="document.getElementById('form-add-lot').classList.toggle('hidden'); document.getElementById('icon-add-toggle').classList.toggle('rotate-180');">
         <div class="flex items-center gap-2">
-            <span class="text-base font-bold text-gray-800 dark:text-gray-100">➕ Cadastrar Novo Lote</span>
+            <span class="text-base font-bold text-gray-800 dark:text-gray-100 inline-flex items-center gap-1.5"><i data-lucide="plus-circle" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i> Cadastrar Novo Lote</span>
             <span class="text-xs text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full font-medium">Rápido</span>
         </div>
-        <button type="button" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition p-1" id="icon-add-toggle">
-            ▼
-        </button>
+        <button type="button" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition p-1" id="icon-add-toggle"><i data-lucide="chevron-down" class="w-4 h-4"></i></button>
     </div>
 
     <!-- Formulário inline com HTMX -->
@@ -21,14 +19,14 @@
           hx-target="#lot-table-body"
           hx-include="#current-filtro, #current-busca"
           hx-on::before-request="const ni = document.getElementById('input-add-lot-name'); if(ni) ni.value = ni.value.trim().toUpperCase();"
-          hx-on::after-request="if(event.detail.successful) { this.reset(); clearAddLotSelection(); const pi = document.getElementById('input-add-lot-price'); if(pi) pi.value='0.00'; document.getElementById('form-add-msg').innerHTML = '<span class=\'text-emerald-600 dark:text-emerald-400 text-xs font-semibold\'>✅ Lote cadastrado com sucesso!</span>'; setTimeout(() => document.getElementById('form-add-msg').innerHTML='', 4000); }"
+          hx-on::after-request="if(event.detail.successful) { this.reset(); clearAddLotSelection(); const pi = document.getElementById('input-add-lot-price'); if(pi) pi.value='0.00'; document.getElementById('form-add-msg').innerHTML = '<span class=\'text-emerald-600 dark:text-emerald-400 text-xs font-semibold\'><span class='inline-flex items-center gap-1'><i data-lucide='check-circle-2' class='w-3.5 h-3.5'></i> Lote cadastrado com sucesso!</span></span>'; setTimeout(() => document.getElementById('form-add-msg').innerHTML='', 4000); }"
           class="hidden mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
         
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2.5">
             <div class="md:col-span-2 relative">
                 <div class="flex items-center justify-between mb-1">
                     <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Nome do Produto *</label>
-                    <span id="badge-catalog-selected" class="hidden text-[10px] bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 px-1.5 py-0.5 rounded font-medium">✓ Catálogo</span>
+                    <span id="badge-catalog-selected" class="hidden text-[10px] bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 px-1.5 py-0.5 rounded font-medium"><span class="inline-flex items-center gap-0.5"><i data-lucide="check" class="w-3 h-3"></i> Catálogo</span></span>
                 </div>
                 <div class="relative">
                     <input type="text"
@@ -71,7 +69,7 @@
             <div id="form-add-msg"></div>
             <button type="submit"
                     class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs sm:text-sm font-semibold px-5 py-2 rounded-lg shadow-sm transition cursor-pointer">
-                ✓ Salvar Lote
+                <span class="inline-flex items-center gap-1.5"><i data-lucide="check" class="w-4 h-4"></i> Salvar Lote</span>
             </button>
         </div>
     </form>
@@ -93,9 +91,7 @@
           onsubmit="event.preventDefault(); submitSearch();">
         
         <div class="relative flex items-center">
-            <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-gray-400 dark:text-gray-400">
-                🔍
-            </span>
+            <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-gray-400 dark:text-gray-400"><i data-lucide="search" class="w-4 h-4"></i></span>
             <input type="text"
                    id="current-busca"
                    name="busca"
@@ -110,9 +106,7 @@
                         id="clear-search-btn"
                         onclick="clearSearch()"
                         class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 {% if not busca %}hidden{% endif %} text-xs px-2 py-1 rounded font-bold cursor-pointer"
-                        title="Limpar busca">
-                    ✕
-                </button>
+                        title="Limpar busca"><i data-lucide="x" class="w-4 h-4"></i></button>
                 <button type="submit"
                         class="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white px-3.5 py-1.5 rounded-md text-xs font-medium transition shadow-sm cursor-pointer">
                     Buscar
@@ -137,7 +131,7 @@
         </span>
         <span id="db-badge" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold {% if is_postgres %}bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-800{% else %}bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-800{% endif %}"
               title="Banco de dados em uso">
-            💾 <span id="db-label">{{ db_name }}</span>
+            <i data-lucide="database" class="w-3 h-3 inline-block mr-1"></i> <span id="db-label">{{ db_name }}</span>
         </span>
 
         <!-- Botão Puxar Conexão / Atualizar Cópia Local -->
@@ -146,8 +140,8 @@
                 onclick="triggerPullConnection()"
                 class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 active:scale-95 text-gray-700 dark:text-gray-200 transition border border-gray-300 dark:border-gray-600 shadow-xs cursor-pointer"
                 title="Puxar dados do PostgreSQL para o SQLite local e testar ligação">
-            <span id="pull-spinner" class="hidden animate-spin">⏳</span>
-            <span id="pull-icon">🔄</span>
+            <i data-lucide="loader-2" id="pull-spinner" class="hidden w-3 h-3 animate-spin"></i>
+            <i data-lucide="refresh-cw" id="pull-icon" class="w-3 h-3"></i>
             <span id="pull-text">Puxar Conexão</span>
         </button>
     </div>
@@ -159,7 +153,7 @@
                     onclick="purgeAllDeleted()"
                     class="inline-flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow-sm transition cursor-pointer"
                     title="Excluir permanentemente todos os registros de auditoria">
-                🗑️ <span>Limpar Todos os Deletados</span>
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> <span>Limpar Todos os Deletados</span>
             </button>
         </div>
 
@@ -167,7 +161,7 @@
                 onclick="document.getElementById('panel-import-planilha').classList.toggle('hidden');"
                 class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg shadow-sm transition cursor-pointer"
                 title="Conciliar estoque com planilha da retaguarda">
-            <span>📥 Importar Planilha (Excel)</span>
+            <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i> <span>Importar Planilha (Excel)</span>
         </button>
     </div>
 </div>
@@ -176,19 +170,19 @@
 <div id="panel-import-planilha" class="hidden mb-4 bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-800 rounded-xl shadow-sm p-4 transition-colors">
     <div class="flex items-center justify-between pb-2 mb-3 border-b border-gray-100 dark:border-gray-700">
         <div class="flex items-center gap-2">
-            <span class="text-sm font-bold text-gray-800 dark:text-gray-100">📥 Conciliação e Importação de Planilha</span>
+            <span class="text-sm font-bold text-gray-800 dark:text-gray-100 inline-flex items-center gap-1.5"><i data-lucide="file-spreadsheet" class="w-4 h-4 text-emerald-600"></i> Conciliação e Importação de Planilha</span>
             <span class="text-[11px] bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 px-2.5 py-0.5 rounded-full font-semibold border dark:border-emerald-800">Auditor Linha por Linha</span>
         </div>
         <button type="button" onclick="document.getElementById('panel-import-planilha').classList.add('hidden');" class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 font-bold p-1 cursor-pointer">
-            ✕ Fechar
+            <span class="inline-flex items-center gap-1"><i data-lucide="x" class="w-3.5 h-3.5"></i> Fechar</span>
         </button>
     </div>
 
     <div class="text-xs text-gray-600 dark:text-gray-300 mb-3 space-y-1 bg-gray-50 dark:bg-gray-700/60 p-2.5 rounded-lg border border-gray-200 dark:border-gray-600">
         <div class="font-semibold text-gray-700 dark:text-gray-200 mb-1">Regras automáticas aplicadas ao importar:</div>
-        <div>🛡️ <b>1. Filtro de Lápide:</b> se o lote já foi baixado no chão da loja hoje, a linha é descartada (evita o item zumbi).</div>
-        <div>📦 <b>2. Remessa Nova:</b> se o lote não existe no banco, é criado direto no <b>GALPÃO</b> (deixando os mais velhos intocados na LOJA).</div>
-        <div>⚖️ <b>3. Divergência Delta:</b> se a planilha tiver excedente em relação à loja, lança apenas a diferença como reforço no <b>GALPÃO</b>.</div>
+        <div><i data-lucide="shield-alert" class="w-3.5 h-3.5 inline-block text-emerald-600 dark:text-emerald-400 mr-1"></i> <b>1. Filtro de Lápide:</b> se o lote já foi baixado no chão da loja hoje, a linha é descartada (evita o item zumbi).</div>
+        <div><i data-lucide="package-plus" class="w-3.5 h-3.5 inline-block text-emerald-600 dark:text-emerald-400 mr-1"></i> <b>2. Remessa Nova:</b> se o lote não existe no banco, é criado direto no <b>GALPÃO</b> (deixando os mais velhos intocados na LOJA).</div>
+        <div><i data-lucide="scale" class="w-3.5 h-3.5 inline-block text-emerald-600 dark:text-emerald-400 mr-1"></i> <b>3. Divergência Delta:</b> se a planilha tiver excedente em relação à loja, lança apenas a diferença como reforço no <b>GALPÃO</b>.</div>
     </div>
 
     <form id="form-import-planilha"
@@ -209,10 +203,10 @@
                     onclick="submitImportPlanilha(event)"
                     id="btn-import-submit"
                     class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition inline-flex items-center gap-2 cursor-pointer">
-                <span>⚡ Processar e Conciliar</span>
+                <span class="inline-flex items-center gap-1.5"><i data-lucide="play" class="w-3.5 h-3.5"></i> Processar e Conciliar</span>
             </button>
             <span id="import-loading" class="hidden text-xs text-emerald-600 dark:text-emerald-400 font-semibold animate-pulse">
-                ⏳ Enviando e auditando linhas...
+                <span class="inline-flex items-center gap-1.5"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Enviando e auditando linhas...</span>
             </span>
         </div>
     </form>
@@ -226,7 +220,7 @@
             <button type="button"
                     onclick="toggleSpreadsheetHistory()"
                     class="text-xs font-bold text-gray-700 dark:text-gray-300 hover:text-emerald-700 dark:hover:text-emerald-400 inline-flex items-center gap-1.5 transition cursor-pointer">
-                <span>📁 Planilhas Salvas & Cópias de Segurança</span>
+                <span class="inline-flex items-center gap-1.5"><i data-lucide="folder" class="w-3.5 h-3.5 text-emerald-600"></i> Planilhas Salvas & Cópias de Segurança</span>
                 <span id="history-toggle-icon" class="text-[10px]">▼</span>
             </button>
             <span class="text-[11px] text-gray-400 dark:text-gray-400 hidden sm:inline">Guarda cópia automática de todo arquivo enviado para recuperação</span>
@@ -283,15 +277,15 @@ function updateWsBadge(status) {
     if (!badge) return;
     if (status === 'connected') {
         badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border dark:border-emerald-800 cursor-pointer select-none";
-        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span> ⚡ WebSocket Ativo';
+        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span> <i data-lucide="zap" class="w-3.5 h-3.5 text-emerald-600"></i> <span>WebSocket Ativo</span>'; if (window.refreshIcons) window.refreshIcons(badge);
         badge.title = 'Conectado em tempo real. Clique para testar ou forçar reconexão.';
     } else if (status === 'connecting') {
         badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border dark:border-amber-800 cursor-pointer select-none";
-        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span> ⏳ Reconectando...';
+        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span> <i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin text-amber-600"></i> <span>Reconectando...</span>'; if (window.refreshIcons) window.refreshIcons(badge);
         badge.title = 'Reconectando ao servidor em segundo plano...';
     } else {
         badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border dark:border-rose-800 cursor-pointer select-none";
-        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-500"></span> ⚠️ Desconectado';
+        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-500"></span> <i data-lucide="wifi-off" class="w-3.5 h-3.5 text-rose-600"></i> <span>Desconectado</span>'; if (window.refreshIcons) window.refreshIcons(badge);
         badge.title = 'Clique para reconectar agora.';
     }
 }
@@ -487,6 +481,7 @@ function renderLotsData(html, total) {
     if (tbody) {
         tbody.innerHTML = html;
         htmx.process(tbody);
+        if (window.refreshIcons) window.refreshIcons(tbody);
     }
     const countEl = document.getElementById('lots-count');
     if (countEl && total !== undefined) {
@@ -736,15 +731,16 @@ function renderColumnMappingInterface(data, file) {
 
     const downloadBadge = data.file_id ? `
         <a href="/download-planilha/${data.file_id}" download class="inline-flex items-center gap-1 text-[11px] text-amber-900 dark:text-amber-200 bg-amber-200/80 dark:bg-amber-900/60 hover:bg-amber-300 dark:hover:bg-amber-800 px-2.5 py-1 rounded-md font-semibold transition shadow-xs">
-            <span>📥 Baixar cópia original salva</span>
+            <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar cópia original salva</span>
         </a>
     ` : '';
 
+    setTimeout(() => { if (window.refreshIcons) window.refreshIcons(resultContainer); }, 50);
     resultContainer.innerHTML = `
         <div id="import-mapping-card" class="mt-4 p-4 bg-amber-50/70 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/80 rounded-xl space-y-4 shadow-sm animate-fade-in">
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div class="flex items-start gap-2.5">
-                    <span class="text-xl">📋</span>
+                    <i data-lucide="table" class="w-5 h-5 text-indigo-600 dark:text-indigo-400"></i>
                     <div class="space-y-0.5">
                         <h4 class="text-sm font-bold text-amber-900 dark:text-amber-300">Confirmação de Colunas da Planilha</h4>
                         <p class="text-xs text-amber-800 dark:text-amber-400">
@@ -759,7 +755,7 @@ function renderColumnMappingInterface(data, file) {
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white dark:bg-gray-800 p-3.5 rounded-lg border border-amber-200 dark:border-gray-700">
                 <div>
                     <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-                        📦 Coluna do Produto <span class="text-red-500">*</span>
+                        <i data-lucide="package" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> Coluna do Produto <span class="text-red-500">*</span>
                     </label>
                     <select id="map-col-prod" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
                         ${generateOptions(suggestions.col_prod, true)}
@@ -768,7 +764,7 @@ function renderColumnMappingInterface(data, file) {
 
                 <div>
                     <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-                        📅 Coluna da Validade <span class="text-red-500">*</span>
+                        <i data-lucide="calendar" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> Coluna da Validade <span class="text-red-500">*</span>
                     </label>
                     <select id="map-col-valid" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
                         ${generateOptions(suggestions.col_valid, true)}
@@ -777,7 +773,7 @@ function renderColumnMappingInterface(data, file) {
 
                 <div>
                     <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-                        🏷️ Código de Barras (Opcional)
+                        <i data-lucide="barcode" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> Código de Barras (Opcional)
                     </label>
                     <select id="map-col-code" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
                         ${generateOptions(suggestions.col_code, false)}
@@ -786,7 +782,7 @@ function renderColumnMappingInterface(data, file) {
 
                 <div>
                     <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-                        🔢 Quantidade (Opcional)
+                        <i data-lucide="hash" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> Quantidade (Opcional)
                     </label>
                     <select id="map-col-quant" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
                         ${generateOptions(suggestions.col_quant, false)}
@@ -815,7 +811,7 @@ function renderColumnMappingInterface(data, file) {
                 <button type="button"
                         onclick="confirmColumnMappingAndSubmit()"
                         class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition inline-flex items-center gap-1.5 cursor-pointer">
-                    <span>🚀 Confirmar Colunas e Importar</span>
+                    <span class="inline-flex items-center gap-1.5"><i data-lucide="check-circle" class="w-3.5 h-3.5"></i> Confirmar Colunas e Importar</span>
                 </button>
             </div>
         </div>
@@ -864,7 +860,7 @@ function submitImportPlanilha(event, customMapping = null) {
     }
 
     if (!currentSpreadsheetFile) {
-        resultContainer.innerHTML = '<div class="text-amber-700 dark:text-amber-300 text-xs p-3 bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 rounded-lg mt-3 font-medium">⚠️ Por favor, selecione um arquivo de planilha (.xlsx, .xls ou .csv) antes de processar.</div>';
+        resultContainer.innerHTML = '<div class="text-amber-700 dark:text-amber-300 text-xs p-3 bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 rounded-lg mt-3 font-medium"><i data-lucide="alert-triangle" class="w-4 h-4 inline-block mr-1.5 text-amber-600"></i> Por favor, selecione um arquivo de planilha (.xlsx, .xls ou .csv) antes de processar.</div>';
         return;
     }
 
@@ -890,7 +886,7 @@ function submitImportPlanilha(event, customMapping = null) {
         <div id="import-progress-card" class="mt-4 p-4 bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-3 shadow-sm transition-all duration-300">
             <div class="flex items-center justify-between text-xs font-semibold">
                 <span class="text-gray-700 dark:text-gray-300 flex items-center gap-2 truncate max-w-[75%]">
-                    <span id="import-progress-spinner" class="animate-spin text-emerald-600 dark:text-emerald-400 inline-block text-sm">⏳</span>
+                    <i data-lucide="loader-2" id="import-progress-spinner" class="w-4 h-4 animate-spin text-emerald-600 dark:text-emerald-400 inline-block"></i>
                     <span id="import-progress-stage" class="text-gray-800 dark:text-gray-200">Enviando e salvando cópia de segurança de ${file.name} (${(file.size / 1024).toFixed(1)} KB)...</span>
                 </span>
                 <span id="import-progress-percent" class="text-emerald-700 dark:text-emerald-400 font-extrabold font-mono text-base tracking-tight">
@@ -908,7 +904,7 @@ function submitImportPlanilha(event, customMapping = null) {
 
             <div class="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400 pt-0.5">
                 <span id="import-progress-count" class="font-medium text-gray-600 dark:text-gray-300">Reconciliando linhas e estoque no banco de dados...</span>
-                <span id="import-progress-mini-stats" class="font-bold text-emerald-700 dark:text-emerald-400">⚡ Backup Ativo</span>
+                <span id="import-progress-mini-stats" class="font-bold text-emerald-700 dark:text-emerald-400"><span class="inline-flex items-center gap-1"><i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-600"></i> Backup Ativo</span></span>
             </div>
         </div>
         <div id="import-summary-wrapper" class="mt-2"></div>
@@ -971,7 +967,7 @@ function submitImportPlanilha(event, customMapping = null) {
             resultContainer.innerHTML = `
                 <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-2">
                     <div class="font-bold flex items-center gap-1.5">
-                        <span>❌</span>
+                        <i data-lucide="x-circle" class="w-5 h-5 text-rose-600"></i>
                         <span>Falha no servidor ao processar planilha (Status ${xhr.status}):</span>
                     </div>
                     <div class="text-xs bg-white dark:bg-gray-800 p-2.5 rounded border border-red-200 dark:border-red-900/60 text-gray-800 dark:text-gray-200">
@@ -997,19 +993,19 @@ function submitImportPlanilha(event, customMapping = null) {
             const errorMsg = (data && data.error) ? data.error : `Erro HTTP ${xhr.status}`;
             const downloadBtn = data && data.file_id ? `
                 <a href="/download-planilha/${data.file_id}" download class="text-xs bg-amber-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-amber-700 transition inline-flex items-center gap-1">
-                    <span>📥 Baixar cópia salva do arquivo</span>
+                    <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar cópia salva do arquivo</span>
                 </a>
             ` : '';
 
             resultContainer.innerHTML = `
                 <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-3">
                     <div class="font-bold flex items-center gap-1.5">
-                        <span>❌</span>
+                        <i data-lucide="x-circle" class="w-5 h-5 text-rose-600"></i>
                         <span>Falha na importação da planilha:</span>
                     </div>
                     <div class="text-xs font-mono bg-white dark:bg-gray-800 p-2.5 rounded border border-red-200 dark:border-red-900/60 text-gray-800 dark:text-gray-200">${errorMsg}</div>
                     <div class="text-xs text-gray-600 dark:text-gray-300 bg-amber-50 dark:bg-amber-950/40 p-2 rounded border border-amber-200 dark:border-amber-800">
-                        🛡️ <b>Fique tranquilo:</b> sua planilha foi guardada com segurança em nosso servidor de backups. Você pode baixá-la ou tentar novamente a qualquer momento.
+                        <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600 inline-block mr-1"></i> <b>Fique tranquilo:</b> sua planilha foi guardada com segurança em nosso servidor de backups. Você pode baixá-la ou tentar novamente a qualquer momento.
                     </div>
                     <div class="flex flex-wrap items-center gap-2 pt-1">
                         <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
@@ -1031,16 +1027,16 @@ function submitImportPlanilha(event, customMapping = null) {
 
         if (progressBar) progressBar.style.width = '100%';
         if (percentEl) percentEl.innerText = '100%';
-        if (spinner) spinner.innerText = '✅';
+        if (spinner) { spinner.outerHTML = '<i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600 inline-block"></i>'; if (window.refreshIcons) window.refreshIcons(); }
         if (stageEl) {
             stageEl.innerHTML = `Auditoria concluída! <b class="text-emerald-700 dark:text-emerald-400">${novosLotes} novas remessas cadastradas</b> no Galpão (${totalLinhas} linhas processadas)`;
         }
         if (countEl) {
-            countEl.innerHTML = `📦 <b class="text-emerald-800 dark:text-emerald-300">${novosLotes} novas remessas adicionadas</b> • ${inalterados} inalteradas • ${bloqueados} zumbis bloqueados`;
+            countEl.innerHTML = `<i data-lucide="package-plus" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> <b class="text-emerald-800 dark:text-emerald-300">${novosLotes} novas remessas adicionadas</b> • ${inalterados} inalteradas • ${bloqueados} zumbis bloqueados`;
         }
         const miniStats = document.getElementById('import-progress-mini-stats');
         if (miniStats) {
-            miniStats.innerHTML = `<span class="bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-extrabold">✨ +${novosLotes} Novas Remessas</span>`;
+            miniStats.innerHTML = `<span class="inline-flex items-center gap-1 bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-extrabold"><i data-lucide="sparkles" class="w-3 h-3"></i> +${novosLotes} Novas Remessas</span>`; if (window.refreshIcons) window.refreshIcons(miniStats);
         }
 
         let backupLinkHtml = '';
@@ -1048,11 +1044,11 @@ function submitImportPlanilha(event, customMapping = null) {
             backupLinkHtml = `
                 <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-lg shadow-2xs">
                     <span class="flex items-center gap-1.5">
-                        <span>🛡️</span>
+                        <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i>
                         <span>Cópia de segurança salva em disco: <b>${file.name}</b></span>
                     </span>
                     <a href="/download-planilha/${data.file_id}" download class="inline-flex items-center gap-1 font-bold underline hover:text-emerald-950 dark:hover:text-emerald-100">
-                        <span>📥 Baixar Cópia Original</span>
+                        <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar Cópia Original</span>
                     </a>
                 </div>
             `;
@@ -1080,7 +1076,7 @@ function submitImportPlanilha(event, customMapping = null) {
         resultContainer.innerHTML = `
             <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-2">
                 <div class="font-bold flex items-center gap-1.5">
-                    <span>⚠️</span>
+                    <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-600"></i>
                     <span>Erro de conexão de rede durante o envio.</span>
                 </div>
                 <div class="text-xs text-red-600 dark:text-red-300">
@@ -1114,7 +1110,7 @@ async function reprocessSavedSpreadsheet(fileId, filename, customMapping = null)
         <div id="import-progress-card" class="mt-4 p-4 bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-3 shadow-sm transition-all duration-300">
             <div class="flex items-center justify-between text-xs font-semibold">
                 <span class="text-gray-700 dark:text-gray-300 flex items-center gap-2 truncate max-w-[75%]">
-                    <span id="import-progress-spinner" class="animate-spin text-emerald-600 dark:text-emerald-400 inline-block text-sm">⏳</span>
+                    <i data-lucide="loader-2" id="import-progress-spinner" class="w-4 h-4 animate-spin text-emerald-600 dark:text-emerald-400 inline-block"></i>
                     <span id="import-progress-stage" class="text-gray-800 dark:text-gray-200">Recuperando cópia salva e auditando ${filename}...</span>
                 </span>
                 <span id="import-progress-percent" class="text-emerald-700 dark:text-emerald-400 font-extrabold font-mono text-base tracking-tight">
@@ -1131,7 +1127,7 @@ async function reprocessSavedSpreadsheet(fileId, filename, customMapping = null)
 
             <div class="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400 pt-0.5">
                 <span id="import-progress-count" class="font-medium text-gray-600 dark:text-gray-300">Reconciliando linhas a partir do backup em disco...</span>
-                <span id="import-progress-mini-stats" class="font-bold text-emerald-700 dark:text-emerald-400">⚡ Cópia Salva</span>
+                <span id="import-progress-mini-stats" class="font-bold text-emerald-700 dark:text-emerald-400"><span class="inline-flex items-center gap-1"><i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-600"></i> Cópia Salva</span></span>
             </div>
         </div>
         <div id="import-summary-wrapper" class="mt-2"></div>
@@ -1186,26 +1182,26 @@ async function reprocessSavedSpreadsheet(fileId, filename, customMapping = null)
 
         if (progressBar) progressBar.style.width = '100%';
         if (percentEl) percentEl.innerText = '100%';
-        if (spinner) spinner.innerText = '✅';
+        if (spinner) { spinner.outerHTML = '<i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600 inline-block"></i>'; if (window.refreshIcons) window.refreshIcons(); }
         if (stageEl) {
             stageEl.innerHTML = `Re-processamento concluído! <b class="text-emerald-700 dark:text-emerald-400">${novosLotes} novas remessas cadastradas</b> no Galpão (${totalLinhas} linhas conciliadas)`;
         }
         if (countEl) {
-            countEl.innerHTML = `📦 <b class="text-emerald-800 dark:text-emerald-300">${novosLotes} novas remessas adicionadas</b> • ${inalterados} inalteradas • ${bloqueados} zumbis bloqueados`;
+            countEl.innerHTML = `<i data-lucide="package-plus" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> <b class="text-emerald-800 dark:text-emerald-300">${novosLotes} novas remessas adicionadas</b> • ${inalterados} inalteradas • ${bloqueados} zumbis bloqueados`;
         }
         const miniStatsReproc = document.getElementById('import-progress-mini-stats');
         if (miniStatsReproc) {
-            miniStatsReproc.innerHTML = `<span class="bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-extrabold">✨ +${novosLotes} Novas Remessas</span>`;
+            miniStatsReproc.innerHTML = `<span class="inline-flex items-center gap-1 bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-extrabold"><i data-lucide="sparkles" class="w-3 h-3"></i> +${novosLotes} Novas Remessas</span>`; if (window.refreshIcons) window.refreshIcons(miniStatsReproc);
         }
 
         const backupLinkHtml = `
             <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-lg shadow-2xs">
                 <span class="flex items-center gap-1.5">
-                    <span>🛡️</span>
+                    <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i>
                     <span>Origem da importação: Cópia de segurança <b>${filename}</b></span>
                 </span>
                 <a href="/download-planilha/${fileId}" download class="inline-flex items-center gap-1 font-bold underline hover:text-emerald-950 dark:hover:text-emerald-100">
-                    <span>📥 Baixar Arquivo Original</span>
+                    <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar Arquivo Original</span>
                 </a>
             </div>
         `;
@@ -1229,7 +1225,7 @@ async function reprocessSavedSpreadsheet(fileId, filename, customMapping = null)
         resultContainer.innerHTML = `
             <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-3">
                 <div class="font-bold flex items-center gap-1.5">
-                    <span>❌</span>
+                    <i data-lucide="x-circle" class="w-5 h-5 text-rose-600"></i>
                     <span>Falha ao re-processar cópia salva:</span>
                 </div>
                 <div class="text-xs font-mono bg-white dark:bg-gray-800 p-2.5 rounded border border-red-200 dark:border-red-900/60 text-gray-800 dark:text-gray-200">${err.message}</div>
@@ -1238,7 +1234,7 @@ async function reprocessSavedSpreadsheet(fileId, filename, customMapping = null)
                         Tentar Novamente
                     </button>
                     <a href="/download-planilha/${fileId}" download class="text-xs bg-amber-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-amber-700 transition">
-                        📥 Baixar Cópia
+                        <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar Cópia</span>
                     </a>
                 </div>
             </div>

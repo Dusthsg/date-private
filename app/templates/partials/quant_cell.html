@@ -6,7 +6,7 @@
                 onclick="startEditing({{ lot['lot_id'] }})"
                 class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
                 title="Editar quantidade">
-            ✏️
+            <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
         </button>
     </div>
 
@@ -22,13 +22,13 @@
         <button type="submit"
                 class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5 text-xs font-bold transition shadow-sm"
                 title="Salvar">
-            ✓
+            <i data-lucide="check" class="w-3.5 h-3.5"></i>
         </button>
         <button type="button"
                 onclick="stopEditing({{ lot['lot_id'] }})"
                 class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded px-1.5 py-0.5 text-xs transition"
                 title="Cancelar">
-            ✕
+            <i data-lucide="x" class="w-3.5 h-3.5"></i>
         </button>
     </form>
 </td>

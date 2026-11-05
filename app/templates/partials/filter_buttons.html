@@ -1,20 +1,20 @@
-{# Partial: botões de filtro atualizáveis via OOB ou direto #}
+{# Partial: botões de filtro atualizáveis via OOB ou direto com Lucide Icons #}
 <div class="flex flex-wrap gap-2" id="filtros" hx-swap-oob="true">
     {% set filtros = [
-        ('todos',     '📋 Todos'),
-        ('recentes',  '✨ Adicionados Recentemente'),
-        ('vencidos',  '🔴 Vencidos'),
-        ('critico',   '🟠 Crítico (7d)'),
-        ('atencao',   '🟡 Atenção (8-29d)'),
-        ('alerta',    '🟢 Alerta (30-45d)'),
-        ('deletados', '🗑️ Deletados (Auditoria)')
+        ('todos',     'clipboard-list', 'Todos', ''),
+        ('recentes',  'sparkles',       'Adicionados Recentemente', 'text-amber-500 dark:text-amber-400'),
+        ('vencidos',  'alert-octagon',  'Vencidos', 'text-rose-500 dark:text-rose-400'),
+        ('critico',   'alert-triangle', 'Crítico (7d)', 'text-amber-500 dark:text-amber-400'),
+        ('atencao',   'clock',          'Atenção (8-29d)', 'text-yellow-500 dark:text-yellow-400'),
+        ('alerta',    'check-circle',   'Alerta (30-45d)', 'text-emerald-500 dark:text-emerald-400'),
+        ('deletados', 'trash-2',        'Deletados (Auditoria)', 'text-rose-500 dark:text-rose-400')
     ] %}
-    {% for key, label in filtros %}
+    {% for key, icon, label, icon_color in filtros %}
         <button
             type="button"
             data-filtro="{{ key }}"
             onclick="setFiltro('{{ key }}', event);"
-            class="filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition cursor-pointer select-none
+            class="filter-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition cursor-pointer select-none
                    {% if filtro == key or (key == 'recentes' and filtro in ('hoje', 'recente')) or (key == 'deletados' and filtro in ('deletado', 'baixas')) %}
                        {% if key == 'deletados' %}
                            bg-rose-600 dark:bg-rose-500 text-white shadow-sm font-semibold
@@ -24,7 +24,8 @@
                    {% else %}
                        bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200
                    {% endif %}">
-            {{ label }}
+            <i data-lucide="{{ icon }}" class="w-3.5 h-3.5 {% if filtro == key or (key == 'recentes' and filtro in ('hoje', 'recente')) or (key == 'deletados' and filtro in ('deletado', 'baixas')) %}text-white{% else %}{{ icon_color }}{% endif %}"></i>
+            <span>{{ label }}</span>
         </button>
     {% endfor %}
 </div>

@@ -29,9 +29,7 @@
                 <button type="button"
                         onclick="startEditing({{ lot['lot_id'] }})"
                         class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
-                        title="Editar quantidade">
-                    ✏️
-                </button>
+                        title="Editar quantidade"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
             </div>
             <form id="edit-quant-{{ lot['lot_id'] }}"
                   hx-post="/lote/{{ lot['lot_id'] }}/quantidade"
@@ -43,15 +41,11 @@
                        class="w-16 border border-indigo-400 dark:border-indigo-500 rounded px-1.5 py-0.5 text-xs text-gray-800 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
                 <button type="submit"
                         class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5 text-xs font-bold transition shadow-sm"
-                        title="Salvar">
-                    ✓
-                </button>
+                        title="Salvar"><i data-lucide="check" class="w-3.5 h-3.5"></i></button>
                 <button type="button"
                         onclick="stopEditing({{ lot['lot_id'] }})"
                         class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded px-1.5 py-0.5 text-xs transition"
-                        title="Cancelar">
-                    ✕
-                </button>
+                        title="Cancelar"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
             </form>
         {% endif %}
     </td>
@@ -66,9 +60,7 @@
                 <button type="button"
                         onclick="startEditingPrice({{ lot['lot_id'] }})"
                         class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
-                        title="Editar preço">
-                    ✏️
-                </button>
+                        title="Editar preço"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
             </div>
             <form id="edit-price-{{ lot['lot_id'] }}"
                   hx-post="/lote/{{ lot['lot_id'] }}/preco"
@@ -80,15 +72,11 @@
                        class="w-20 border border-indigo-400 dark:border-indigo-500 rounded px-1.5 py-0.5 text-xs text-gray-800 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
                 <button type="submit"
                         class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5 text-xs font-bold transition shadow-sm"
-                        title="Salvar">
-                    ✓
-                </button>
+                        title="Salvar"><i data-lucide="check" class="w-3.5 h-3.5"></i></button>
                 <button type="button"
                         onclick="stopEditingPrice({{ lot['lot_id'] }})"
                         class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded px-1.5 py-0.5 text-xs transition"
-                        title="Cancelar">
-                    ✕
-                </button>
+                        title="Cancelar"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
             </form>
         {% endif %}
     </td>
@@ -112,7 +100,7 @@
     <td class="px-3 py-2.5 hidden md:table-cell text-gray-500 dark:text-gray-400 whitespace-nowrap">
         {% if lot.get('is_deleted') %}
             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
-                🗑️ Baixado
+                <i data-lucide="trash-2" class="w-3 h-3"></i> Baixado
             </span>
         {% else %}
             {{ lot['status'] }}
@@ -127,7 +115,7 @@
                     hx-confirm="Deseja restaurar este lote baixado (#{{ lot['lot_id'] }} — {{ lot['product_name'] }}) de volta para a loja?"
                     class="inline-flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-sm cursor-pointer"
                     title="Restaurar este lote para a loja">
-                ↩️ <span class="hidden sm:inline">Restaurar</span>
+                <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> <span class="hidden sm:inline">Restaurar</span>
             </button>
         {% else %}
             <button hx-delete="/lote/{{ lot['lot_id'] }}"
@@ -136,7 +124,7 @@
                     hx-confirm="Tem certeza que deseja dar baixa no lote #{{ lot['lot_id'] }} — {{ lot['product_name'] }}?"
                     class="inline-flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition shadow-sm active:scale-95 cursor-pointer"
                     title="Dar baixa (deletar lote)">
-                ✕ <span class="hidden sm:inline">Baixa</span>
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> <span class="hidden sm:inline">Deletar</span>
             </button>
         {% endif %}
     </td>
