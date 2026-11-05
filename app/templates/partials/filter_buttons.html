@@ -13,10 +13,6 @@
         <button
             type="button"
             data-filtro="{{ key }}"
-            hx-get="/?filtro={{ key }}"
-            hx-target="#lot-table-body"
-            hx-include="#current-busca"
-            hx-push-url="true"
             onclick="setFiltro('{{ key }}', event);"
             class="filter-btn px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition cursor-pointer select-none
                    {% if filtro == key or (key == 'recentes' and filtro in ('hoje', 'recente')) or (key == 'deletados' and filtro in ('deletado', 'baixas')) %}

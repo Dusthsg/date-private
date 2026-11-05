@@ -152,8 +152,17 @@
         </button>
     </div>
 
-    <!-- Botão de Ação: Conciliação de Planilha -->
-    <div>
+    <!-- Botões de Ação: Limpar Deletados + Conciliação de Planilha -->
+    <div class="flex items-center gap-2">
+        <div id="btn-purge-deleted-wrapper" class="{% if filtro != 'deletados' %}hidden{% endif %}">
+            <button type="button"
+                    onclick="purgeAllDeleted()"
+                    class="inline-flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow-sm transition cursor-pointer"
+                    title="Excluir permanentemente todos os registros de auditoria">
+                🗑️ <span>Limpar Todos os Deletados</span>
+            </button>
+        </div>
+
         <button type="button"
                 onclick="document.getElementById('panel-import-planilha').classList.toggle('hidden');"
                 class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg shadow-sm transition cursor-pointer"
@@ -405,7 +414,7 @@ function onSearchInput(val) {
         clearBtn.classList.toggle('hidden', !val);
     }
 
-    // Feedback visual instantâneo (0ms) nas linhas já carregadas na tela
+    // Feedback visual instantâneo (0ms) nas linhas já carregadas na tela sem reflow
     const q = val.trim().toUpperCase();
     const rows = document.querySelectorAll('#lot-table-body tr');
     if (rows.length > 0 && q) {
@@ -414,11 +423,13 @@ function onSearchInput(val) {
                 tr.style.display = 'none';
                 return;
             }
-            const text = tr.innerText.toUpperCase();
+            const text = tr.textContent.toUpperCase();
             tr.style.display = text.includes(q) ? '' : 'none';
         });
     } else if (!q) {
-        rows.forEach(tr => tr.style.display = '');
+        rows.forEach(tr => {
+            if (tr.id !== 'infinite-scroll-trigger') tr.style.display = '';
+        });
     }
 
     clearTimeout(searchDebounceTimer);
@@ -455,8 +466,31 @@ function prewarmClientFilters() {
 }
 
 function setFiltro(key, evt) {
-    if (evt) evt.preventDefault();
+    if (evt) {
+        if (typeof evt.preventDefault === 'function') evt.preventDefault();
+        if (typeof evt.stopPropagation === 'function') evt.stopPropagation();
+    }
     document.getElementById('current-filtro').value = key;
+
+    // Atualiza URL no navegador sem recarregar a página
+    try {
+        const busca = document.getElementById('current-busca').value;
+        const url = new URL(window.location);
+        url.searchParams.set('filtro', key);
+        if (busca) url.searchParams.set('busca', busca);
+        else url.searchParams.delete('busca');
+        window.history.replaceState({}, '', url);
+    } catch (_) {}
+
+    // Alterna a exibição do botão "Limpar Todos os Deletados"
+    const purgeWrapper = document.getElementById('btn-purge-deleted-wrapper');
+    if (purgeWrapper) {
+        if (key === 'deletados') {
+            purgeWrapper.classList.remove('hidden');
+        } else {
+            purgeWrapper.classList.add('hidden');
+        }
+    }
     
     // Atualiza visual dos botões
     document.querySelectorAll('.filter-btn').forEach(btn => {
@@ -472,6 +506,24 @@ function setFiltro(key, evt) {
     });
 
     performSearch(false);
+}
+
+async function purgeAllDeleted() {
+    if (!confirm("Tem certeza que deseja excluir permanentemente TODOS os registros do histórico de deletados? Esta ação não pode ser desfeita.")) {
+        return;
+    }
+    try {
+        const resp = await fetch('/lote/deletados/limpar', {
+            method: 'POST',
+            headers: { 'X-Client-ID': window.myClientId }
+        });
+        if (resp.ok) {
+            clientCache.clear();
+            performSearch(true);
+        }
+    } catch (e) {
+        console.error("Erro ao limpar deletados:", e);
+    }
 }
 
 async function triggerPullConnection() {

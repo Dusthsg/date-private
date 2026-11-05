@@ -1310,6 +1310,55 @@ def restore_lot(movement_id: int) -> bool:
     return True
 
 
+def purge_deleted_movement(movement_id: int) -> bool:
+    """Exclui permanentemente um registro de baixa da auditoria (deletados)."""
+    clear_query_cache()
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+            s_conn.execute("PRAGMA journal_mode = WAL;")
+            s_conn.execute("DELETE FROM stock_movements WHERE id = ?", (movement_id,))
+            s_conn.commit()
+    except Exception as e:
+        print(f"⚠️ Erro ao purgar movimentação no SQLite: {e}")
+
+    if is_postgres():
+        try:
+            with get_db_cursor(commit=True) as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute("DELETE FROM stock_movements WHERE id = %s", (movement_id,))
+        except Exception as e:
+            print(f"⚠️ Erro ao purgar movimentação no Postgres: {e}")
+
+    return True
+
+
+def purge_all_deleted_movements() -> int:
+    """Exclui permanentemente todos os registros de baixa da auditoria."""
+    clear_query_cache()
+    count = 0
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+            s_conn.execute("PRAGMA journal_mode = WAL;")
+            cur = s_conn.cursor()
+            cur.execute("DELETE FROM stock_movements WHERE action = 'BAIXA'")
+            count = cur.rowcount
+            s_conn.commit()
+    except Exception as e:
+        print(f"⚠️ Erro ao purgar todas movimentações no SQLite: {e}")
+
+    if is_postgres():
+        try:
+            with get_db_cursor(commit=True) as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute("DELETE FROM stock_movements WHERE action = 'BAIXA'")
+                    if not count:
+                        count = cur.rowcount
+        except Exception as e:
+            print(f"⚠️ Erro ao purgar todas movimentações no Postgres: {e}")
+
+    return count
+
+
 def create_lot(name: str, quant: int, price: float, date_valid: str, location: str = "LOJA", status: str = "NORMAL"):
     clear_query_cache()
     name = name.strip().upper()

@@ -32,6 +32,8 @@ from app.db import (
     update_lot_price,
     delete_lot as db_delete_lot,
     restore_lot,
+    purge_deleted_movement,
+    purge_all_deleted_movements,
     create_lot,
     search_products,
     clear_query_cache,
@@ -442,6 +444,32 @@ def restore_lot_route(movement_id: int):
     client_id = request.headers.get("X-Client-ID")
     broadcast_reload("restore_lot", exclude_client_id=client_id)
     return ""
+
+
+@app.route("/lote/movimento/<int:movement_id>", methods=["DELETE"])
+def purge_movement_route(movement_id: int):
+    """Exclui permanentemente um registro de baixa (deletado) do histórico de auditoria."""
+    try:
+        purge_deleted_movement(movement_id)
+    except Exception as e:
+        return f"Erro ao excluir registro de auditoria: {str(e)}", 500
+
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("purge_movement", exclude_client_id=client_id)
+    return ""
+
+
+@app.route("/lote/deletados/limpar", methods=["POST", "DELETE"])
+def purge_all_deleted_route():
+    """Exclui permanentemente todos os registros de baixa do histórico de auditoria."""
+    try:
+        purge_all_deleted_movements()
+    except Exception as e:
+        return f"Erro ao limpar auditoria: {str(e)}", 500
+
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("purge_all_deleted", exclude_client_id=client_id)
+    return render_lot_rows(lots=[], total=0, filtro="deletados", busca="", page=1, has_more=False, next_page=2)
 
 
 @app.route("/lote/<int:lot_id>/quantidade", methods=["POST", "PATCH"])

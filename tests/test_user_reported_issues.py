@@ -669,6 +669,76 @@ class TestUserReportedIssues(unittest.TestCase):
                 cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name IN ({ph}, {ph}))", (unique_name, zero_name))
                 cur.execute(f"DELETE FROM products WHERE name IN ({ph}, {ph})", (unique_name, zero_name))
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # 19. BOTÕES DE DELETADOS & AUDITORIA E ELIMINAÇÃO DE LAG (Msg 10)
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_19_deleted_audit_buttons_and_purge(self):
+        """
+        Valida que:
+        1. Linhas ativas possuem botão claro 'Deletar'.
+        2. Linhas na aba de Deletados possuem botões de 'Restaurar' e 'Excluir' (definitivo).
+        3. A rota DELETE /lote/movimento/<id> expurga o registro de baixa do histórico.
+        4. A rota POST /lote/deletados/limpar limpa todo o histórico de baixas.
+        5. O botão 'Limpar Todos os Deletados' está presente e onSearchInput usa textContent (sem lag de reflow).
+        """
+        from app.db import create_lot, delete_lot, get_db_cursor
+        unique_name = f"AUDIT BTN TEST {uuid.uuid4().hex[:6].upper()}"
+        d_valid = (datetime.date.today() + datetime.timedelta(days=15)).strftime("%Y-%m-%d")
+
+        try:
+            # 1. Cria e depois deleta um lote para gerar registro de baixa
+            prod_id, lot_id = create_lot(unique_name, quant=5, price=19.90, date_valid=d_valid, location="LOJA")
+            delete_lot(lot_id)
+
+            # 2. Testa renderização da aba de deletados
+            resp_del = self.client.get('/?filtro=deletados')
+            self.assertEqual(resp_del.status_code, 200)
+            html_del = resp_del.data.decode('utf-8')
+
+            # Verifica botões de Restaurar e Excluir
+            self.assertIn('Restaurar', html_del)
+            self.assertIn('Excluir', html_del)
+            self.assertIn('/lote/movimento/', html_del)
+            self.assertIn('btn-purge-deleted-wrapper', html_del)
+            self.assertIn('Limpar Todos os Deletados', html_del)
+
+            # 3. Testa renderização da aba normal (Todos)
+            resp_all = self.client.get('/?filtro=todos')
+            self.assertEqual(resp_all.status_code, 200)
+            html_all = resp_all.data.decode('utf-8')
+            self.assertIn('Deletar', html_all)
+            # Verifica que o script usa textContent em vez de innerText (performance sem reflow)
+            self.assertIn('textContent', html_all)
+
+            # 4. Obtém o movement_id gerado
+            with get_db_cursor() as (cur, db_type):
+                ph = '%s' if db_type == 'postgres' else '?'
+                cur.execute(f"SELECT id FROM stock_movements WHERE product_id = {ph} AND action = 'BAIXA'", (prod_id,))
+                row = cur.fetchone()
+                self.assertIsNotNone(row)
+                movement_id = row[0]
+
+            # 5. Testa rota de exclusão pontual de movimento
+            resp_purge_item = self.client.delete(f'/lote/movimento/{movement_id}')
+            self.assertEqual(resp_purge_item.status_code, 200)
+
+            # Verifica se o movimento foi removido
+            with get_db_cursor() as (cur, db_type):
+                ph = '%s' if db_type == 'postgres' else '?'
+                cur.execute(f"SELECT COUNT(*) FROM stock_movements WHERE id = {ph}", (movement_id,))
+                self.assertEqual(cur.fetchone()[0], 0)
+
+            # 6. Testa limpeza geral de deletados
+            resp_purge_all = self.client.post('/lote/deletados/limpar')
+            self.assertEqual(resp_purge_all.status_code, 200)
+
+        finally:
+            with get_db_cursor(commit=True) as (cur, db_type):
+                ph = '%s' if db_type == 'postgres' else '?'
+                cur.execute(f"DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
+                cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
+                cur.execute(f"DELETE FROM products WHERE name = {ph}", (unique_name,))
+
 
 if __name__ == '__main__':
     unittest.main()
