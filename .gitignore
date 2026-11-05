@@ -47,6 +47,7 @@ Thumbs.db
 *.bak
 *.db-wal
 *.db-shm
+database/products_*.db
 !database/products.db
 
 # Logs
