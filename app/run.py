@@ -1,3 +1,4 @@
+import time
 """
 Interface web — DateLimit (Edição Privada com Suporte a WebSocket, PostgreSQL e SQLite)
 Flask + WebSocket + HTMX + TailwindCSS.
@@ -911,6 +912,62 @@ def connection_reconnect():
     if ok:
         broadcast_reload("reconnected")
     return jsonify(st)
+
+
+# ── Rotas e Agendador de Alertas Automáticos de Validade ──────────────────────
+
+from app.db import get_alert_settings, save_alert_settings
+
+
+@app.route("/api/alerts/settings", methods=["GET"])
+def api_get_alert_settings():
+    """Retorna as configurações atuais de alerta."""
+    st = get_alert_settings()
+    return jsonify(st), 200
+
+
+@app.route("/api/alerts/settings", methods=["POST"])
+def api_save_alert_settings():
+    """Salva as configurações de alerta enviadas pela interface."""
+    data = request.get_json(force=True, silent=True) or request.form.to_dict()
+    if not data:
+        return jsonify({"success": False, "error": "Dados inválidos."}), 400
+    ok = save_alert_settings(data)
+    if ok:
+        return jsonify({"success": True, "settings": get_alert_settings()}), 200
+    return jsonify({"success": False, "error": "Erro ao persistir configurações."}), 500
+
+
+@app.route("/api/alerts/test", methods=["POST"])
+def api_test_alert():
+    """Executa um disparo de teste imediato com as credenciais fornecidas."""
+    from app.alerts import dispatch_alert
+    data = request.get_json(force=True, silent=True)
+    if data:
+        save_alert_settings(data)
+    success, msg = dispatch_alert(is_test=True)
+    return jsonify({"success": success, "message": msg, "settings": get_alert_settings()}), 200
+
+
+@app.route("/api/alerts/trigger", methods=["POST"])
+def api_trigger_alert_manual():
+    """Dispara o alerta diário manualmente no momento atual."""
+    from app.alerts import dispatch_alert
+    success, msg = dispatch_alert(is_test=False)
+    return jsonify({"success": success, "message": msg, "settings": get_alert_settings()}), 200
+
+
+# Background Scheduler Thread: verifica horário matinal a cada 30 segundos
+def _alert_scheduler_loop():
+    while True:
+        try:
+            time.sleep(30)
+            from app.alerts import check_and_run_scheduled_alert
+            check_and_run_scheduled_alert()
+        except Exception as e:
+            time.sleep(30)
+
+threading.Thread(target=_alert_scheduler_loop, daemon=True, name="AlertScheduler").start()
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

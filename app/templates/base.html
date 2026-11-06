@@ -197,6 +197,16 @@
 
             <!-- Links de Acesso + Botão de Modo Escuro -->
             <div class="flex flex-wrap items-center gap-2 text-xs">
+                <!-- Botão de Alertas Automáticos -->
+                <button id="btn-alerts-modal"
+                        type="button"
+                        onclick="openAlertsModal()"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-600 active:scale-95 text-white transition border border-amber-400/80 shadow-xs cursor-pointer select-none"
+                        title="Configurar Alertas Automáticos (Telegram / Webhook)">
+                    <i data-lucide="bell" class="w-3.5 h-3.5"></i>
+                    <span>Alertas</span>
+                </button>
+
                 <!-- Botão de Alternar Modo Escuro -->
                 <button id="btn-theme-toggle"
                         type="button"
@@ -242,6 +252,9 @@
             if (fy) fy.textContent = new Date().getFullYear();
         })();
     </script>
+
+    <!-- Modal de Configuração de Alertas Automáticos -->
+    {% include "partials/alerts_modal.html" %}
 
 </body>
 </html>

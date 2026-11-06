@@ -598,6 +598,28 @@ def init_sqlite_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_action_id ON stock_movements(action, id DESC);")
 
+    # Tabela de configurações de alertas automáticos para SQLite
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS alert_settings (
+            id INTEGER PRIMARY KEY,
+            enabled INTEGER DEFAULT 0,
+            channel TEXT DEFAULT 'telegram',
+            daily_time TEXT DEFAULT '07:30',
+            telegram_token TEXT DEFAULT '',
+            telegram_chat_id TEXT DEFAULT '',
+            webhook_url TEXT DEFAULT '',
+            last_sent_date TEXT DEFAULT '',
+            last_status TEXT DEFAULT '',
+            include_vencidos INTEGER DEFAULT 1,
+            include_criticos INTEGER DEFAULT 1,
+            include_atencao INTEGER DEFAULT 0
+        );
+    ''')
+    cur.execute('''
+        INSERT OR IGNORE INTO alert_settings (id, enabled, channel, daily_time)
+        VALUES (1, 0, 'telegram', '07:30');
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -692,6 +714,28 @@ def init_pg_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_prod_valid ON stock_movements(product_id, date_valid);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_action_id ON stock_movements(action, id DESC);")
+
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS alert_settings (
+                id INTEGER PRIMARY KEY,
+                enabled BOOLEAN DEFAULT FALSE,
+                channel VARCHAR(30) DEFAULT 'telegram',
+                daily_time VARCHAR(10) DEFAULT '07:30',
+                telegram_token TEXT DEFAULT '',
+                telegram_chat_id TEXT DEFAULT '',
+                webhook_url TEXT DEFAULT '',
+                last_sent_date VARCHAR(20) DEFAULT '',
+                last_status TEXT DEFAULT '',
+                include_vencidos BOOLEAN DEFAULT TRUE,
+                include_criticos BOOLEAN DEFAULT TRUE,
+                include_atencao BOOLEAN DEFAULT FALSE
+            );
+        ''')
+        cur.execute('''
+            INSERT INTO alert_settings (id, enabled, channel, daily_time)
+            VALUES (1, FALSE, 'telegram', '07:30')
+            ON CONFLICT (id) DO NOTHING;
+        ''')
 
         conn.commit()
         cur.close()
@@ -1542,3 +1586,123 @@ def search_products(term: str, limit: int = 10) -> list[dict]:
                     "price": float((r["price"] if hasattr(r, "keys") else r[3]) or 0.0)
                 })
         return results
+
+
+def get_alert_settings() -> dict:
+    """Retorna as configurações atuais de alerta automático."""
+    defaults = {
+        "enabled": False,
+        "channel": "telegram",
+        "daily_time": "07:30",
+        "telegram_token": "",
+        "telegram_chat_id": "",
+        "webhook_url": "",
+        "last_sent_date": "",
+        "last_status": "Nenhum envio realizado ainda.",
+        "include_vencidos": True,
+        "include_criticos": True,
+        "include_atencao": False
+    }
+    try:
+        with get_db_cursor() as (cur, db_type):
+            ph = "%s" if db_type == "postgres" else "?"
+            cur.execute(f"""
+                SELECT enabled, channel, daily_time, telegram_token, telegram_chat_id,
+                       webhook_url, last_sent_date, last_status, include_vencidos,
+                       include_criticos, include_atencao
+                FROM alert_settings
+                WHERE id = {ph}
+            """, (1,))
+            row = cur.fetchone()
+            if row:
+                return {
+                    "enabled": bool(row[0]),
+                    "channel": str(row[1] or "telegram"),
+                    "daily_time": str(row[2] or "07:30"),
+                    "telegram_token": str(row[3] or ""),
+                    "telegram_chat_id": str(row[4] or ""),
+                    "webhook_url": str(row[5] or ""),
+                    "last_sent_date": str(row[6] or ""),
+                    "last_status": str(row[7] or "Nenhum envio realizado ainda."),
+                    "include_vencidos": bool(row[8]),
+                    "include_criticos": bool(row[9]),
+                    "include_atencao": bool(row[10])
+                }
+    except Exception as e:
+        print(f"⚠️ Erro ao ler alert_settings: {e}")
+    return defaults
+
+
+def save_alert_settings(data: dict) -> bool:
+    """Salva configurações de alerta no banco (dual-write)."""
+    enabled = bool(data.get("enabled", False))
+    channel = str(data.get("channel", "telegram")).strip()
+    daily_time = str(data.get("daily_time", "07:30")).strip()
+    telegram_token = str(data.get("telegram_token", "")).strip()
+    telegram_chat_id = str(data.get("telegram_chat_id", "")).strip()
+    webhook_url = str(data.get("webhook_url", "")).strip()
+    include_vencidos = bool(data.get("include_vencidos", True))
+    include_criticos = bool(data.get("include_criticos", True))
+    include_atencao = bool(data.get("include_atencao", False))
+
+    try:
+        with get_db_cursor(commit=True) as (cur, db_type):
+            ph = "%s" if db_type == "postgres" else "?"
+            cur.execute(f"""
+                UPDATE alert_settings
+                SET enabled = {ph},
+                    channel = {ph},
+                    daily_time = {ph},
+                    telegram_token = {ph},
+                    telegram_chat_id = {ph},
+                    webhook_url = {ph},
+                    include_vencidos = {ph},
+                    include_criticos = {ph},
+                    include_atencao = {ph}
+                WHERE id = {ph}
+            """, (
+                enabled if db_type == "postgres" else (1 if enabled else 0),
+                channel,
+                daily_time,
+                telegram_token,
+                telegram_chat_id,
+                webhook_url,
+                include_vencidos if db_type == "postgres" else (1 if include_vencidos else 0),
+                include_criticos if db_type == "postgres" else (1 if include_criticos else 0),
+                include_atencao if db_type == "postgres" else (1 if include_atencao else 0),
+                1
+            ))
+
+        if is_postgres():
+            try:
+                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                    s_conn.execute("""
+                        UPDATE alert_settings
+                        SET enabled = ?, channel = ?, daily_time = ?, telegram_token = ?, telegram_chat_id = ?,
+                            webhook_url = ?, include_vencidos = ?, include_criticos = ?, include_atencao = ?
+                        WHERE id = 1
+                    """, (1 if enabled else 0, channel, daily_time, telegram_token, telegram_chat_id, webhook_url, 1 if include_vencidos else 0, 1 if include_criticos else 0, 1 if include_atencao else 0))
+                    s_conn.commit()
+            except Exception:
+                pass
+        return True
+    except Exception as e:
+        print(f"⚠️ Erro ao salvar alert_settings: {e}")
+        return False
+
+
+def update_alert_sent_status(last_date: str, status_msg: str):
+    """Atualiza a data do último envio e o log de status."""
+    try:
+        with get_db_cursor(commit=True) as (cur, db_type):
+            ph = "%s" if db_type == "postgres" else "?"
+            cur.execute(f"UPDATE alert_settings SET last_sent_date = {ph}, last_status = {ph} WHERE id = {ph}", (last_date, status_msg, 1))
+        if is_postgres():
+            try:
+                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                    s_conn.execute("UPDATE alert_settings SET last_sent_date = ?, last_status = ? WHERE id = 1", (last_date, status_msg))
+                    s_conn.commit()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"⚠️ Erro ao atualizar status de alerta: {e}")

@@ -859,5 +859,71 @@ class TestUserReportedIssues(unittest.TestCase):
         self.assertIn("document.addEventListener('htmx:load'", html)
 
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # 25. SISTEMA DE ALERTAS AUTOMÁTICOS DE VALIDADE (Msg 17)
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_25_automatic_alerts_system(self):
+        """
+        Valida que o sistema de alertas automáticos possui:
+        1. Botão 'Alertas' no header e modal modal-alerts incluído em base.html.
+        2. Rota GET /api/alerts/settings retornando JSON estruturado com canal e horário.
+        3. Rota POST /api/alerts/settings atualizando configurações no banco.
+        4. Rota POST /api/alerts/test executando validações com feedback estruturado.
+        5. Engine get_alert_summary em app.alerts calculando valores financeiros e criticidade.
+        """
+        # 1. Valida interface web
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        html = resp.data.decode('utf-8')
+        self.assertIn('id="btn-alerts-modal"', html)
+        self.assertIn('id="modal-alerts"', html)
+        self.assertIn('openAlertsModal', html)
+        self.assertIn('testAlertSend', html)
+
+        # 2. Testa endpoint GET settings
+        resp_get = self.client.get('/api/alerts/settings')
+        self.assertEqual(resp_get.status_code, 200)
+        st = json.loads(resp_get.data.decode('utf-8'))
+        self.assertIn('channel', st)
+        self.assertIn('daily_time', st)
+
+        # 3. Testa endpoint POST settings
+        payload = {
+            "enabled": True,
+            "channel": "telegram",
+            "daily_time": "08:15",
+            "telegram_token": "123456:FAKE_TOKEN_FOR_TEST",
+            "telegram_chat_id": "999888777",
+            "include_vencidos": True,
+            "include_criticos": True,
+            "include_atencao": False
+        }
+        resp_post = self.client.post(
+            '/api/alerts/settings',
+            data=json.dumps(payload),
+            content_type='application/json'
+        )
+        self.assertEqual(resp_post.status_code, 200)
+        res_data = json.loads(resp_post.data.decode('utf-8'))
+        self.assertTrue(res_data.get('success'))
+        self.assertEqual(res_data['settings']['daily_time'], '08:15')
+        self.assertEqual(res_data['settings']['telegram_chat_id'], '999888777')
+
+        # 4. Testa endpoint POST test (espera falha tratada sem crash por causa de token falso)
+        resp_test = self.client.post('/api/alerts/test')
+        self.assertEqual(resp_test.status_code, 200)
+        test_data = json.loads(resp_test.data.decode('utf-8'))
+        self.assertIn('message', test_data)
+
+        # 5. Testa motor de cálculo de resumo financeiro
+        from app.alerts import get_alert_summary, format_alert_message
+        summary = get_alert_summary()
+        self.assertIn('vencidos_count', summary)
+        self.assertIn('criticos_count', summary)
+        self.assertIn('total_risk_val', summary)
+        msg = format_alert_message(summary, is_test=True)
+        self.assertIn('DateLimit', msg)
+
+
 if __name__ == '__main__':
     unittest.main()
