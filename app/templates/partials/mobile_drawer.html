@@ -1,0 +1,100 @@
+<!-- Gaveta Lateral de Menu Mobile (Off-canvas Drawer) -->
+<div id="mobile-menu-drawer"
+     class="hidden fixed inset-0 z-50 overflow-hidden"
+     aria-labelledby="mobile-menu-title"
+     role="dialog"
+     aria-modal="true">
+    
+    <!-- Fundo escurecido com transição -->
+    <div id="mobile-menu-backdrop"
+         onclick="closeMobileMenu()"
+         class="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity duration-300"></div>
+
+    <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
+        <div id="mobile-menu-panel"
+             class="w-screen max-w-xs bg-white dark:bg-gray-800 shadow-2xl flex flex-col justify-between border-l border-gray-200 dark:border-gray-700 transition-transform duration-300 transform translate-x-0">
+            
+            <!-- Topo da Gaveta -->
+            <div class="p-5 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between bg-indigo-700 dark:bg-gray-850 text-white">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
+                        <i data-lucide="package" class="w-5 h-5 text-indigo-200"></i>
+                    </div>
+                    <div>
+                        <h2 id="mobile-menu-title" class="font-bold text-base tracking-tight leading-tight">DateLimit</h2>
+                        <span class="text-[10px] text-indigo-200">Painel & Configurações</span>
+                    </div>
+                </div>
+                <button type="button"
+                        onclick="closeMobileMenu()"
+                        class="p-1.5 rounded-lg text-indigo-200 hover:text-white hover:bg-white/10 active:scale-90 transition cursor-pointer"
+                        title="Fechar menu">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <!-- Corpo com Opções -->
+            <div class="p-5 space-y-4 overflow-y-auto flex-1">
+                
+                <!-- Lista de Ações Principais -->
+                <div class="space-y-2 text-sm">
+                    <button type="button"
+                            onclick="closeMobileMenu(); openAlertsModal();"
+                            class="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition cursor-pointer text-left border border-gray-100 dark:border-gray-700">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="bell" class="w-4 h-4 text-amber-500 dark:text-amber-400"></i>
+                            <span class="font-medium text-xs">Alertas Automáticos</span>
+                        </div>
+                        <i data-lucide="chevron-right" class="w-4 h-4 text-gray-400"></i>
+                    </button>
+
+                    <!-- Alternar Modo Escuro / Claro -->
+                    <button type="button"
+                            onclick="toggleDarkMode();"
+                            class="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition cursor-pointer text-left border border-gray-100 dark:border-gray-700">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="moon" class="w-4 h-4 text-amber-500"></i>
+                            <span class="font-medium text-xs" id="mobile-theme-text">Modo Escuro</span>
+                        </div>
+                        <span class="text-[10px] text-gray-400 uppercase">Alternar</span>
+                    </button>
+                </div>
+
+                <!-- Info de Rede para Conexão de Celulares -->
+                <div class="p-3.5 rounded-xl bg-indigo-50/70 dark:bg-gray-700/40 border border-indigo-100 dark:border-gray-700 text-xs">
+                    <div class="text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1.5 flex items-center gap-1.5">
+                        <i data-lucide="wifi" class="w-3.5 h-3.5 text-emerald-600"></i> Endereço na Rede Wi-Fi:
+                    </div>
+                    <div class="font-mono text-[11px] text-indigo-700 dark:text-indigo-300 font-bold select-all break-all bg-white dark:bg-gray-800 p-2 rounded-lg border border-gray-200 dark:border-gray-600">
+                        {{ network_url }}
+                    </div>
+                    <p class="text-[10px] text-gray-400 mt-1.5">
+                        Acesse no navegador do celular conectado ao mesmo Wi-Fi.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Rodapé da Gaveta -->
+            <div class="p-4 border-t border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800 text-center">
+                <span class="text-[11px] text-gray-400">DateLimit &bull; Chão de Loja Mobile</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function openMobileMenu() {
+    const drawer = document.getElementById('mobile-menu-drawer');
+    if (drawer) {
+        drawer.classList.remove('hidden');
+        if (window.refreshIcons) window.refreshIcons(drawer);
+    }
+}
+
+function closeMobileMenu() {
+    const drawer = document.getElementById('mobile-menu-drawer');
+    if (drawer) {
+        drawer.classList.add('hidden');
+    }
+}
+</script>

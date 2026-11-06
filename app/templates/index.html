@@ -251,10 +251,10 @@
     </div>
 </div>
 
-<!-- Tabela de lotes -->
-<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-x-auto transition-colors">
-    <table class="w-full text-left text-sm">
-        <thead class="bg-gray-50 dark:bg-gray-700/80 text-gray-600 dark:text-gray-300 uppercase text-xs tracking-wider border-b border-gray-200 dark:border-gray-700">
+<!-- Tabela de lotes (Modo Tabela no Desktop, Modo Cards Ergonômicos no Mobile) -->
+<div class="bg-transparent sm:bg-white sm:dark:bg-gray-800 rounded-xl sm:shadow-sm overflow-x-visible sm:overflow-x-auto transition-colors">
+    <table class="w-full text-left text-sm block sm:table">
+        <thead class="hidden sm:table-header-group bg-gray-50 dark:bg-gray-700/80 text-gray-600 dark:text-gray-300 uppercase text-xs tracking-wider border-b border-gray-200 dark:border-gray-700">
             <tr>
                 <th class="px-3 py-3">Lote</th>
                 <th class="px-3 py-3">Produto</th>
@@ -266,7 +266,7 @@
                 <th class="px-3 py-3 text-center">Ação</th>
             </tr>
         </thead>
-        <tbody id="lot-table-body">
+        <tbody id="lot-table-body" class="block sm:table-row-group">
             {% include "partials/lot_rows.html" %}
         </tbody>
     </table>
@@ -275,6 +275,30 @@
 <!-- Lógica Client-side de WebSocket e Busca Ultrarrápida -->
 <script>
 window.myClientId = 'c_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+
+window.toggleMobileAddLot = function() {
+    const form = document.getElementById('form-add-lot');
+    const icon = document.getElementById('icon-add-toggle');
+    if (form) {
+        if (form.classList.contains('hidden')) {
+            form.classList.remove('hidden');
+            if (icon) icon.classList.add('rotate-180');
+        }
+        const inputName = document.getElementById('input-add-lot-name');
+        if (inputName) {
+            inputName.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            setTimeout(() => inputName.focus(), 300);
+        }
+    }
+};
+
+window.focusMobileSearch = function() {
+    const searchInput = document.getElementById('current-busca');
+    if (searchInput) {
+        searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => searchInput.focus(), 300);
+    }
+};
 
 // Anexa o identificador do cliente a todas as requisições HTMX para evitar recarregamento redundante da própria tela
 document.addEventListener('htmx:configRequest', function(evt) {
