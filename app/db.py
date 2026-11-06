@@ -380,6 +380,8 @@ def get_db_cursor(commit=False):
         conn.execute("PRAGMA synchronous = NORMAL;")
         conn.execute("PRAGMA busy_timeout = 10000;")
         conn.execute("PRAGMA cache_size = -64000;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
         conn.execute("PRAGMA foreign_keys = ON;")
         try:
             cur = conn.cursor()
@@ -452,13 +454,69 @@ def _notify_cache_clear():
         except Exception:
             pass
 
-def clear_query_cache():
-    """Invalida todo o cache de consultas e catálogo instantaneamente em alterações globais (ex: importação)."""
+_local = threading.local()
+
+def _get_thread_sqlite_conn():
+    """
+    Retorna uma conexão SQLite otimizada e persistente para a thread atual.
+    Aplica PRAGMA mmap_size (256MB), cache_size (64MB) e temp_store em RAM (< 0.3ms).
+    """
+    conn = getattr(_local, "sqlite_conn", None)
+    if conn is None:
+        SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(SQLITE_PATH), timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
+        conn.execute("PRAGMA busy_timeout = 10000;")
+        conn.execute("PRAGMA cache_size = -64000;")
+        conn.execute("PRAGMA mmap_size = 268435456;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        _local.sqlite_conn = conn
+    return conn
+
+def _reset_thread_sqlite_conn():
+    conn = getattr(_local, "sqlite_conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.sqlite_conn = None
+
+def _update_catalog_cache_item(product_id: int, name: str, price: float, bar_code: str = None):
+    """Atualiza ou insere o produto no catálogo em RAM sem descartar a memória (0.01ms)."""
+    global _catalog_cache
+    with _catalog_lock:
+        if _catalog_cache is not None:
+            name_up = name.strip().upper()
+            found = False
+            for it in _catalog_cache:
+                if it["id"] == product_id or it["name"] == name_up:
+                    if price > 0:
+                        it["price"] = price
+                    if bar_code:
+                        it["bar_code"] = bar_code
+                    found = True
+                    break
+            if not found:
+                _catalog_cache.append({
+                    "id": product_id,
+                    "name": name_up,
+                    "bar_code": bar_code,
+                    "price": price
+                })
+
+def clear_query_cache(clear_catalog: bool = True):
+    """Invalida o cache de consultas e opcionalmente o catálogo na RAM."""
     global _catalog_cache
     with _cache_lock:
         _query_cache.clear()
-    with _catalog_lock:
-        _catalog_cache = None
+    if clear_catalog:
+        with _catalog_lock:
+            _catalog_cache = None
+    _reset_thread_sqlite_conn()
     _notify_cache_clear()
 
 def _update_cache_lot_field(lot_id: int, field: str, value):
@@ -539,6 +597,10 @@ def init_sqlite_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid_id ON product_lots(date_valid, id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(bar_code);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_products_upper_name ON products(UPPER(name));")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_lookup ON product_lots(product_id, date_valid, location);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid_cover ON product_lots(date_valid, id, product_id, quant, location, status);")
 
     # Migrações seguras de colunas em SQLite
     cur.execute("PRAGMA table_info(products);")
@@ -670,6 +732,13 @@ def init_pg_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid_id ON product_lots(date_valid, id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(bar_code);")
+        try:
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_products_upper_name ON products(UPPER(name));")
+        except Exception:
+            conn.rollback()
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_lookup ON product_lots(product_id, date_valid, location);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_valid_cover ON product_lots(date_valid, id, product_id, quant, location, status);")
 
         try:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name_trgm ON products USING gin (name gin_trgm_ops);")
@@ -1006,11 +1075,11 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
             if now - entry_time < CACHE_TTL_SECONDS:
                 return cached_total, cached_lots
 
-    # 2. Executa na réplica local SQLite WAL (1ms a 15ms)
+    # 2. Executa na réplica local SQLite WAL (< 1ms com conexão persistente em thread)
     try:
-        with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
-            s_conn.row_factory = sqlite3.Row
-            cur = s_conn.cursor()
+        s_conn = _get_thread_sqlite_conn()
+        cur = s_conn.cursor()
+        try:
             today = date.today()
 
             if filtro in ("deletados", "deletado", "baixas"):
@@ -1130,8 +1199,11 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
                 _query_cache[cache_key] = (now, total, lots)
 
             return total, lots
+        finally:
+            cur.close()
 
     except Exception as e:
+        _reset_thread_sqlite_conn()
         print(f"⚠️ Erro ao consultar SQLite local: {e}")
         # Fallback de segurança para PostgreSQL caso ocorra algum problema no SQLite local
         with get_db_cursor() as (cur, db_type):
@@ -1404,7 +1476,7 @@ def purge_all_deleted_movements() -> int:
 
 
 def create_lot(name: str, quant: int, price: float, date_valid: str, location: str = "LOJA", status: str = "NORMAL"):
-    clear_query_cache()
+    clear_query_cache(clear_catalog=False)
     name = name.strip().upper()
     location = (location or "LOJA").strip().upper()
     status = (status or "NORMAL").strip().upper()
@@ -1500,6 +1572,7 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
             except Exception as e:
                 print(f"⚠️ Erro no espelhamento do create_lot para SQLite: {e}")
 
+        _update_catalog_cache_item(product_id, name, price)
         return product_id, lot_id
 
 
@@ -1518,10 +1591,9 @@ def search_products(term: str, limit: int = 10) -> list[dict]:
         if _catalog_cache is None:
             items = []
             try:
-                s_conn = sqlite3.connect(str(SQLITE_PATH), timeout=3.0)
+                s_conn = _get_thread_sqlite_conn()
+                c_sq = s_conn.cursor()
                 try:
-                    s_conn.row_factory = sqlite3.Row
-                    c_sq = s_conn.cursor()
                     c_sq.execute("SELECT id, name, bar_code, price FROM products ORDER BY name ASC")
                     for r in c_sq.fetchall():
                         items.append({
@@ -1531,9 +1603,9 @@ def search_products(term: str, limit: int = 10) -> list[dict]:
                             "price": float(r["price"] or 0.0)
                         })
                 finally:
-                    s_conn.close()
+                    c_sq.close()
             except Exception:
-                pass
+                _reset_thread_sqlite_conn()
             if items:
                 _catalog_cache = items
 

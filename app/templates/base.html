@@ -57,21 +57,41 @@
         }
     </style>
     <script>
-                // Suporte a Lucide Icons com re-renderização automática e confiável no DOM
-        window.refreshIcons = function() {
-            if (window.lucide && typeof window.lucide.createIcons === 'function') {
-                try {
-                    window.lucide.createIcons();
-                } catch (e) {
-                    console.error("Erro ao renderizar Lucide icons:", e);
+                // Suporte a Lucide Icons com re-renderização de alta performance com escopo e requestAnimationFrame
+        let _iconRafPending = false;
+        window.refreshIcons = function(rootEl) {
+            if (!window.lucide || typeof window.lucide.createIcons !== 'function') return;
+            try {
+                if (rootEl && rootEl.nodeType === Node.ELEMENT_NODE) {
+                    window.lucide.createIcons({ root: rootEl });
+                } else {
+                    if (_iconRafPending) return;
+                    _iconRafPending = true;
+                    requestAnimationFrame(() => {
+                        _iconRafPending = false;
+                        try {
+                            window.lucide.createIcons();
+                        } catch (e) {}
+                    });
                 }
+            } catch (e) {
+                console.error("Erro ao renderizar Lucide icons:", e);
             }
         };
 
         document.addEventListener('DOMContentLoaded', () => window.refreshIcons());
-        document.addEventListener('htmx:afterSwap', () => window.refreshIcons());
-        document.addEventListener('htmx:afterSettle', () => window.refreshIcons());
-        document.addEventListener('htmx:load', () => window.refreshIcons());
+        document.addEventListener('htmx:afterSwap', (evt) => {
+            const target = evt.detail && evt.detail.target;
+            window.refreshIcons(target || document.body);
+        });
+        document.addEventListener('htmx:afterSettle', (evt) => {
+            const target = evt.detail && evt.detail.target;
+            window.refreshIcons(target || document.body);
+        });
+        document.addEventListener('htmx:load', (evt) => {
+            const elt = evt.detail && evt.detail.elt;
+            window.refreshIcons(elt || document.body);
+        });
 
         // Flag global de edição
         window.isEditingLot = false;

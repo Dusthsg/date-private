@@ -556,7 +556,8 @@ function onSearchInput(val) {
                 tr.style.display = 'none';
                 return;
             }
-            const text = tr.textContent.toUpperCase();
+            const titleCell = tr.cells && tr.cells[1];
+            const text = titleCell ? titleCell.textContent.toUpperCase() : tr.textContent.toUpperCase();
             tr.style.display = text.includes(q) ? '' : 'none';
         });
     } else if (!q) {
@@ -566,8 +567,8 @@ function onSearchInput(val) {
     }
 
     clearTimeout(searchDebounceTimer);
-    // Debounce balanceado (260ms) para resposta suave e sem sobrecarga
-    searchDebounceTimer = setTimeout(() => performSearch(false), 260);
+    // Debounce otimizado (200ms) para resposta instantânea e fluida
+    searchDebounceTimer = setTimeout(() => performSearch(false), 200);
 }
 
 function submitSearch() {

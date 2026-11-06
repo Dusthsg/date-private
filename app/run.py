@@ -169,10 +169,17 @@ def render_lot_rows(lots, total, filtro, busca, page=1, has_more=False, next_pag
 @app.after_request
 def compress_response(response):
     """
-    Compactação gzip automática em tempo real para HTML e JSON (> 1KB).
-    Utiliza nível 1 de compressão para velocidade máxima (~0.5ms vs 16ms).
+    Compactação gzip automática em tempo real para HTML e JSON (> 1KB)
+    e cabeçalhos HTTP inteligentes de Cache-Control e Vary para máxima velocidade.
     """
     try:
+        path = request.path
+        if path.startswith("/static/"):
+            response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=604800"
+        elif request.method == "GET" and not response.headers.get("Cache-Control"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Vary"] = "Accept-Encoding"
+
         accept_encoding = request.headers.get("Accept-Encoding", "")
         if (
             "gzip" in accept_encoding.lower()
