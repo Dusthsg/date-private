@@ -117,10 +117,11 @@
 
     <!-- Filtros por categoria com carrossel arrastável e setas de navegação -->
     <div class="relative group/filters w-full">
-        <!-- Seta esquerda para desktop -->
+        <!-- Seta esquerda para desktop (aparece apenas quando há conteúdo para rolar à esquerda) -->
         <button type="button"
+                id="btn-scroll-left"
                 onclick="scrollFilters('left')"
-                class="hidden sm:flex absolute left-0 top-1/2 -translate-y-1/2 -ml-2.5 z-10 w-7 h-7 items-center justify-center rounded-full bg-white dark:bg-gray-700 shadow-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:scale-110 active:scale-95 transition opacity-0 group-hover/filters:opacity-90 hover:opacity-100 cursor-pointer"
+                class="hidden sm:flex absolute left-0 top-1/2 -translate-y-1/2 -ml-2.5 z-10 w-7 h-7 items-center justify-center rounded-full bg-white dark:bg-gray-700 shadow-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:scale-110 active:scale-95 transition opacity-0 group-hover/filters:opacity-90 hover:opacity-100 cursor-pointer !hidden"
                 title="Rolar para a esquerda"
                 aria-label="Rolar filtros para a esquerda">
             <i data-lucide="chevron-left" class="w-4 h-4"></i>
@@ -128,10 +129,11 @@
 
         {% include "partials/filter_buttons.html" %}
 
-        <!-- Seta direita para desktop -->
+        <!-- Seta direita para desktop (aparece apenas quando a tela não comporta todos os filtros) -->
         <button type="button"
+                id="btn-scroll-right"
                 onclick="scrollFilters('right')"
-                class="hidden sm:flex absolute right-0 top-1/2 -translate-y-1/2 -mr-2.5 z-10 w-7 h-7 items-center justify-center rounded-full bg-white dark:bg-gray-700 shadow-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:scale-110 active:scale-95 transition opacity-0 group-hover/filters:opacity-90 hover:opacity-100 cursor-pointer"
+                class="hidden sm:flex absolute right-0 top-1/2 -translate-y-1/2 -mr-2.5 z-10 w-7 h-7 items-center justify-center rounded-full bg-white dark:bg-gray-700 shadow-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:scale-110 active:scale-95 transition opacity-0 group-hover/filters:opacity-90 hover:opacity-100 cursor-pointer !hidden"
                 title="Rolar para a direita"
                 aria-label="Rolar filtros para a direita">
             <i data-lucide="chevron-right" class="w-4 h-4"></i>
@@ -601,17 +603,61 @@ function prewarmClientFilters() {
 
 let isFilterDragging = false;
 
+function updateFilterScrollButtons() {
+    const container = document.getElementById('filtros');
+    const leftBtn = document.getElementById('btn-scroll-left');
+    const rightBtn = document.getElementById('btn-scroll-right');
+    if (!container || !leftBtn || !rightBtn) return;
+
+    // Se o conteúdo cabe perfeitamente na largura da tela sem transbordar: esconde ambos os botões
+    const hasOverflow = (container.scrollWidth - container.clientWidth) > 4;
+    if (!hasOverflow) {
+        leftBtn.classList.add('!hidden');
+        rightBtn.classList.add('!hidden');
+        return;
+    }
+
+    // Se há transbordamento, mostra as setas de acordo com o deslocamento atual do scroll
+    const atStart = container.scrollLeft <= 4;
+    const atEnd = (container.scrollLeft + container.clientWidth) >= (container.scrollWidth - 6);
+
+    if (atStart) {
+        leftBtn.classList.add('!hidden');
+    } else {
+        leftBtn.classList.remove('!hidden');
+    }
+
+    if (atEnd) {
+        rightBtn.classList.add('!hidden');
+    } else {
+        rightBtn.classList.remove('!hidden');
+    }
+}
+
 function scrollFilters(direction) {
     const container = document.getElementById('filtros');
     if (!container) return;
     const amount = direction === 'left' ? -240 : 240;
     container.scrollBy({ left: amount, behavior: 'smooth' });
+    setTimeout(updateFilterScrollButtons, 320);
 }
 
 function initFilterDragScroll() {
     const container = document.getElementById('filtros');
-    if (!container || container.dataset.dragInit === 'true') return;
+    if (!container) return;
+    updateFilterScrollButtons();
+
+    if (container.dataset.dragInit === 'true') return;
     container.dataset.dragInit = 'true';
+
+    container.addEventListener('scroll', updateFilterScrollButtons, { passive: true });
+    window.addEventListener('resize', updateFilterScrollButtons, { passive: true });
+
+    if (window.ResizeObserver) {
+        try {
+            new ResizeObserver(() => updateFilterScrollButtons()).observe(container);
+        } catch (_) {}
+    }
 
     let isDown = false;
     let startX = 0;
@@ -1593,6 +1639,7 @@ function bootstrapApp() {
         if (activeBtn) {
             activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
         }
+        updateFilterScrollButtons();
     }, 120);
 }
 
@@ -1604,6 +1651,7 @@ if (document.readyState === 'loading') {
 
 document.addEventListener('htmx:afterSwap', function() {
     initFilterDragScroll();
+    updateFilterScrollButtons();
 });
 </script>
 
