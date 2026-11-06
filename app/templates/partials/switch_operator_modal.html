@@ -17,25 +17,47 @@
             </button>
         </div>
 
-        <form id="form-switch-operator" onsubmit="submitSwitchOperator(event)" class="p-5 space-y-4">
+        <form id="form-switch-operator" onsubmit="submitSwitchOperator(event)" class="p-5 space-y-3">
             <div>
                 <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">Digite seu PIN de 4 dígitos</label>
                 <div class="relative">
                     <input type="password" id="input-switch-pin" maxlength="8" pattern="[0-9]*" inputmode="numeric" required autofocus
                            placeholder="••••"
-                           class="w-full text-center tracking-widest font-mono text-2xl py-2.5 px-3 border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                           class="w-full text-center tracking-widest font-mono text-2xl py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
                 </div>
+            </div>
+
+            <!-- Teclado Touch Integrado -->
+            <div class="grid grid-cols-3 gap-1.5 pt-1">
+                {% for n in ['1','2','3','4','5','6','7','8','9'] %}
+                <button type="button" onclick="appendSwitchPin('{{ n }}')"
+                        class="py-2.5 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 active:scale-95 text-base font-bold text-gray-800 dark:text-white transition cursor-pointer select-none">
+                    {{ n }}
+                </button>
+                {% endfor %}
+                <button type="button" onclick="clearSwitchPin()"
+                        class="py-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 text-rose-600 dark:text-rose-400 active:scale-95 text-xs font-bold transition cursor-pointer select-none">
+                    LIMPAR
+                </button>
+                <button type="button" onclick="appendSwitchPin('0')"
+                        class="py-2.5 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 active:scale-95 text-base font-bold text-gray-800 dark:text-white transition cursor-pointer select-none">
+                    0
+                </button>
+                <button type="button" onclick="backspaceSwitchPin()"
+                        class="py-2.5 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 active:scale-95 text-base font-bold text-gray-700 dark:text-gray-200 transition cursor-pointer select-none">
+                    ⌫
+                </button>
             </div>
 
             <div id="switch-operator-msg" class="text-xs text-center font-semibold min-h-[1.25rem]"></div>
 
             <div class="flex items-center gap-2 pt-1">
                 <button type="button" onclick="closeSwitchOperatorModal()"
-                        class="flex-1 py-2 rounded-xl border border-gray-300 dark:border-gray-600 text-xs font-semibold hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                        class="flex-1 py-2.5 rounded-xl border border-gray-300 dark:border-gray-600 text-xs font-semibold hover:bg-gray-100 dark:hover:bg-gray-700 transition cursor-pointer">
                     Cancelar
                 </button>
                 <button type="submit"
-                        class="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold shadow-xs transition">
+                        class="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold shadow-xs transition cursor-pointer">
                     Confirmar PIN
                 </button>
             </div>
@@ -45,6 +67,25 @@
 </div>
 
 <script>
+function appendSwitchPin(num) {
+    const inp = document.getElementById('input-switch-pin');
+    if (inp && inp.value.length < 8) {
+        inp.value += num;
+    }
+}
+
+function clearSwitchPin() {
+    const inp = document.getElementById('input-switch-pin');
+    if (inp) inp.value = '';
+}
+
+function backspaceSwitchPin() {
+    const inp = document.getElementById('input-switch-pin');
+    if (inp && inp.value.length > 0) {
+        inp.value = inp.value.slice(0, -1);
+    }
+}
+
 function openSwitchOperatorModal() {
     const modal = document.getElementById('modal-switch-operator');
     if (!modal) return;
