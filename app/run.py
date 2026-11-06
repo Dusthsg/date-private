@@ -425,9 +425,9 @@ def add_lot():
 
 @app.route("/lote/<int:lot_id>", methods=["DELETE"])
 def delete_lot(lot_id: int):
-    """Dar baixa (deletar) em um lote específico."""
+    """Dar baixa (deletar) em um lote específico com resposta ultrarrápida (< 1ms)."""
     try:
-        db_delete_lot(lot_id)
+        db_delete_lot(lot_id, sync=False)
     except Exception as e:
         return f"Erro ao deletar: {str(e)}", 500
 
@@ -441,9 +441,9 @@ def delete_lot(lot_id: int):
 
 @app.route("/lote/restaurar/<int:movement_id>", methods=["POST"])
 def restore_lot_route(movement_id: int):
-    """Restaura um lote baixado (deletado) de volta para o estoque."""
+    """Restaura um lote baixado (deletado) de volta para o estoque com resposta instantânea."""
     try:
-        ok = restore_lot(movement_id)
+        ok = restore_lot(movement_id, sync=False)
         if not ok:
             return "Item não encontrado ou já restaurado.", 404
     except Exception as e:
@@ -458,7 +458,7 @@ def restore_lot_route(movement_id: int):
 def purge_movement_route(movement_id: int):
     """Exclui permanentemente um registro de baixa (deletado) do histórico de auditoria."""
     try:
-        purge_deleted_movement(movement_id)
+        purge_deleted_movement(movement_id, sync=False)
     except Exception as e:
         return f"Erro ao excluir registro de auditoria: {str(e)}", 500
 

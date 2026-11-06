@@ -283,6 +283,19 @@ document.addEventListener('htmx:configRequest', function(evt) {
     }
 });
 
+// Atualiza o contador de lotes instantaneamente ao deletar uma linha no DOM
+document.addEventListener('htmx:afterRequest', function(evt) {
+    if (evt.detail && evt.detail.successful && evt.detail.requestConfig && evt.detail.requestConfig.verb === 'delete') {
+        const countEl = document.getElementById('lots-count');
+        if (countEl) {
+            const current = parseInt(countEl.innerText);
+            if (!isNaN(current) && current > 0) {
+                countEl.innerText = current - 1;
+            }
+        }
+    }
+});
+
 let socket = null;
 let searchDebounceTimer = null;
 let reloadDebounceTimer = null;

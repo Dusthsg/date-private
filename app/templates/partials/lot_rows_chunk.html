@@ -116,7 +116,7 @@
             <div class="inline-flex items-center gap-1.5">
                 <button hx-post="/lote/restaurar/{{ lot.get('movement_id', lot['lot_id']) }}"
                         hx-target="#lot-{{ lot['lot_id'] }}"
-                        hx-swap="outerHTML swap:0.4s"
+                        hx-swap="outerHTML swap:0.15s"
                         hx-confirm="Deseja restaurar este lote baixado (#{{ lot['lot_id'] }} — {{ lot['product_name'] }}) de volta para a loja?"
                         class="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition shadow-sm cursor-pointer"
                         title="Restaurar este lote para a loja">
@@ -124,7 +124,7 @@
                 </button>
                 <button hx-delete="/lote/movimento/{{ lot.get('movement_id', lot['lot_id']) }}"
                         hx-target="#lot-{{ lot['lot_id'] }}"
-                        hx-swap="outerHTML swap:0.4s"
+                        hx-swap="outerHTML swap:0.15s"
                         hx-confirm="Tem certeza que deseja excluir DEFINITIVAMENTE este registro de baixa (#{{ lot['lot_id'] }} — {{ lot['product_name'] }}) do histórico de auditoria?"
                         class="inline-flex items-center gap-1 bg-red-600 hover:bg-red-700 active:scale-95 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition shadow-sm cursor-pointer"
                         title="Excluir permanentemente da auditoria">
@@ -134,7 +134,7 @@
         {% else %}
             <button hx-delete="/lote/{{ lot['lot_id'] }}"
                     hx-target="#lot-{{ lot['lot_id'] }}"
-                    hx-swap="outerHTML swap:0.4s"
+                    hx-swap="outerHTML swap:0.15s"
                     hx-confirm="Tem certeza que deseja deletar/dar baixa no lote #{{ lot['lot_id'] }} — {{ lot['product_name'] }}?"
                     class="inline-flex items-center gap-1 bg-red-600 hover:bg-red-700 active:scale-95 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-sm cursor-pointer"
                     title="Deletar lote (enviar para auditoria)">

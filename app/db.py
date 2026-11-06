@@ -1286,7 +1286,7 @@ def update_lot_price(lot_id: int, price: float) -> bool:
     return True
 
 
-def delete_lot(lot_id: int) -> bool:
+def delete_lot(lot_id: int, sync: bool = True) -> bool:
     """
     Dá baixa no lote e registra a Lápide (tombstone) em stock_movements,
     garantindo que futuras importações de planilhas não ressuscitem esse lote (Item Zumbi).
@@ -1328,24 +1328,30 @@ def delete_lot(lot_id: int) -> bool:
     except Exception as e:
         print(f"⚠️ Erro ao registrar baixa no SQLite: {e}")
 
-    # 3. Sincroniza com PostgreSQL imediatamente
+    # 3. Sincroniza com PostgreSQL (em background thread quando sync=False para resposta em ~1ms)
     if is_postgres():
-        try:
-            with get_db_cursor(commit=True) as (cur, db_type):
-                if db_type == "postgres":
-                    if row_info:
-                        cur.execute(
-                            "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid) VALUES (%s, %s, 'BAIXA', %s, %s)",
-                            (row_info[0], lot_id, row_info[1], row_info[2])
-                        )
-                    cur.execute("DELETE FROM product_lots WHERE id = %s", (lot_id,))
-        except Exception as e:
-            print(f"⚠️ Erro ao sincronizar baixa no Postgres: {e}")
+        def _sync_pg_delete(r_info, l_id):
+            try:
+                with get_db_cursor(commit=True) as (cur, db_type):
+                    if db_type == "postgres":
+                        if r_info:
+                            cur.execute(
+                                "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid) VALUES (%s, %s, 'BAIXA', %s, %s)",
+                                (r_info[0], l_id, r_info[1], r_info[2])
+                            )
+                        cur.execute("DELETE FROM product_lots WHERE id = %s", (l_id,))
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar baixa no Postgres: {e}")
+
+        if sync:
+            _sync_pg_delete(row_info, lot_id)
+        else:
+            threading.Thread(target=_sync_pg_delete, args=(row_info, lot_id), daemon=True).start()
 
     return True
 
 
-def restore_lot(movement_id: int) -> bool:
+def restore_lot(movement_id: int, sync: bool = True) -> bool:
     """
     Restaura um lote baixado (deletado) de volta para o estoque:
     - Lê os dados de stock_movements (product_id, quant, date_valid).
@@ -1405,28 +1411,34 @@ def restore_lot(movement_id: int) -> bool:
         return False
 
     if is_postgres() and info:
-        try:
-            p_id, quant, price, d_valid, new_lot_id = info
-            with get_db_cursor(commit=True) as (cur, db_type):
-                if db_type == "postgres":
-                    cur.execute(
-                        """INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
-                           VALUES (%s, %s, %s, %s, 'LOJA', 'NORMAL', 'MANUAL', CURRENT_DATE, CURRENT_TIMESTAMP) RETURNING id""",
-                        (p_id, quant, price, d_valid)
-                    )
-                    pg_lot_id = cur.fetchone()[0]
-                    cur.execute("UPDATE stock_movements SET action = 'RESTAURADO' WHERE id = %s", (movement_id,))
-                    cur.execute(
-                        "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid) VALUES (%s, %s, 'RESTAURACAO', %s, %s)",
-                        (p_id, pg_lot_id, quant, d_valid)
-                    )
-        except Exception as e:
-            print(f"⚠️ Erro ao sincronizar restauração no Postgres: {e}")
+        def _sync_pg_restore(p_id, quant, price, d_valid, m_id):
+            try:
+                with get_db_cursor(commit=True) as (cur, db_type):
+                    if db_type == "postgres":
+                        cur.execute(
+                            """INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
+                               VALUES (%s, %s, %s, %s, 'LOJA', 'NORMAL', 'MANUAL', CURRENT_DATE, CURRENT_TIMESTAMP) RETURNING id""",
+                            (p_id, quant, price, d_valid)
+                        )
+                        pg_lot_id = cur.fetchone()[0]
+                        cur.execute("UPDATE stock_movements SET action = 'RESTAURADO' WHERE id = %s", (m_id,))
+                        cur.execute(
+                            "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid) VALUES (%s, %s, 'RESTAURACAO', %s, %s)",
+                            (p_id, pg_lot_id, quant, d_valid)
+                        )
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar restauração no Postgres: {e}")
+
+        p_id, quant, price, d_valid, new_lot_id = info
+        if sync:
+            _sync_pg_restore(p_id, quant, price, d_valid, movement_id)
+        else:
+            threading.Thread(target=_sync_pg_restore, args=(p_id, quant, price, d_valid, movement_id), daemon=True).start()
 
     return True
 
 
-def purge_deleted_movement(movement_id: int) -> bool:
+def purge_deleted_movement(movement_id: int, sync: bool = True) -> bool:
     """Exclui permanentemente um registro de baixa da auditoria (deletados)."""
     clear_query_cache()
     try:
@@ -1438,12 +1450,18 @@ def purge_deleted_movement(movement_id: int) -> bool:
         print(f"⚠️ Erro ao purgar movimentação no SQLite: {e}")
 
     if is_postgres():
-        try:
-            with get_db_cursor(commit=True) as (cur, db_type):
-                if db_type == "postgres":
-                    cur.execute("DELETE FROM stock_movements WHERE id = %s", (movement_id,))
-        except Exception as e:
-            print(f"⚠️ Erro ao purgar movimentação no Postgres: {e}")
+        def _sync_pg_purge(m_id):
+            try:
+                with get_db_cursor(commit=True) as (cur, db_type):
+                    if db_type == "postgres":
+                        cur.execute("DELETE FROM stock_movements WHERE id = %s", (m_id,))
+            except Exception as e:
+                print(f"⚠️ Erro ao purgar movimentação no Postgres: {e}")
+
+        if sync:
+            _sync_pg_purge(movement_id)
+        else:
+            threading.Thread(target=_sync_pg_purge, args=(movement_id,), daemon=True).start()
 
     return True
 
