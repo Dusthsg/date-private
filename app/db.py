@@ -682,6 +682,53 @@ def init_sqlite_db():
         VALUES (1, 0, 'telegram', '07:30');
     ''')
 
+    # Tabela de usuários e autenticação para SQLite
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            pin TEXT,
+            role TEXT DEFAULT 'operador',
+            active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+        );
+    ''')
+
+    # Tabela de logs de auditoria completos para SQLite
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_id INTEGER,
+            product_name TEXT,
+            details TEXT NOT NULL,
+            ip_address TEXT,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+    ''')
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_username ON audit_logs(username);")
+
+    # Garante usuário administrador padrão caso a tabela esteja vazia
+    cur.execute("SELECT COUNT(*) FROM users;")
+    if cur.fetchone()[0] == 0:
+        from werkzeug.security import generate_password_hash
+        cur.execute(
+            "INSERT INTO users (username, name, password_hash, pin, role, active) VALUES (?, ?, ?, ?, ?, 1);",
+            ("admin", "Administrador", generate_password_hash("admin123"), "1234", "admin")
+        )
+        cur.execute(
+            "INSERT INTO audit_logs (username, action, details, ip_address) VALUES (?, ?, ?, ?);",
+            ("Sistema", "SISTEMA_INICIALIZADO", "Usuário admin padrão criado automaticamente", "127.0.0.1")
+        )
+
     conn.commit()
     conn.close()
 
@@ -806,6 +853,49 @@ def init_pg_db():
             ON CONFLICT (id) DO NOTHING;
         ''')
 
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                pin VARCHAR(10),
+                role VARCHAR(20) DEFAULT 'operador',
+                active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
+
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                username TEXT NOT NULL,
+                action VARCHAR(50) NOT NULL,
+                target_id INTEGER,
+                product_name TEXT,
+                details TEXT NOT NULL,
+                ip_address VARCHAR(50),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_username ON audit_logs(username);")
+
+        cur.execute("SELECT COUNT(*) FROM users;")
+        if cur.fetchone()[0] == 0:
+            from werkzeug.security import generate_password_hash
+            cur.execute(
+                "INSERT INTO users (username, name, password_hash, pin, role, active) VALUES (%s, %s, %s, %s, %s, TRUE);",
+                ("admin", "Administrador", generate_password_hash("admin123"), "1234", "admin")
+            )
+            cur.execute(
+                "INSERT INTO audit_logs (username, action, details, ip_address) VALUES (%s, %s, %s, %s);",
+                ("Sistema", "SISTEMA_INICIALIZADO", "Usuário admin padrão criado automaticamente", "127.0.0.1")
+            )
+
         conn.commit()
         cur.close()
         if is_from_pool and pool_inst:
@@ -861,7 +951,9 @@ def pull_cloud_to_sqlite() -> dict:
             SELECT
                 COALESCE((SELECT json_agg(p) FROM (SELECT id, name, bar_code, price FROM products) p), '[]'::json) AS prods,
                 COALESCE((SELECT json_agg(l) FROM (SELECT id, product_id, quant, price, date_valid::TEXT, location, status, origin, created_at::TEXT, updated_at::TEXT FROM product_lots) l), '[]'::json) AS lots,
-                COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves;
+                COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves,
+                COALESCE((SELECT json_agg(u) FROM (SELECT id, username, name, password_hash, pin, role, active, created_at::TEXT, updated_at::TEXT FROM users) u), '[]'::json) AS users_data,
+                COALESCE((SELECT json_agg(a) FROM (SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at::TEXT FROM audit_logs ORDER BY id DESC LIMIT 500) a), '[]'::json) AS audit_data;
         """)
         raw_row = pg_cur.fetchone()
 
@@ -881,6 +973,8 @@ def pull_cloud_to_sqlite() -> dict:
         products = _parse_json_col(raw_row[0]) if raw_row else []
         lots = _parse_json_col(raw_row[1]) if raw_row else []
         movements = _parse_json_col(raw_row[2]) if raw_row else []
+        users_list = _parse_json_col(raw_row[3]) if raw_row and len(raw_row) > 3 else []
+        audit_list = _parse_json_col(raw_row[4]) if raw_row and len(raw_row) > 4 else []
 
         pg_cur.close()
         if is_from_pool and pool_inst:
@@ -949,6 +1043,46 @@ def pull_cloud_to_sqlite() -> dict:
                     m.get("created_at")
                 )
                 for m in movements
+            ])
+
+        if users_list:
+            sqlite_cur.execute("DELETE FROM users;")
+            sqlite_cur.executemany("""
+                INSERT INTO users (id, username, name, password_hash, pin, role, active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, [
+                (
+                    u["id"],
+                    u["username"],
+                    u["name"],
+                    u["password_hash"],
+                    u.get("pin"),
+                    u.get("role", "operador"),
+                    1 if u.get("active", True) else 0,
+                    u.get("created_at"),
+                    u.get("updated_at")
+                )
+                for u in users_list
+            ])
+
+        if audit_list:
+            sqlite_cur.execute("DELETE FROM audit_logs;")
+            sqlite_cur.executemany("""
+                INSERT INTO audit_logs (id, user_id, username, action, target_id, product_name, details, ip_address, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, [
+                (
+                    a["id"],
+                    a.get("user_id"),
+                    a.get("username", "Sistema"),
+                    a.get("action", "ACAO"),
+                    a.get("target_id"),
+                    a.get("product_name"),
+                    a.get("details", ""),
+                    a.get("ip_address", ""),
+                    a.get("created_at")
+                )
+                for a in audit_list
             ])
 
         sqlite_conn.commit()
@@ -1796,3 +1930,328 @@ def update_alert_sent_status(last_date: str, status_msg: str):
                 pass
     except Exception as e:
         print(f"⚠️ Erro ao atualizar status de alerta: {e}")
+
+
+# ── Módulo de Autenticação, Usuários e Auditoria Completa ───────────────────────
+
+def get_user_by_username(username: str) -> dict | None:
+    """Busca usuário pelo username de forma insensível a maiúsculas."""
+    if not username:
+        return None
+    with get_db_cursor() as (cur, db_type):
+        ph = "%s" if db_type == "postgres" else "?"
+        cur.execute(
+            f"SELECT id, username, name, password_hash, pin, role, active, created_at FROM users WHERE LOWER(username) = LOWER({ph}) LIMIT 1",
+            (username.strip(),)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "username": row[1],
+            "name": row[2],
+            "password_hash": row[3],
+            "pin": row[4] or "",
+            "role": row[5] or "operador",
+            "active": bool(row[6]),
+            "created_at": str(row[7])[:19] if row[7] else ""
+        }
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    """Busca usuário pelo ID."""
+    if not user_id:
+        return None
+    with get_db_cursor() as (cur, db_type):
+        ph = "%s" if db_type == "postgres" else "?"
+        cur.execute(
+            f"SELECT id, username, name, password_hash, pin, role, active, created_at FROM users WHERE id = {ph} LIMIT 1",
+            (user_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "username": row[1],
+            "name": row[2],
+            "password_hash": row[3],
+            "pin": row[4] or "",
+            "role": row[5] or "operador",
+            "active": bool(row[6]),
+            "created_at": str(row[7])[:19] if row[7] else ""
+        }
+
+
+def get_user_by_pin(pin: str) -> dict | None:
+    """Localiza usuário ativo por PIN rápido para troca de operador no chão de loja."""
+    if not pin:
+        return None
+    with get_db_cursor() as (cur, db_type):
+        ph = "%s" if db_type == "postgres" else "?"
+        act_clause = "active = TRUE" if db_type == "postgres" else "active = 1"
+        cur.execute(
+            f"SELECT id, username, name, password_hash, pin, role, active, created_at FROM users WHERE pin = {ph} AND {act_clause} LIMIT 1",
+            (pin.strip(),)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "username": row[1],
+            "name": row[2],
+            "password_hash": row[3],
+            "pin": row[4] or "",
+            "role": row[5] or "operador",
+            "active": bool(row[6]),
+            "created_at": str(row[7])[:19] if row[7] else ""
+        }
+
+
+def list_users() -> list[dict]:
+    """Lista todos os usuários cadastrados no sistema para o painel de administração."""
+    with get_db_cursor() as (cur, db_type):
+        cur.execute("SELECT id, username, name, pin, role, active, created_at FROM users ORDER BY (CASE WHEN role='admin' THEN 0 ELSE 1 END), name ASC")
+        rows = cur.fetchall()
+        users = []
+        for r in rows:
+            users.append({
+                "id": r[0],
+                "username": r[1],
+                "name": r[2],
+                "pin": r[3] or "",
+                "role": r[4] or "operador",
+                "active": bool(r[5]),
+                "created_at": str(r[6])[:19] if r[6] else ""
+            })
+        return users
+
+
+def list_active_operators() -> list[dict]:
+    """Retorna lista simplificada de operadores ativos para troca rápida."""
+    with get_db_cursor() as (cur, db_type):
+        act_clause = "active = TRUE" if db_type == "postgres" else "active = 1"
+        cur.execute(f"SELECT id, username, name, pin, role FROM users WHERE {act_clause} ORDER BY name ASC")
+        rows = cur.fetchall()
+        return [{"id": r[0], "username": r[1], "name": r[2], "pin": r[3] or "", "role": r[4]} for r in rows]
+
+
+def create_user(username: str, name: str, password: str, pin: str = "", role: str = "operador") -> tuple[bool, str]:
+    """Cadastra um novo usuário no sistema (dual-write)."""
+    from werkzeug.security import generate_password_hash
+    username = username.strip().lower()
+    name = name.strip()
+    pin = pin.strip()
+    role = "admin" if role.lower() == "admin" else "operador"
+    if not username or not name or not password:
+        return False, "Usuário, nome e senha são obrigatórios."
+    if get_user_by_username(username):
+        return False, "Nome de usuário já cadastrado."
+    if pin and len(pin) < 3:
+        return False, "O PIN deve ter no mínimo 3 dígitos."
+    
+    pw_hash = generate_password_hash(password)
+    try:
+        with get_db_cursor(commit=True) as (cur, db_type):
+            ph = "%s" if db_type == "postgres" else "?"
+            cur.execute(
+                f"""INSERT INTO users (username, name, password_hash, pin, role, active)
+                    VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph})""",
+                (username, name, pw_hash, pin or None, role, True if db_type == "postgres" else 1)
+            )
+
+        if is_postgres():
+            try:
+                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                    s_conn.execute(
+                        "INSERT OR REPLACE INTO users (username, name, password_hash, pin, role, active) VALUES (?, ?, ?, ?, ?, 1)",
+                        (username, name, pw_hash, pin or None, role)
+                    )
+                    s_conn.commit()
+            except Exception:
+                pass
+        return True, "Usuário cadastrado com sucesso!"
+    except Exception as e:
+        return False, f"Erro ao criar usuário: {e}"
+
+
+def update_user(user_id: int, name: str = None, password: str = None, pin: str = None, role: str = None, active: bool = None) -> tuple[bool, str]:
+    """Atualiza dados, senha, PIN ou papel de um usuário existente."""
+    from werkzeug.security import generate_password_hash
+    fields_pg = []
+    fields_sq = []
+    params = []
+    if name:
+        fields_pg.append("name = %s")
+        fields_sq.append("name = ?")
+        params.append(name.strip())
+    if password:
+        fields_pg.append("password_hash = %s")
+        fields_sq.append("password_hash = ?")
+        params.append(generate_password_hash(password))
+    if pin is not None:
+        fields_pg.append("pin = %s")
+        fields_sq.append("pin = ?")
+        params.append(pin.strip() if pin.strip() else None)
+    if role:
+        r = "admin" if role.lower() == "admin" else "operador"
+        fields_pg.append("role = %s")
+        fields_sq.append("role = ?")
+        params.append(r)
+    if active is not None:
+        fields_pg.append("active = %s")
+        fields_sq.append("active = ?")
+        params.append(bool(active))
+
+    if not fields_pg:
+        return False, "Nenhum campo informado para atualização."
+
+    fields_pg.append("updated_at = CURRENT_TIMESTAMP")
+    fields_sq.append("updated_at = datetime('now', 'localtime')")
+
+    try:
+        with get_db_cursor(commit=True) as (cur, db_type):
+            ph_fields = ", ".join(fields_pg if db_type == "postgres" else fields_sq)
+            ph = "%s" if db_type == "postgres" else "?"
+            cur.execute(f"UPDATE users SET {ph_fields} WHERE id = {ph}", params + [user_id])
+
+        if is_postgres():
+            try:
+                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                    ph_fields_sq = ", ".join(fields_sq)
+                    s_conn.execute(f"UPDATE users SET {ph_fields_sq} WHERE id = ?", params + [user_id])
+                    s_conn.commit()
+            except Exception:
+                pass
+        return True, "Usuário atualizado com sucesso!"
+    except Exception as e:
+        return False, f"Erro ao atualizar usuário: {e}"
+
+
+def delete_user(user_id: int) -> tuple[bool, str]:
+    """Remove um usuário do sistema (com proteção para o último administrador)."""
+    with get_db_cursor() as (cur, db_type):
+        ph = "%s" if db_type == "postgres" else "?"
+        cur.execute(f"SELECT role FROM users WHERE id = {ph}", (user_id,))
+        row = cur.fetchone()
+        if not row:
+            return False, "Usuário não encontrado."
+        if row[0] == "admin":
+            act_clause = 'active = TRUE' if db_type == 'postgres' else 'active = 1'
+            cur.execute(f"SELECT COUNT(*) FROM users WHERE role = 'admin' AND {act_clause}")
+            admin_count = cur.fetchone()[0]
+            if admin_count <= 1:
+                return False, "Não é permitido excluir o único administrador do sistema."
+
+    try:
+        with get_db_cursor(commit=True) as (cur, db_type):
+            ph = "%s" if db_type == "postgres" else "?"
+            cur.execute(f"DELETE FROM users WHERE id = {ph}", (user_id,))
+        if is_postgres():
+            try:
+                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                    s_conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+                    s_conn.commit()
+            except Exception:
+                pass
+        return True, "Usuário removido com sucesso!"
+    except Exception as e:
+        return False, f"Erro ao excluir usuário: {e}"
+
+
+def log_audit(username: str, action: str, details: str, user_id: int = None, target_id: int = None, product_name: str = None, ip_address: str = None):
+    """
+    Grava um evento de auditoria no SQLite local (< 0.2ms)
+    e sincroniza no Postgres em background daemon thread.
+    """
+    username = (username or "Sistema").strip()
+    action = (action or "ACAO").upper().strip()
+    details = (details or "").strip()
+    ip_address = (ip_address or "").strip()
+    product_name = (product_name or "").strip() if product_name else None
+
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+            s_conn.execute("PRAGMA journal_mode = WAL;")
+            s_conn.execute(
+                """INSERT INTO audit_logs (user_id, username, action, target_id, product_name, details, ip_address, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+                (user_id, username, action, target_id, product_name, details, ip_address)
+            )
+            s_conn.commit()
+    except Exception as e:
+        print(f"⚠️ Erro ao gravar audit_log no SQLite: {e}")
+
+    if is_postgres():
+        def _async_audit_pg():
+            try:
+                with get_db_cursor(commit=True) as (cur, db_type):
+                    if db_type == "postgres":
+                        cur.execute(
+                            """INSERT INTO audit_logs (user_id, username, action, target_id, product_name, details, ip_address, created_at)
+                               VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)""",
+                            (user_id, username, action, target_id, product_name, details, ip_address)
+                        )
+            except Exception as ex:
+                print(f"⚠️ Erro ao gravar audit_log no Postgres: {ex}")
+
+        threading.Thread(target=_async_audit_pg, daemon=True).start()
+
+
+def query_audit_logs(limit: int = 100, offset: int = 0, user: str = None, action: str = None, search: str = None, start_date: str = None, end_date: str = None) -> tuple[int, list[dict]]:
+    """Consulta paginada e filtrada de logs de auditoria."""
+    where_clauses = ["1=1"]
+    params = []
+    if user:
+        where_clauses.append("LOWER(username) = LOWER(?)")
+        params.append(user.strip())
+    if action:
+        where_clauses.append("action = ?")
+        params.append(action.strip().upper())
+    if search:
+        s = f"%{search.strip().upper()}%"
+        where_clauses.append("(UPPER(details) LIKE ? OR UPPER(COALESCE(product_name, '')) LIKE ? OR UPPER(username) LIKE ?)")
+        params.extend([s, s, s])
+    if start_date:
+        where_clauses.append("created_at >= ?")
+        params.append(f"{start_date} 00:00:00")
+    if end_date:
+        where_clauses.append("created_at <= ?")
+        params.append(f"{end_date} 23:59:59")
+
+    where_sql = " AND ".join(where_clauses)
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+            s_conn.row_factory = sqlite3.Row
+            cur = s_conn.cursor()
+            cur.execute(f"SELECT COUNT(*) FROM audit_logs WHERE {where_sql}", params)
+            total = cur.fetchone()[0]
+
+            cur.execute(
+                f"""SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at
+                    FROM audit_logs
+                    WHERE {where_sql}
+                    ORDER BY id DESC
+                    LIMIT ? OFFSET ?""",
+                params + [limit, offset]
+            )
+            rows = cur.fetchall()
+            logs = []
+            for r in rows:
+                logs.append({
+                    "id": r["id"],
+                    "user_id": r["user_id"],
+                    "username": r["username"],
+                    "action": r["action"],
+                    "target_id": r["target_id"],
+                    "product_name": r["product_name"] or "",
+                    "details": r["details"],
+                    "ip_address": r["ip_address"] or "",
+                    "created_at": str(r["created_at"])[:19]
+                })
+            return total, logs
+    except Exception as e:
+        print(f"⚠️ Erro ao consultar audit_logs: {e}")
+        return 0, []

@@ -1,0 +1,242 @@
+<!-- Modal de Gestão de Usuários (Apenas Administrador) -->
+<div id="modal-users" class="fixed inset-0 z-50 hidden bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        
+        <!-- Cabeçalho -->
+        <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between bg-gray-50/70 dark:bg-gray-800/80">
+            <div class="flex items-center gap-2.5">
+                <div class="w-9 h-9 rounded-xl bg-purple-100 dark:bg-purple-950/70 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                    <i data-lucide="users" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-gray-900 dark:text-white">Usuários & Operadores</h3>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Gerencie quem tem acesso ao sistema e controle os PINs de chão de loja</p>
+                </div>
+            </div>
+            <button type="button" onclick="closeUsersModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition cursor-pointer">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+
+        <!-- Botão Adicionar & Formulário Colapsável -->
+        <div class="p-4 border-b border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+                <button type="button" onclick="toggleAddUserForm()"
+                        class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white transition shadow-sm cursor-pointer">
+                    <i data-lucide="user-plus" class="w-4 h-4"></i>
+                    <span>Cadastrar Novo Operador / Usuário</span>
+                </button>
+                <div id="users-msg" class="text-xs font-semibold"></div>
+            </div>
+
+            <!-- Formulário Novo Usuário (Oculto por padrão) -->
+            <form id="form-create-user" onsubmit="submitCreateUser(event)" class="hidden mt-4 p-4 rounded-xl border border-indigo-100 dark:border-gray-700 bg-indigo-50/40 dark:bg-gray-750 space-y-3">
+                <h4 class="text-xs font-bold uppercase tracking-wider text-indigo-900 dark:text-indigo-300">Novo Cadastro</h4>
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 text-xs">
+                    <div>
+                        <label class="block font-semibold text-gray-700 dark:text-gray-300 mb-1">Nome Completo *</label>
+                        <input type="text" id="new-user-name" required placeholder="Ex: Carlos Silva"
+                               class="w-full px-2.5 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-gray-700 dark:text-gray-300 mb-1">Usuário (Login) *</label>
+                        <input type="text" id="new-user-username" required placeholder="Ex: carlos"
+                               class="w-full px-2.5 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white lowercase focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-gray-700 dark:text-gray-300 mb-1">Senha Inicial *</label>
+                        <input type="password" id="new-user-password" required placeholder="••••••••"
+                               class="w-full px-2.5 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-gray-700 dark:text-gray-300 mb-1">PIN (4 dígitos)</label>
+                        <input type="text" id="new-user-pin" maxlength="6" pattern="[0-9]*" inputmode="numeric" placeholder="Ex: 5678"
+                               class="w-full px-2.5 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between pt-1">
+                    <div class="flex items-center gap-3 text-xs">
+                        <label class="font-semibold text-gray-700 dark:text-gray-300">Função:</label>
+                        <label class="inline-flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name="new-user-role" value="operador" checked class="text-indigo-600">
+                            <span>Operador</span>
+                        </label>
+                        <label class="inline-flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name="new-user-role" value="admin" class="text-indigo-600">
+                            <span>Administrador</span>
+                        </label>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button type="button" onclick="toggleAddUserForm()" class="px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-xs font-semibold hover:bg-gray-100 dark:hover:bg-gray-700 transition">Cancelar</button>
+                        <button type="submit" class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs transition">Salvar Usuário</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <!-- Tabela de Usuários -->
+        <div class="flex-1 overflow-y-auto p-4">
+            <table class="w-full text-left text-xs text-gray-600 dark:text-gray-300">
+                <thead class="bg-gray-50 dark:bg-gray-700/80 uppercase font-semibold text-[11px] tracking-wider text-gray-700 dark:text-gray-200">
+                    <tr>
+                        <th class="px-3 py-2.5">Nome / Usuário</th>
+                        <th class="px-3 py-2.5">Papel</th>
+                        <th class="px-3 py-2.5">PIN de Chão</th>
+                        <th class="px-3 py-2.5 text-center">Status</th>
+                        <th class="px-3 py-2.5 text-right">Ações</th>
+                    </tr>
+                </thead>
+                <tbody id="users-table-body" class="divide-y divide-gray-100 dark:divide-gray-700/40">
+                    <!-- Carregado via JS -->
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+</div>
+
+<script>
+function openUsersModal() {
+    const modal = document.getElementById('modal-users');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    loadUsersList();
+    if (window.refreshIcons) window.refreshIcons(modal);
+}
+
+function closeUsersModal() {
+    const modal = document.getElementById('modal-users');
+    if (modal) modal.classList.add('hidden');
+}
+
+function toggleAddUserForm() {
+    const form = document.getElementById('form-create-user');
+    if (!form) return;
+    form.classList.toggle('hidden');
+    if (!form.classList.contains('hidden')) {
+        document.getElementById('new-user-name')?.focus();
+    }
+}
+
+async function loadUsersList() {
+    try {
+        const resp = await fetch('/api/users');
+        if (!resp.ok) throw new Error("Erro ao carregar usuários");
+        const users = await resp.json();
+        renderUsersTable(users);
+    } catch (e) {
+        console.error("Erro ao carregar usuários:", e);
+    }
+}
+
+function renderUsersTable(users) {
+    const tbody = document.getElementById('users-table-body');
+    if (!tbody) return;
+
+    let html = '';
+    users.forEach(u => {
+        const roleBadge = u.role === 'admin'
+            ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300 border border-purple-200 dark:border-purple-800"><i data-lucide="shield" class="w-3 h-3"></i> Admin</span>'
+            : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-200 dark:border-blue-800"><i data-lucide="user" class="w-3 h-3"></i> Operador</span>';
+
+        const pinText = u.pin ? `<span class="font-mono bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded font-bold tracking-widest text-gray-700 dark:text-gray-200">${u.pin}</span>` : '<span class="text-gray-400 italic">Sem PIN</span>';
+
+        html += `
+            <tr class="hover:bg-gray-50/80 dark:hover:bg-gray-700/40 transition">
+                <td class="px-3 py-3">
+                    <div class="font-bold text-gray-900 dark:text-white text-sm">${u.name}</div>
+                    <div class="text-[11px] font-mono text-gray-500 dark:text-gray-400">@${u.username}</div>
+                </td>
+                <td class="px-3 py-3 whitespace-nowrap">${roleBadge}</td>
+                <td class="px-3 py-3 whitespace-nowrap">${pinText}</td>
+                <td class="px-3 py-3 text-center whitespace-nowrap">
+                    <span class="inline-block w-2.5 h-2.5 rounded-full ${u.active ? 'bg-emerald-500' : 'bg-gray-400'}" title="${u.active ? 'Ativo' : 'Inativo'}"></span>
+                </td>
+                <td class="px-3 py-3 text-right whitespace-nowrap space-x-1">
+                    <button type="button" onclick="promptEditUser(${u.id}, '${u.name.replace(/'/g, "\\'")}', '${u.pin}', '${u.role}')"
+                            class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-indigo-600 dark:text-indigo-400 transition cursor-pointer" title="Editar">
+                        <i data-lucide="edit-3" class="w-4 h-4"></i>
+                    </button>
+                    ${u.username !== 'admin' ? `
+                    <button type="button" onclick="deleteUser(${u.id}, '${u.name.replace(/'/g, "\\'")}')"
+                            class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-rose-600 dark:text-rose-400 transition cursor-pointer" title="Excluir">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                    ` : ''}
+                </td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
+    if (window.refreshIcons) window.refreshIcons(tbody);
+}
+
+async function submitCreateUser(evt) {
+    evt.preventDefault();
+    const name = document.getElementById('new-user-name').value;
+    const username = document.getElementById('new-user-username').value;
+    const password = document.getElementById('new-user-password').value;
+    const pin = document.getElementById('new-user-pin').value;
+    const role = document.querySelector('input[name="new-user-role"]:checked')?.value || 'operador';
+
+    const msg = document.getElementById('users-msg');
+
+    try {
+        const resp = await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, username, password, pin, role })
+        });
+        const res = await resp.json();
+        if (!resp.ok || !res.success) throw new Error(res.error || "Erro ao salvar");
+
+        msg.innerHTML = '<span class="text-emerald-600">✓ Criado com sucesso!</span>';
+        document.getElementById('form-create-user').reset();
+        toggleAddUserForm();
+        loadUsersList();
+        setTimeout(() => msg.innerHTML = '', 4000);
+    } catch (e) {
+        msg.innerHTML = `<span class="text-rose-600">✕ ${e.message}</span>`;
+    }
+}
+
+async function promptEditUser(id, currentName, currentPin, currentRole) {
+    const newName = prompt("Nome completo:", currentName);
+    if (newName === null) return;
+    const newPin = prompt("Código PIN (4 dígitos numéricos para chão de loja):", currentPin || '');
+    if (newPin === null) return;
+    const newPassword = prompt("Nova senha (deixe em branco para manter a atual):", "");
+    if (newPassword === null) return;
+
+    try {
+        const resp = await fetch(`/api/users/${id}/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: newName,
+                pin: newPin,
+                password: newPassword || undefined
+            })
+        });
+        const res = await resp.json();
+        if (!resp.ok || !res.success) throw new Error(res.error || "Erro ao atualizar");
+        loadUsersList();
+    } catch (e) {
+        alert("Erro: " + e.message);
+    }
+}
+
+async function deleteUser(id, name) {
+    if (!confirm(`Tem certeza que deseja excluir o usuário ${name}?`)) return;
+    try {
+        const resp = await fetch(`/api/users/${id}/delete`, { method: 'POST' });
+        const res = await resp.json();
+        if (!resp.ok || !res.success) throw new Error(res.error || "Erro ao excluir");
+        loadUsersList();
+    } catch (e) {
+        alert("Erro: " + e.message);
+    }
+}
+</script>

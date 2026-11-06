@@ -215,8 +215,41 @@
                 </div>
             </div>
 
-            <!-- Links de Acesso + Botão de Modo Escuro -->
+            <!-- Links de Acesso, Controles de Auditoria e Usuário -->
             <div class="flex flex-wrap items-center gap-2 text-xs">
+                {% if is_admin %}
+                <!-- Botão de Auditoria Completa (Admin) -->
+                <button id="btn-audit-modal"
+                        type="button"
+                        onclick="openAuditModal()"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-900/90 hover:bg-indigo-950 text-indigo-100 transition border border-indigo-400/40 shadow-xs cursor-pointer select-none active:scale-95"
+                        title="Histórico Completo de Auditoria (Quem mexeu)">
+                    <i data-lucide="shield-alert" class="w-3.5 h-3.5 text-indigo-300"></i>
+                    <span>Auditoria</span>
+                </button>
+
+                <!-- Botão de Gestão de Usuários (Admin) -->
+                <button id="btn-users-modal"
+                        type="button"
+                        onclick="openUsersModal()"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-600 hover:bg-purple-700 active:scale-95 text-white transition border border-purple-500/80 shadow-xs cursor-pointer select-none"
+                        title="Gerenciar Usuários e Operadores">
+                    <i data-lucide="users" class="w-3.5 h-3.5"></i>
+                    <span>Usuários</span>
+                </button>
+                {% endif %}
+
+                <!-- Operador Ativo e Troca Rápida de PIN -->
+                <div class="inline-flex items-center gap-1.5 bg-emerald-800/80 dark:bg-emerald-950/70 text-emerald-100 px-2.5 py-1.5 rounded-lg border border-emerald-600/50">
+                    <i data-lucide="user-check" class="w-3.5 h-3.5 text-emerald-300"></i>
+                    <span>Operador: <strong class="text-white">{{ active_operator }}</strong></span>
+                    <button type="button" onclick="openSwitchOperatorModal()"
+                            class="ml-1 bg-emerald-700 hover:bg-emerald-600 px-1.5 py-0.5 rounded text-[10px] font-bold text-white transition cursor-pointer"
+                            title="Trocar operador ativo no chão de loja via PIN">
+                        Trocar (PIN)
+                    </button>
+                </div>
+
                 <!-- Botão de Alertas Automáticos -->
                 <button id="btn-alerts-modal"
                         type="button"
@@ -245,6 +278,14 @@
                    class="bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-600 px-2.5 py-1.5 rounded-lg text-white font-medium flex items-center gap-1 transition shadow-sm"
                    title="Use este link no navegador do celular conectado no mesmo Wi-Fi">
                     <i data-lucide="smartphone" class="w-3.5 h-3.5"></i> <span>Rede/Celular:</span> <span class="font-mono font-bold">{{ network_url }}</span>
+                </a>
+
+                <!-- Botão Sair (Logout) -->
+                <a href="/logout"
+                   class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-700 active:scale-95 text-white transition shadow-xs cursor-pointer"
+                   title="Encerrar sessão com segurança">
+                    <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+                    <span>Sair</span>
                 </a>
             </div>
         </div>
@@ -275,6 +316,15 @@
 
     <!-- Modal de Configuração de Alertas Automáticos -->
     {% include "partials/alerts_modal.html" %}
+
+    <!-- Modal de Auditoria Completa -->
+    {% include "partials/audit_modal.html" %}
+
+    <!-- Modal de Gestão de Usuários -->
+    {% include "partials/users_modal.html" %}
+
+    <!-- Modal de Troca Rápida de Operador -->
+    {% include "partials/switch_operator_modal.html" %}
 
 </body>
 </html>
