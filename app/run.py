@@ -1127,14 +1127,14 @@ def switch_operator_route():
 
     user = get_user_by_pin(pin)
     if not user:
-        return jsonify({"success": False, "error": "PIN não encontrado ou operador inativo."}), 404
+        return jsonify({"success": False, "error": "PIN não encontrado ou operador inativo."}), 401
 
     old_op = session.get("active_operator", "Desconhecido")
     session["active_operator"] = user["name"]
     session["active_operator_username"] = user["username"]
     ip = request.remote_addr or "127.0.0.1"
     log_audit(user["name"], "TROCA_OPERADOR", f"Trocou operador ativo no chão de loja (de '{old_op}' para '{user['name']}')", user_id=user["id"], ip_address=ip)
-    return jsonify({"success": True, "active_operator": user["name"]})
+    return jsonify({"success": True, "active_operator": user["name"], "operator_name": user["name"]})
 
 
 @app.route("/api/audit/logs", methods=["GET"])
@@ -1262,7 +1262,7 @@ def admin_panel_route():
     if not session.get("user_id"):
         return redirect("/login")
     if session.get("role") != "admin":
-        return redirect("/")
+        return Response("Acesso restrito a administradores", 403)
 
     admin_id = session.get("user_id")
     admin_user = get_user_by_id(admin_id)

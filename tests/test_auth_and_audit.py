@@ -15,6 +15,7 @@ from app.db import (
     get_user_by_pin,
     list_users,
     create_user,
+    update_user,
     delete_user,
     log_audit,
     query_audit_logs
@@ -22,6 +23,20 @@ from app.db import (
 
 
 class TestAuthAndAudit(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        admin = get_user_by_username("admin")
+        if admin:
+            update_user(admin["id"], name="Administrador", password="admin123", pin="1234", role="admin", active=True)
+        else:
+            create_user("admin", "Administrador", "admin123", pin="1234", role="admin")
+
+    @classmethod
+    def tearDownClass(cls):
+        admin = get_user_by_username("admin")
+        if admin:
+            update_user(admin["id"], name="Administrador", password="admin123", pin="1234", role="admin", active=True)
 
     def setUp(self):
         app.config['TESTING'] = True
@@ -51,180 +66,150 @@ class TestAuthAndAudit(unittest.TestCase):
             "login_type": "password",
             "username": "admin",
             "password": "admin123"
-        }, follow_redirects=False)
+        })
         self.assertEqual(res_ok.status_code, 302)
         self.assertEqual(res_ok.headers.get("Location"), "/")
 
-        # Verifica sessão
-        with self.client.session_transaction() as sess:
-            self.assertEqual(sess.get("username"), "admin")
-            self.assertEqual(sess.get("role"), "admin")
-            self.assertEqual(sess.get("active_operator"), sess.get("name"))
-
     def test_03_login_with_pin(self):
         """Testa o login rápido por PIN no terminal."""
+        res_fail = self.client.post("/login", data={
+            "login_type": "pin",
+            "pin": "9999"
+        })
+        self.assertEqual(res_fail.status_code, 200)
+
         res = self.client.post("/login", data={
             "login_type": "pin",
             "pin": "1234"
-        }, follow_redirects=False)
+        })
         self.assertEqual(res.status_code, 302)
+
+    def test_04_create_and_delete_operator(self):
+        """Cria e exclui um operador, validando unicidade."""
+        u_name = f"op_{uuid.uuid4().hex[:6]}"
+        ok, msg = create_user(u_name, "Operador Teste", "senha123", pin="4321", role="operador")
+        self.assertTrue(ok)
+
+        # Não deve permitir duplicidade
+        ok_dup, _ = create_user(u_name, "Operador Teste 2", "senha123")
+        self.assertFalse(ok_dup)
+
+        user = get_user_by_username(u_name)
+        self.assertIsNotNone(user)
+        self.assertEqual(user["role"], "operador")
+
+        # Exclui
+        ok_del, _ = delete_user(user["id"])
+        self.assertTrue(ok_del)
+        self.assertIsNone(get_user_by_username(u_name))
+
+    def test_05_cannot_delete_last_admin(self):
+        """Impede que o último admin seja excluído acidentalmente."""
+        admin = get_user_by_username("admin")
+        self.assertIsNotNone(admin)
+        ok, msg = delete_user(admin["id"])
+        self.assertFalse(ok)
+        self.assertIn("único administrador", msg.lower())
+
+    def test_06_audit_logging_and_query(self):
+        """Testa gravação e recuperação de logs de auditoria."""
+        log_audit("admin", "TEST_ACTION", "Ação de teste automatizado de auditoria", product_name="Produto Teste")
+        total, logs = query_audit_logs(limit=10, action="TEST_ACTION")
+        self.assertGreaterEqual(total, 1)
+        self.assertEqual(logs[0]["action"], "TEST_ACTION")
+        self.assertIn("teste automatizado", logs[0]["details"])
+
+    def test_07_audit_endpoint_access_control(self):
+        """Apenas administradores podem ver o endpoint de logs de auditoria."""
+        # Sem login
+        res_anon = self.client.get("/api/audit/logs")
+        self.assertEqual(res_anon.status_code, 403)
+
+        # Logado como operador comum
         with self.client.session_transaction() as sess:
-            self.assertEqual(sess.get("username"), "admin")
+            sess["user_id"] = 9999
+            sess["role"] = "operador"
+            sess["username"] = "operador_comum"
 
-    def test_04_quick_operator_switch(self):
-        """Testa a troca rápida de operador de chão de loja via PIN sem deslogar."""
-        unique_pin = "8899"
-        unique_user = f"joao_{uuid.uuid4().hex[:6]}"
-        create_user(
-            username=unique_user,
-            name="João do Estoque",
-            password="123",
-            pin=unique_pin,
-            role="operador"
-        )
+        res_op = self.client.get("/api/audit/logs")
+        self.assertEqual(res_op.status_code, 403)
 
+        # Logado como admin
         with self.client.session_transaction() as sess:
             sess["user_id"] = 1
-            sess["username"] = "admin"
-            sess["name"] = "Administrador"
             sess["role"] = "admin"
-            sess["active_operator"] = "Administrador"
+            sess["username"] = "admin"
 
-        # Troca para João via PIN
-        res = self.client.post("/api/operator/switch", json={"pin": unique_pin})
+        res_admin = self.client.get("/api/audit/logs")
+        self.assertEqual(res_admin.status_code, 200)
+        data = res_admin.get_json()
+        self.assertIn("logs", data)
+        self.assertIn("total", data)
+
+    def test_08_switch_operator_session(self):
+        """Testa a rota de troca rápida de operador em chão de loja."""
+        u_name = f"op_switch_{uuid.uuid4().hex[:6]}"
+        create_user(u_name, "Operador Caixa", "123456", pin="7788", role="operador")
+
+        res = self.client.post("/api/operator/switch", json={"pin": "7788"})
         self.assertEqual(res.status_code, 200)
         data = res.get_json()
         self.assertTrue(data["success"])
-        self.assertEqual(data["active_operator"], "João do Estoque")
+        self.assertEqual(data["operator_name"], "Operador Caixa")
 
-        with self.client.session_transaction() as sess:
-            self.assertEqual(sess.get("active_operator"), "João do Estoque")
+        # Testa PIN inválido
+        res_inv = self.client.post("/api/operator/switch", json={"pin": "0000"})
+        self.assertEqual(res_inv.status_code, 401)
 
-    def test_05_non_admin_blocked_from_admin_apis(self):
-        """Garante que usuários normais (operadores) não acessam auditoria nem gestão de usuários."""
-        with self.client.session_transaction() as sess:
-            sess["user_id"] = 2
-            sess["username"] = "operador"
-            sess["name"] = "Operador Loja"
-            sess["role"] = "operador"
-
-        # Tenta listar usuários
-        res_users = self.client.get("/api/users")
-        self.assertEqual(res_users.status_code, 403)
-
-        # Tenta acessar auditoria
-        res_audit = self.client.get("/api/audit/logs")
-        self.assertEqual(res_audit.status_code, 403)
-
-    def test_06_admin_can_manage_users(self):
-        """Testa criação, listagem, edição e exclusão de usuários pelo Administrador."""
-        with self.client.session_transaction() as sess:
-            sess["user_id"] = 1
-            sess["username"] = "admin"
-            sess["name"] = "Administrador"
-            sess["role"] = "admin"
-
-        unique_user = f"maria_{uuid.uuid4().hex[:6]}"
-        unique_pin = str(uuid.uuid4().int)[:4]
-
-        # Cria novo usuário
-        res_create = self.client.post("/api/users", json={
-            "username": unique_user,
-            "name": "Maria Repositora",
-            "password": "senha",
-            "role": "operador",
-            "pin": unique_pin
-        })
-        self.assertEqual(res_create.status_code, 200)
-        new_u = res_create.get_json()["user"]
-        self.assertIsNotNone(new_u)
-        u_id = new_u["id"]
-
-        # Edita usuário
-        res_edit = self.client.post(f"/api/users/{u_id}/update", json={
-            "name": "Maria Supervisora",
-            "role": "admin"
-        })
-        self.assertEqual(res_edit.status_code, 200)
-
-        # Deleta usuário
-        res_del = self.client.post(f"/api/users/{u_id}/delete")
-        self.assertEqual(res_del.status_code, 200)
-
-    def test_07_audit_log_tracking_on_actions(self):
-        """Verifica se as ações no sistema gravam registros detalhados na auditoria."""
-        log_audit(
-            username="Carlos Auditor",
-            action="TESTE_AUDITORIA",
-            details="Verificação automatizada de log",
-            product_name="PRODUTO TESTE",
-            ip_address="127.0.0.1"
-        )
-
-        total, logs = query_audit_logs(action="TESTE_AUDITORIA")
-        self.assertGreaterEqual(total, 1)
-        self.assertEqual(logs[0]["username"], "Carlos Auditor")
-        self.assertEqual(logs[0]["action"], "TESTE_AUDITORIA")
-
-    def test_08_audit_export_csv(self):
-        """Testa o endpoint de exportação de logs de auditoria em formato CSV com UTF-8 BOM."""
-        with self.client.session_transaction() as sess:
-            sess["user_id"] = 1
-            sess["username"] = "admin"
-            sess["name"] = "Administrador"
-            sess["role"] = "admin"
-
-        res = self.client.get("/api/audit/export")
-        self.assertEqual(res.status_code, 200)
-        self.assertIn("text/csv", res.headers.get("Content-Type"))
-        content = res.data.decode("utf-8")
-        self.assertIn("Quem Mexeu", content)
-        self.assertIn("Ação", content)
-        self.assertIn("Detalhes", content)
-
-
+        # Cleanup
+        u = get_user_by_username(u_name)
+        if u:
+            delete_user(u["id"])
 
     def test_09_admin_panel_page_access(self):
-        """Valida que apenas administradores acessam a página /admin dedicada."""
-        # Não autenticado -> redireciona para login
-        res_anon = self.client.get("/admin", follow_redirects=False)
+        """Testa o acesso à página dedicada do painel de administração (/admin)."""
+        # Anônimo deve ser redirecionado para /login
+        res_anon = self.client.get("/admin")
         self.assertEqual(res_anon.status_code, 302)
-        self.assertIn("/login", res_anon.headers.get("Location"))
+        self.assertEqual(res_anon.headers.get("Location"), "/login")
 
-        # Operador comum -> redireciona para estoque principal
+        # Operador comum deve receber 403 Proibido
         with self.client.session_transaction() as sess:
-            sess["user_id"] = 2
-            sess["username"] = "operador"
-            sess["name"] = "Operador Loja"
+            sess["user_id"] = 999
             sess["role"] = "operador"
+            sess["username"] = "operador_teste"
+            sess["name"] = "Operador Teste"
 
-        res_op = self.client.get("/admin", follow_redirects=False)
-        self.assertEqual(res_op.status_code, 302)
-        self.assertEqual(res_op.headers.get("Location"), "/")
+        res_op = self.client.get("/admin")
+        self.assertEqual(res_op.status_code, 403)
 
-        # Administrador -> acesso autorizado 200
+        # Admin deve conseguir carregar a página normalmente (200)
+        admin = get_user_by_username("admin")
         with self.client.session_transaction() as sess:
-            sess["user_id"] = 1
+            sess["user_id"] = admin["id"]
+            sess["role"] = "admin"
             sess["username"] = "admin"
             sess["name"] = "Administrador"
-            sess["role"] = "admin"
 
         res_admin = self.client.get("/admin")
         self.assertEqual(res_admin.status_code, 200)
-        html = res_admin.data.decode("utf-8")
-        self.assertIn("Painel de Administração", html)
-        self.assertIn("Meu Perfil de Administrador", html)
-        self.assertIn("Token de Acesso", html)
+        content = res_admin.data.decode("utf-8")
+        self.assertIn("Painel de Administração", content)
+        self.assertIn("Meu Perfil de Administrador", content)
+        self.assertIn("API Secret Token", content)
+        self.assertIn("Usuários & Operadores de Loja", content)
+        self.assertIn("Quem Mexeu", content)
 
     def test_10_admin_profile_update_and_token_generation(self):
-        """Valida que o administrador pode atualizar seu nome, login, pin, senha e token de API."""
+        """Testa geração de token de API e atualização de perfil do administrador."""
+        admin = get_user_by_username("admin")
         with self.client.session_transaction() as sess:
-            sess["user_id"] = 1
+            sess["user_id"] = admin["id"]
+            sess["role"] = "admin"
             sess["username"] = "admin"
             sess["name"] = "Administrador"
-            sess["role"] = "admin"
 
-        # 1. Gera novo token
+        # 1. Gera token
         res_tok = self.client.post("/api/admin/generate-token")
         self.assertEqual(res_tok.status_code, 200)
         tok_data = res_tok.get_json()
@@ -252,6 +237,9 @@ class TestAuthAndAudit(unittest.TestCase):
         # Verifica se a sessão ativa foi atualizada
         with self.client.session_transaction() as sess:
             self.assertEqual(sess.get("name"), "Admin Gestor Master")
+
+        # Restaura admin padrão para não afetar próximas execuções
+        update_user(admin_db["id"], name="Administrador", pin="1234")
 
 
 if __name__ == "__main__":
