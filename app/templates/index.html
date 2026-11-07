@@ -70,22 +70,22 @@
             </button>
 
             <!-- Seletor Segmentado: Lista vs Cards -->
-            <div class="inline-flex items-center bg-gray-100 dark:bg-gray-700/80 p-0.5 rounded-xl border border-gray-200 dark:border-gray-600 text-xs shadow-inner select-none">
+            <div class="inline-flex items-center bg-gray-100 dark:bg-gray-700/80 p-0.5 rounded-xl border border-gray-200 dark:border-gray-600 text-xs shadow-inner select-none" role="group" aria-label="Visualização de lotes">
                 <button type="button"
                         id="btn-view-table"
                         onclick="setLotViewMode('table', true)"
-                        class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer"
                         title="Modo Lista (Tabela)">
                     <i data-lucide="table" class="w-3.5 h-3.5"></i>
-                    <span class="hidden sm:inline">Lista</span>
+                    <span class="font-bold text-xs">Lista</span>
                 </button>
                 <button type="button"
                         id="btn-view-cards"
                         onclick="setLotViewMode('cards', true)"
-                        class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer"
                         title="Modo Cards">
                     <i data-lucide="layout-grid" class="w-3.5 h-3.5"></i>
-                    <span class="hidden sm:inline">Cards</span>
+                    <span class="font-bold text-xs">Cards</span>
                 </button>
             </div>
         </div>
@@ -285,7 +285,7 @@
 </div>
 
 <!-- Painel de Métricas / Resumo Consolidado do Estoque (Aba Total) -->
-<div id="total-summary-panel" class="{% if filtro not in ('todos', 'total') %}hidden{% endif %} mb-4 grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 transition-all duration-200">
+<div id="total-summary-panel" class="{% if filtro not in ('todos', 'total') %}hidden{% endif %} mb-4 grid grid-cols-2 {% if is_admin or current_user_role in ('admin', 'gerente') %}lg:grid-cols-4{% else %}lg:grid-cols-3{% endif %} gap-2.5 sm:gap-3 transition-all duration-200">
     <div class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-indigo-100 dark:border-indigo-950/60 shadow-xs flex items-center gap-3">
         <div class="p-2 sm:p-2.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 shrink-0">
             <i data-lucide="boxes" class="w-5 h-5"></i>
@@ -316,7 +316,8 @@
         </div>
     </div>
 
-    <div class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-amber-100 dark:border-amber-950/60 shadow-xs flex items-center gap-3">
+    {% if is_admin or current_user_role in ('admin', 'gerente') %}
+    <div id="summary-card-valor" class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-amber-100 dark:border-amber-950/60 shadow-xs flex items-center gap-3">
         <div class="p-2 sm:p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 shrink-0">
             <i data-lucide="circle-dollar-sign" class="w-5 h-5"></i>
         </div>
@@ -326,6 +327,7 @@
             <span id="summary-total-value" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_value_formatted or '0,00' }}</span>
         </div>
     </div>
+    {% endif %}
 </div>
 
 <!-- Container de Exibição de Lotes (Lista ou Cards conforme preferência do usuário) -->
