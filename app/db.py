@@ -2471,21 +2471,39 @@ def create_user(username: str, name: str, password: str, pin: str = "", role: st
     
     pw_hash = generate_password_hash(password)
     try:
+        new_id = None
         with get_db_cursor(commit=True) as (cur, db_type):
             ph = "%s" if db_type == "postgres" else "?"
-            cur.execute(
-                f"""INSERT INTO users (username, name, password_hash, pin, role, active)
-                    VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph})""",
-                (username, name, pw_hash, pin or None, role, True if db_type == "postgres" else 1)
-            )
+            if db_type == "postgres":
+                cur.execute(
+                    f"""INSERT INTO users (username, name, password_hash, pin, role, active)
+                        VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}) RETURNING id""",
+                    (username, name, pw_hash, pin or None, role, True)
+                )
+                r_id = cur.fetchone()
+                if r_id:
+                    new_id = r_id[0]
+            else:
+                cur.execute(
+                    f"""INSERT INTO users (username, name, password_hash, pin, role, active)
+                        VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph})""",
+                    (username, name, pw_hash, pin or None, role, 1)
+                )
+                new_id = cur.lastrowid
 
         if is_postgres():
             try:
                 with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
-                    s_conn.execute(
-                        "INSERT OR REPLACE INTO users (username, name, password_hash, pin, role, active) VALUES (?, ?, ?, ?, ?, 1)",
-                        (username, name, pw_hash, pin or None, role)
-                    )
+                    if new_id:
+                        s_conn.execute(
+                            "INSERT OR REPLACE INTO users (id, username, name, password_hash, pin, role, active) VALUES (?, ?, ?, ?, ?, ?, 1)",
+                            (new_id, username, name, pw_hash, pin or None, role)
+                        )
+                    else:
+                        s_conn.execute(
+                            "INSERT OR REPLACE INTO users (username, name, password_hash, pin, role, active) VALUES (?, ?, ?, ?, ?, 1)",
+                            (username, name, pw_hash, pin or None, role)
+                        )
                     s_conn.commit()
             except Exception:
                 pass
@@ -2561,10 +2579,26 @@ def update_user(user_id: int, name: str = None, username: str = None, password: 
 
 def delete_user(user_id: int) -> tuple[bool, str]:
     """Remove um usuário do sistema (com proteção para o último administrador)."""
+    target_username = None
     with get_db_cursor() as (cur, db_type):
         ph = "%s" if db_type == "postgres" else "?"
         cur.execute(f"SELECT role FROM users WHERE id = {ph}", (user_id,))
         row = cur.fetchone()
+
+        if not row and is_postgres():
+            try:
+                with sqlite3.connect(str(SQLITE_PATH), timeout=2.0) as s_c:
+                    s_r = s_c.execute("SELECT role, username FROM users WHERE id = ?", (user_id,)).fetchone()
+                    if s_r:
+                        target_username = s_r[1]
+                        cur.execute("SELECT role, id FROM users WHERE LOWER(username) = %s", (target_username.lower(),))
+                        pg_row = cur.fetchone()
+                        if pg_row:
+                            row = pg_row
+                            user_id = pg_row[1]
+            except Exception:
+                pass
+
         if not row:
             return False, "Usuário não encontrado."
         if row[0] == "admin":
@@ -2578,10 +2612,14 @@ def delete_user(user_id: int) -> tuple[bool, str]:
         with get_db_cursor(commit=True) as (cur, db_type):
             ph = "%s" if db_type == "postgres" else "?"
             cur.execute(f"DELETE FROM users WHERE id = {ph}", (user_id,))
+            if target_username:
+                cur.execute(f"DELETE FROM users WHERE LOWER(username) = {ph}", (target_username.lower(),))
         if is_postgres():
             try:
                 with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
                     s_conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+                    if target_username:
+                        s_conn.execute("DELETE FROM users WHERE LOWER(username) = ?", (target_username.lower(),))
                     s_conn.commit()
             except Exception:
                 pass
