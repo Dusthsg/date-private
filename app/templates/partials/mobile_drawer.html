@@ -36,6 +36,28 @@
             <!-- Corpo com Opções -->
             <div class="p-5 space-y-4 overflow-y-auto flex-1">
                 
+                <!-- Modo de Exibição (Lista vs Cards) -->
+                <div class="p-3.5 rounded-xl bg-gray-50 dark:bg-gray-700/50 border border-gray-200/80 dark:border-gray-700">
+                    <div class="text-[11px] font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wider mb-2 flex items-center justify-between">
+                        <span>Modo de Exibição</span>
+                        <i data-lucide="layout-grid" class="w-3.5 h-3.5 text-indigo-500"></i>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 text-xs">
+                        <button type="button"
+                                id="drawer-view-cards"
+                                onclick="setLotViewMode('cards', true)"
+                                class="flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border font-semibold transition cursor-pointer">
+                            <i data-lucide="layout-grid" class="w-3.5 h-3.5"></i> <span>Cards</span>
+                        </button>
+                        <button type="button"
+                                id="drawer-view-table"
+                                onclick="setLotViewMode('table', true)"
+                                class="flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border font-semibold transition cursor-pointer">
+                            <i data-lucide="table" class="w-3.5 h-3.5"></i> <span>Lista</span>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Lista de Ações Principais -->
                 <div class="space-y-2 text-sm">
                     <button type="button"
@@ -87,6 +109,7 @@ function openMobileMenu() {
     const drawer = document.getElementById('mobile-menu-drawer');
     if (drawer) {
         drawer.classList.remove('hidden');
+        if (typeof window.initLotViewMode === 'function') window.initLotViewMode();
         if (window.refreshIcons) window.refreshIcons(drawer);
     }
 }

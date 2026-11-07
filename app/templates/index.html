@@ -185,6 +185,26 @@
                 title="Conciliar estoque com planilha da retaguarda">
             <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i> <span>Importar Planilha (Excel)</span>
         </button>
+
+        <!-- Seletor Segmentado: Lista vs Cards -->
+        <div class="inline-flex items-center bg-gray-200/80 dark:bg-gray-800 p-0.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs shadow-inner select-none ml-1">
+            <button type="button"
+                    id="btn-view-table"
+                    onclick="setLotViewMode('table', true)"
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer"
+                    title="Modo Lista (Tabela Tradicional)">
+                <i data-lucide="table" class="w-3.5 h-3.5"></i>
+                <span>Lista</span>
+            </button>
+            <button type="button"
+                    id="btn-view-cards"
+                    onclick="setLotViewMode('cards', true)"
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer"
+                    title="Modo Cards (Cartões Touch-friendly)">
+                <i data-lucide="layout-grid" class="w-3.5 h-3.5"></i>
+                <span>Cards</span>
+            </button>
+        </div>
     </div>
 </div>
 
@@ -251,22 +271,22 @@
     </div>
 </div>
 
-<!-- Tabela de lotes (Modo Tabela no Desktop, Modo Cards Ergonômicos no Mobile) -->
-<div class="bg-transparent sm:bg-white sm:dark:bg-gray-800 rounded-xl sm:shadow-sm overflow-x-visible sm:overflow-x-auto transition-colors">
-    <table class="w-full text-left text-sm block sm:table">
-        <thead class="hidden sm:table-header-group bg-gray-50 dark:bg-gray-700/80 text-gray-600 dark:text-gray-300 uppercase text-xs tracking-wider border-b border-gray-200 dark:border-gray-700">
+<!-- Container de Exibição de Lotes (Lista ou Cards conforme preferência do usuário) -->
+<div id="lot-display-container" class="view-mode-table transition-all duration-200">
+    <table class="w-full text-left text-sm">
+        <thead class="bg-gray-50 dark:bg-gray-700/80 text-gray-600 dark:text-gray-300 uppercase text-xs tracking-wider border-b border-gray-200 dark:border-gray-700">
             <tr>
                 <th class="px-3 py-3">Lote</th>
                 <th class="px-3 py-3">Produto</th>
                 <th class="px-3 py-3">Qtd</th>
                 <th class="px-3 py-3">Preço</th>
                 <th class="px-3 py-3">Validade</th>
-                <th class="px-3 py-3 hidden md:table-cell">Local</th>
-                <th class="px-3 py-3 hidden md:table-cell">Status</th>
+                <th class="px-3 py-3">Local</th>
+                <th class="px-3 py-3">Status</th>
                 <th class="px-3 py-3 text-center">Ação</th>
             </tr>
         </thead>
-        <tbody id="lot-table-body" class="block sm:table-row-group">
+        <tbody id="lot-table-body">
             {% include "partials/lot_rows.html" %}
         </tbody>
     </table>
