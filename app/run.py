@@ -187,6 +187,7 @@ def inject_context():
         "db_name": st["db_name"],
         "last_sync": st["last_sync"],
         "is_admin": (u_role == "admin"),
+        "is_manager_or_admin": (u_role in ("admin", "gerente")),
         "current_user_name": u_name,
         "current_user_role": u_role,
         "active_operator": active_op,
@@ -1317,8 +1318,8 @@ def user_delete_api(user_id: int):
 def admin_panel_route():
     if not session.get("user_id"):
         return redirect("/login")
-    if session.get("role") != "admin":
-        return Response("Acesso restrito a administradores", 403)
+    if session.get("role") not in ("admin", "gerente"):
+        return Response("Acesso restrito a administradores e gerentes", 403)
 
     admin_id = session.get("user_id")
     admin_user = get_user_by_id(admin_id)
@@ -1335,20 +1336,27 @@ def admin_panel_route():
     db_status = get_db_status()
     total_lots, _ = query_lots(limit=1)
     total_audit, _ = query_audit_logs(limit=1)
+    summary = get_inventory_summary()
+    val = summary.get("total_value", 0.0)
+    val_str = f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
     return render_template(
         "admin_panel.html",
         admin=admin_user,
         users=users_list,
         db_status=db_status,
-        total_lots=total_lots,
+        total_lots=summary.get("total_lots", total_lots),
+        total_units=summary.get("total_units", 0),
+        total_products=summary.get("total_products", 0),
+        total_value=val,
+        total_value_formatted=val_str,
         total_audit=total_audit
     )
 
 
 @app.route("/api/admin/profile", methods=["POST"])
 def admin_profile_update():
-    if not session.get("user_id") or session.get("role") != "admin":
+    if not session.get("user_id") or session.get("role") not in ("admin", "gerente"):
         return jsonify({"error": "Acesso não autorizado"}), 403
 
     admin_id = session.get("user_id")

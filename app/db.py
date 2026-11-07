@@ -2461,7 +2461,10 @@ def create_user(username: str, name: str, password: str, pin: str = "", role: st
     username = username.strip().lower()
     name = name.strip()
     pin = pin.strip()
-    role = "admin" if role.lower() == "admin" else "operador"
+    role_clean = role.strip().lower() if role else "operador"
+    if role_clean not in ("admin", "gerente", "operador"):
+        role_clean = "operador"
+    role = role_clean
     if not username or not name or not password:
         return False, "Usuário, nome e senha são obrigatórios."
     if get_user_by_username(username):
@@ -2543,7 +2546,9 @@ def update_user(user_id: int, name: str = None, username: str = None, password: 
         fields_sq.append("api_token = ?")
         params.append(api_token.strip() if api_token.strip() else None)
     if role:
-        r = "admin" if role.lower() == "admin" else "operador"
+        r = role.strip().lower()
+        if r not in ("admin", "gerente", "operador"):
+            r = "operador"
         fields_pg.append("role = %s")
         fields_sq.append("role = ?")
         params.append(r)

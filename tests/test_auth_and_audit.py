@@ -241,6 +241,69 @@ class TestAuthAndAudit(unittest.TestCase):
         # Restaura admin padrão para não afetar próximas execuções
         update_user(admin_db["id"], name="Administrador", pin="1234")
 
+    def test_11_role_manager_and_estimated_value_visibility(self):
+        """Valida que 'Valor Estimado' é visível para admin/gerente e oculto para operador, e que cards/lista estão ativos."""
+        # 1. Cria usuário gerente
+        username_gerente = f"ger_{uuid.uuid4().hex[:6]}"
+        ok, _ = create_user(username_gerente, "Gerente Geral", "gerente123", pin="4321", role="gerente")
+        self.assertTrue(ok)
+        ger_user = get_user_by_username(username_gerente)
+        self.assertIsNotNone(ger_user)
+        self.assertEqual(ger_user["role"], "gerente")
+
+        # 2. Cria usuário operador
+        username_op = f"op_{uuid.uuid4().hex[:6]}"
+        ok_op, _ = create_user(username_op, "Operador Loja", "op123", pin="7788", role="operador")
+        self.assertTrue(ok_op)
+        op_user = get_user_by_username(username_op)
+        self.assertIsNotNone(op_user)
+        self.assertEqual(op_user["role"], "operador")
+
+        # 3. Operador acessa index: Valor Estimado NÃO deve ser visível no resumo
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = op_user["id"]
+            sess["role"] = "operador"
+            sess["username"] = op_user["username"]
+            sess["name"] = op_user["name"]
+        
+        res_op = self.client.get("/")
+        self.assertEqual(res_op.status_code, 200)
+        html_op = res_op.data.decode("utf-8")
+        self.assertNotIn('id="summary-card-valor"', html_op)
+
+        # 4. Gerente acessa index: Valor Estimado DEVE ser visível
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = ger_user["id"]
+            sess["role"] = "gerente"
+            sess["username"] = ger_user["username"]
+            sess["name"] = ger_user["name"]
+
+        res_ger = self.client.get("/")
+        self.assertEqual(res_ger.status_code, 200)
+        html_ger = res_ger.data.decode("utf-8")
+        self.assertIn('id="summary-card-valor"', html_ger)
+        self.assertIn("Valor Estimado", html_ger)
+
+        # 5. Gerente acessa /admin: permitido e exibe Valor Estimado
+        res_admin_ger = self.client.get("/admin")
+        self.assertEqual(res_admin_ger.status_code, 200)
+        html_admin = res_admin_ger.data.decode("utf-8")
+        self.assertIn("Valor Estimado", html_admin)
+        self.assertIn('id="stat-total-value"', html_admin)
+
+        # 6. Verifica que botões de Lista e Cards estão presentes e claramente identificados
+        self.assertIn('id="btn-view-table"', html_ger)
+        self.assertIn('id="btn-view-cards"', html_ger)
+        self.assertIn(">Lista</span>", html_ger)
+        self.assertIn(">Cards</span>", html_ger)
+
+        # 7. Verifica correção de sobreposição de cabeçalho (sem top: 53px sticky deslocado)
+        self.assertNotIn("top: 53px;", html_ger)
+
+        # Limpeza
+        delete_user(ger_user["id"])
+        delete_user(op_user["id"])
+
 
 if __name__ == "__main__":
     unittest.main()
