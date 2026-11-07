@@ -152,12 +152,13 @@ async function submitSwitchOperator(evt) {
             throw new Error(res.error || "PIN incorreto ou operador inativo.");
         }
 
-        if (msg) {
-            msg.innerHTML = `<span class="text-emerald-600 dark:text-emerald-400 font-bold">✓ Conectado como ${res.active_operator} (${res.role || 'operador'})</span>`;
+        // Fecha o modal imediatamente
+        closeSwitchOperatorModal();
+
+        // Atualiza a interface instantaneamente sem recarregar a página (0ms reload)
+        if (typeof window.updateActiveOperatorUI === 'function') {
+            window.updateActiveOperatorUI(res);
         }
-        setTimeout(() => {
-            window.location.reload();
-        }, 400);
     } catch (e) {
         if (msg) {
             msg.innerHTML = `<span class="text-rose-600 dark:text-rose-400 font-bold">✕ ${e.message}</span>`;

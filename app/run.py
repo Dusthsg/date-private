@@ -1206,12 +1206,17 @@ def switch_operator_route():
         user_id=user["id"],
         ip_address=ip
     )
+    summary = get_inventory_summary()
+    val = summary.get("total_value", 0.0)
+    val_str = f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return jsonify({
         "success": True,
         "active_operator": user["name"],
         "operator_name": user["name"],
         "role": user["role"],
-        "user_id": user["id"]
+        "user_id": user["id"],
+        "username": user["username"],
+        "total_value_formatted": val_str
     })
 
 
@@ -1431,7 +1436,8 @@ def admin_generate_token_route():
 
 if __name__ == "__main__":
     ip = get_local_ip()
-    port = 5000
+    port = int(os.environ.get("PORT", 5000))
+    debug = os.environ.get("FLASK_DEBUG", "0").lower() in ("1", "true")
     db_label = "PostgreSQL" if is_postgres() else "SQLite"
     print("\n" + "=" * 60)
     print(f"🚀 DateLimit Web rodando com WebSocket e banco [{db_label}]!")
@@ -1439,4 +1445,4 @@ if __name__ == "__main__":
     print(f"📱 Celular / Outro dispositivo na rede:")
     print(f"   http://{ip}:{port}")
     print("=" * 60 + "\n")
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=debug)

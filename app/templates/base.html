@@ -538,20 +538,18 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
 
             <!-- Controles Mobile (Visíveis apenas em celular < sm) -->
             <div class="flex sm:hidden items-center gap-1.5">
-                {% if is_admin %}
-                <a href="/admin"
-                   class="p-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 active:scale-95 text-white transition shadow-xs cursor-pointer"
+                <a id="mobile-header-admin-link" href="/admin"
+                   class="{% if not is_admin %}hidden {% endif %}p-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 active:scale-95 text-white transition shadow-xs cursor-pointer"
                    title="Painel Admin">
                     <i data-lucide="shield" class="w-4 h-4"></i>
                 </a>
-                {% endif %}
                 <!-- Operador Ativo e Troca Rápida de PIN no Mobile -->
                 <button type="button"
                         onclick="openSwitchOperatorModal()"
                         class="inline-flex items-center gap-1 bg-emerald-800/90 text-emerald-100 px-2 py-1 rounded-full border border-emerald-600/50 text-[11px] active:scale-95 transition cursor-pointer font-medium"
                         title="Operador ativo. Toque para alternar operador via PIN">
                     <i data-lucide="user-check" class="w-3.5 h-3.5 text-emerald-300"></i>
-                    <span class="max-w-[85px] truncate font-semibold">{{ active_operator }}</span>
+                    <span id="mobile-operator-name" class="max-w-[85px] truncate font-semibold">{{ active_operator }}</span>
                     <span class="text-[9px] bg-emerald-600 text-white px-1 py-0.2 rounded font-bold">PIN</span>
                 </button>
 
@@ -566,9 +564,8 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
 
             <!-- Controles Desktop e Tablet (Visíveis em telas sm+) -->
             <div class="hidden sm:flex items-center gap-1.5 lg:gap-2 text-xs">
-                {% if is_admin %}
                 <!-- Grupo Admin: Painel, Auditoria e Usuários -->
-                <div class="inline-flex items-center bg-purple-900/60 p-0.5 rounded-lg border border-purple-500/50 shadow-xs">
+                <div id="header-admin-group" class="{% if not is_admin %}hidden {% endif %}inline-flex items-center bg-purple-900/60 p-0.5 rounded-lg border border-purple-500/50 shadow-xs">
                     <a href="/admin"
                        class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-white hover:bg-purple-600 transition"
                        title="Painel de Administração">
@@ -592,12 +589,11 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
                         <span class="hidden xl:inline">Usuários</span>
                     </button>
                 </div>
-                {% endif %}
 
                 <!-- Operador Ativo e Troca Rápida de PIN -->
                 <div class="inline-flex items-center gap-1.5 bg-emerald-800/80 dark:bg-emerald-950/70 text-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-600/50">
                     <i data-lucide="user-check" class="w-3.5 h-3.5 text-emerald-300"></i>
-                    <span class="max-w-[85px] sm:max-w-[120px] truncate">Operador: <strong class="text-white">{{ active_operator }}</strong></span>
+                    <span class="max-w-[85px] sm:max-w-[120px] truncate">Operador: <strong id="desktop-operator-name" class="text-white">{{ active_operator }}</strong></span>
                     <button type="button" onclick="openSwitchOperatorModal()"
                             class="ml-0.5 bg-emerald-700 hover:bg-emerald-600 px-1.5 py-0.5 rounded text-[10px] font-bold text-white transition cursor-pointer"
                             title="Trocar operador ativo no chão de loja via PIN">
@@ -716,21 +712,20 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
                 title="Cadastrar Lote Rápido">
             <i data-lucide="plus" class="w-6 h-6 stroke-[2.5]"></i>
         </button>
-        {% if is_admin %}
-        <button type="button"
+        <button id="bottom-nav-audit"
+                type="button"
                 onclick="openAuditModal()"
-                class="flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
+                class="{% if not is_admin %}hidden {% endif %}flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
             <i data-lucide="shield-alert" class="w-5 h-5"></i>
             <span class="text-[10px] font-semibold mt-0.5">Auditoria</span>
         </button>
-        {% else %}
-        <button type="button"
+        <button id="bottom-nav-switch-pin"
+                type="button"
                 onclick="openSwitchOperatorModal()"
-                class="flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
+                class="{% if is_admin %}hidden {% endif %}flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
             <i data-lucide="key-round" class="w-5 h-5"></i>
             <span class="text-[10px] font-semibold mt-0.5">Trocar PIN</span>
         </button>
-        {% endif %}
         <button type="button"
                 onclick="openMobileMenu()"
                 class="flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
@@ -776,5 +771,199 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
             }
         });
     </script>
+
+    <!-- Notificações Toast Dinâmicas -->
+    <div id="global-toast-container" class="fixed bottom-16 sm:bottom-6 right-3 sm:right-6 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full px-2 sm:px-0"></div>
+
+    <script>
+    // Sistema Global de Notificações Toast Não-Intrusivas
+    function showToastNotification(message, type = 'success') {
+        let container = document.getElementById('global-toast-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'global-toast-container';
+            container.className = 'fixed bottom-16 sm:bottom-6 right-3 sm:right-6 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full px-2 sm:px-0';
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement('div');
+        const isSuccess = type === 'success';
+        toast.className = `pointer-events-auto flex items-center gap-2.5 py-2.5 px-3.5 rounded-xl shadow-xl border text-xs font-semibold transform transition-all duration-300 translate-y-3 opacity-0 ${
+            isSuccess
+                ? 'bg-emerald-600 text-white border-emerald-500'
+                : 'bg-rose-600 text-white border-rose-500'
+        }`;
+        toast.innerHTML = `
+            <i data-lucide="${isSuccess ? 'check-circle-2' : 'alert-circle'}" class="w-4 h-4 shrink-0"></i>
+            <span class="flex-1">${message}</span>
+        `;
+        container.appendChild(toast);
+        if (window.lucide) window.lucide.createIcons({ root: toast });
+
+        requestAnimationFrame(() => {
+            toast.classList.remove('translate-y-3', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+        });
+
+        setTimeout(() => {
+            toast.classList.remove('translate-y-0', 'opacity-100');
+            toast.classList.add('translate-y-3', 'opacity-0');
+            setTimeout(() => toast.remove(), 350);
+        }, 2800);
+    }
+
+    // Atualização Instantânea de Interface de Usuário sem Recarregar (0ms reload)
+    window.updateActiveOperatorUI = function(data) {
+        if (!data || !data.success) return;
+
+        const opName = data.active_operator || data.operator_name || 'Operador';
+        const role = (data.role || 'operador').toLowerCase();
+        const isAdmin = (role === 'admin');
+        const isManagerOrAdmin = (role === 'admin' || role === 'gerente');
+
+        // 1. Atualiza nomes do operador no cabeçalho
+        const desktopOp = document.getElementById('desktop-operator-name');
+        if (desktopOp) desktopOp.textContent = opName;
+
+        const mobileOp = document.getElementById('mobile-operator-name');
+        if (mobileOp) mobileOp.textContent = opName;
+
+        // 2. Atualiza controles de administração no cabeçalho
+        const headerAdminGroup = document.getElementById('header-admin-group');
+        if (headerAdminGroup) {
+            if (isAdmin) {
+                headerAdminGroup.classList.remove('hidden');
+            } else {
+                headerAdminGroup.classList.add('hidden');
+            }
+        }
+
+        const mobileAdminLink = document.getElementById('mobile-header-admin-link');
+        if (mobileAdminLink) {
+            if (isAdmin) {
+                mobileAdminLink.classList.remove('hidden');
+            } else {
+                mobileAdminLink.classList.add('hidden');
+            }
+        }
+
+        // 3. Atualiza barra de navegação inferior mobile (Bottom Nav)
+        const bottomAudit = document.getElementById('bottom-nav-audit');
+        const bottomPin = document.getElementById('bottom-nav-switch-pin');
+        if (bottomAudit && bottomPin) {
+            if (isAdmin) {
+                bottomAudit.classList.remove('hidden');
+                bottomPin.classList.add('hidden');
+            } else {
+                bottomAudit.classList.add('hidden');
+                bottomPin.classList.remove('hidden');
+            }
+        }
+
+        // 4. Atualiza gaveta lateral (Mobile Drawer)
+        const drawerInitials = document.getElementById('drawer-user-initials');
+        if (drawerInitials) drawerInitials.textContent = opName.slice(0, 2).toUpperCase();
+
+        const drawerName = document.getElementById('drawer-user-name');
+        if (drawerName) drawerName.textContent = opName;
+
+        const drawerRole = document.getElementById('drawer-user-role');
+        if (drawerRole) drawerRole.textContent = role;
+
+        const drawerBadge = document.getElementById('drawer-role-badge');
+        if (drawerBadge) {
+            drawerBadge.textContent = role.toUpperCase();
+            if (isAdmin) {
+                drawerBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800";
+            } else if (isManagerOrAdmin) {
+                drawerBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800";
+            } else {
+                drawerBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800";
+            }
+        }
+
+        const drawerOp = document.getElementById('drawer-operator-name');
+        if (drawerOp) drawerOp.textContent = opName;
+
+        const drawerAdminLink = document.getElementById('drawer-admin-panel-link');
+        if (drawerAdminLink) {
+            if (isAdmin) drawerAdminLink.classList.remove('hidden');
+            else drawerAdminLink.classList.add('hidden');
+        }
+
+        const drawerAuditBtn = document.getElementById('drawer-audit-btn');
+        if (drawerAuditBtn) {
+            if (isAdmin) drawerAuditBtn.classList.remove('hidden');
+            else drawerAuditBtn.classList.add('hidden');
+        }
+
+        const drawerUsersBtn = document.getElementById('drawer-users-btn');
+        if (drawerUsersBtn) {
+            if (isAdmin) drawerUsersBtn.classList.remove('hidden');
+            else drawerUsersBtn.classList.add('hidden');
+        }
+
+        // 5. Atualiza card de Valor Estimado no índice
+        const totalPanel = document.getElementById('total-summary-panel');
+        let valCard = document.getElementById('summary-card-valor');
+
+        if (isManagerOrAdmin) {
+            if (valCard) {
+                valCard.classList.remove('hidden');
+            } else if (totalPanel) {
+                // Cria o card se não existia no DOM inicial de operador
+                valCard = document.createElement('div');
+                valCard.id = 'summary-card-valor';
+                valCard.className = 'bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-amber-100 dark:border-amber-950/60 shadow-xs flex items-center gap-3 animate-in fade-in duration-200';
+                valCard.innerHTML = `
+                    <div class="p-2 sm:p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 shrink-0">
+                        <i data-lucide="circle-dollar-sign" class="w-5 h-5"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Valor Estimado</span>
+                        <span class="text-xs sm:text-sm font-semibold text-gray-500 dark:text-gray-400 mr-0.5">R$</span>
+                        <span id="summary-total-value" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">${data.total_value_formatted || '0,00'}</span>
+                    </div>
+                `;
+                totalPanel.appendChild(valCard);
+                if (window.lucide) window.lucide.createIcons({ root: valCard });
+            }
+            if (valCard && data.total_value_formatted) {
+                const totalValSpan = document.getElementById('summary-total-value');
+                if (totalValSpan) totalValSpan.textContent = data.total_value_formatted;
+            }
+            if (totalPanel) {
+                totalPanel.classList.remove('lg:grid-cols-3');
+                totalPanel.classList.add('lg:grid-cols-4');
+            }
+        } else {
+            if (valCard) {
+                valCard.classList.add('hidden');
+            }
+            if (totalPanel) {
+                totalPanel.classList.remove('lg:grid-cols-4');
+                totalPanel.classList.add('lg:grid-cols-3');
+            }
+        }
+
+        // 6. Se estiver na página /admin e mudou para operador sem permissão, redireciona suavemente para /
+        if (window.location.pathname.startsWith('/admin') && !isAdmin && !isManagerOrAdmin) {
+            window.location.href = '/';
+            return;
+        }
+
+        // 7. Notificação toast dinâmica (sem recarregar)
+        showToastNotification(`Operador alternado: ${opName} (${role.toUpperCase()})`, 'success');
+
+        // 8. Re-renderiza ícones Lucide
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+
+        // 9. Dispara evento customizado para outros scripts
+        window.dispatchEvent(new CustomEvent('operator-switched', { detail: data }));
+    };
+    </script>
+
 </body>
 </html>
