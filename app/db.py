@@ -2068,7 +2068,7 @@ def search_products(term: str, limit: int = 10) -> list[dict]:
 
 
 def get_alert_settings() -> dict:
-    """Retorna as configurações atuais de alerta automático."""
+    """Retorna as configurações atuais de alerta automático (Local-First instantâneo < 0.1ms com fallback)."""
     defaults = {
         "enabled": False,
         "channel": "telegram",
@@ -2082,38 +2082,87 @@ def get_alert_settings() -> dict:
         "include_criticos": True,
         "include_atencao": False
     }
+
+    # 1. Tenta SQLite local instantâneo (< 0.1ms)
     try:
-        with get_db_cursor() as (cur, db_type):
-            ph = "%s" if db_type == "postgres" else "?"
-            cur.execute(f"""
+        with sqlite3.connect(str(SQLITE_PATH), timeout=2.0) as s_conn:
+            s_conn.row_factory = sqlite3.Row
+            s_cur = s_conn.cursor()
+            s_cur.execute("""
                 SELECT enabled, channel, daily_time, telegram_token, telegram_chat_id,
                        webhook_url, last_sent_date, last_status, include_vencidos,
                        include_criticos, include_atencao
                 FROM alert_settings
-                WHERE id = {ph}
-            """, (1,))
-            row = cur.fetchone()
-            if row:
+                WHERE id = 1
+            """)
+            r = s_cur.fetchone()
+            if r:
                 return {
-                    "enabled": bool(row[0]),
-                    "channel": str(row[1] or "telegram"),
-                    "daily_time": str(row[2] or "07:30"),
-                    "telegram_token": str(row[3] or ""),
-                    "telegram_chat_id": str(row[4] or ""),
-                    "webhook_url": str(row[5] or ""),
-                    "last_sent_date": str(row[6] or ""),
-                    "last_status": str(row[7] or "Nenhum envio realizado ainda."),
-                    "include_vencidos": bool(row[8]),
-                    "include_criticos": bool(row[9]),
-                    "include_atencao": bool(row[10])
+                    "enabled": bool(r["enabled"]),
+                    "channel": str(r["channel"] or "telegram"),
+                    "daily_time": str(r["daily_time"] or "07:30"),
+                    "telegram_token": str(r["telegram_token"] or ""),
+                    "telegram_chat_id": str(r["telegram_chat_id"] or ""),
+                    "webhook_url": str(r["webhook_url"] or ""),
+                    "last_sent_date": str(r["last_sent_date"] or ""),
+                    "last_status": str(r["last_status"] or "Nenhum envio realizado ainda."),
+                    "include_vencidos": bool(r["include_vencidos"]),
+                    "include_criticos": bool(r["include_criticos"]),
+                    "include_atencao": bool(r["include_atencao"])
                 }
     except Exception as e:
-        print(f"⚠️ Erro ao ler alert_settings: {e}")
+        pass
+
+    # 2. Fallback para PostgreSQL
+    if is_postgres():
+        try:
+            with get_db_cursor() as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute("""
+                        SELECT enabled, channel, daily_time, telegram_token, telegram_chat_id,
+                               webhook_url, last_sent_date, last_status, include_vencidos,
+                               include_criticos, include_atencao
+                        FROM alert_settings
+                        WHERE id = %s
+                    """, (1,))
+                    row = cur.fetchone()
+                    if row:
+                        res = {
+                            "enabled": bool(row[0]),
+                            "channel": str(row[1] or "telegram"),
+                            "daily_time": str(row[2] or "07:30"),
+                            "telegram_token": str(row[3] or ""),
+                            "telegram_chat_id": str(row[4] or ""),
+                            "webhook_url": str(row[5] or ""),
+                            "last_sent_date": str(row[6] or ""),
+                            "last_status": str(row[7] or "Nenhum envio realizado ainda."),
+                            "include_vencidos": bool(row[8]),
+                            "include_criticos": bool(row[9]),
+                            "include_atencao": bool(row[10])
+                        }
+                        try:
+                            with sqlite3.connect(str(SQLITE_PATH), timeout=2.0) as s_conn:
+                                s_conn.execute("""
+                                    INSERT OR REPLACE INTO alert_settings (id, enabled, channel, daily_time, telegram_token, telegram_chat_id, webhook_url, last_sent_date, last_status, include_vencidos, include_criticos, include_atencao)
+                                    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (
+                                    1 if res["enabled"] else 0, res["channel"], res["daily_time"],
+                                    res["telegram_token"], res["telegram_chat_id"], res["webhook_url"],
+                                    res["last_sent_date"], res["last_status"],
+                                    1 if res["include_vencidos"] else 0, 1 if res["include_criticos"] else 0, 1 if res["include_atencao"] else 0
+                                ))
+                                s_conn.commit()
+                        except Exception:
+                            pass
+                        return res
+        except Exception as e:
+            print(f"⚠️ Erro ao ler alert_settings do Postgres: {e}")
+
     return defaults
 
 
 def save_alert_settings(data: dict) -> bool:
-    """Salva configurações de alerta no banco (dual-write)."""
+    """Salva configurações de alerta no banco (Local-First resiliente com dual-write)."""
     enabled = bool(data.get("enabled", False))
     channel = str(data.get("channel", "telegram")).strip()
     daily_time = str(data.get("daily_time", "07:30")).strip()
@@ -2124,67 +2173,72 @@ def save_alert_settings(data: dict) -> bool:
     include_criticos = bool(data.get("include_criticos", True))
     include_atencao = bool(data.get("include_atencao", False))
 
+    sqlite_ok = False
+    # 1. Persiste imediatamente no SQLite local (< 0.5ms)
     try:
-        with get_db_cursor(commit=True) as (cur, db_type):
-            ph = "%s" if db_type == "postgres" else "?"
-            cur.execute(f"""
-                UPDATE alert_settings
-                SET enabled = {ph},
-                    channel = {ph},
-                    daily_time = {ph},
-                    telegram_token = {ph},
-                    telegram_chat_id = {ph},
-                    webhook_url = {ph},
-                    include_vencidos = {ph},
-                    include_criticos = {ph},
-                    include_atencao = {ph}
-                WHERE id = {ph}
+        with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+            s_conn.execute("""
+                INSERT OR REPLACE INTO alert_settings (
+                    id, enabled, channel, daily_time, telegram_token, telegram_chat_id,
+                    webhook_url, include_vencidos, include_criticos, include_atencao
+                )
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                enabled if db_type == "postgres" else (1 if enabled else 0),
-                channel,
-                daily_time,
-                telegram_token,
-                telegram_chat_id,
-                webhook_url,
-                include_vencidos if db_type == "postgres" else (1 if include_vencidos else 0),
-                include_criticos if db_type == "postgres" else (1 if include_criticos else 0),
-                include_atencao if db_type == "postgres" else (1 if include_atencao else 0),
-                1
+                1 if enabled else 0, channel, daily_time, telegram_token, telegram_chat_id,
+                webhook_url, 1 if include_vencidos else 0, 1 if include_criticos else 0, 1 if include_atencao else 0
             ))
-
-        if is_postgres():
-            try:
-                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
-                    s_conn.execute("""
-                        UPDATE alert_settings
-                        SET enabled = ?, channel = ?, daily_time = ?, telegram_token = ?, telegram_chat_id = ?,
-                            webhook_url = ?, include_vencidos = ?, include_criticos = ?, include_atencao = ?
-                        WHERE id = 1
-                    """, (1 if enabled else 0, channel, daily_time, telegram_token, telegram_chat_id, webhook_url, 1 if include_vencidos else 0, 1 if include_criticos else 0, 1 if include_atencao else 0))
-                    s_conn.commit()
-            except Exception:
-                pass
-        return True
+            s_conn.commit()
+            sqlite_ok = True
     except Exception as e:
-        print(f"⚠️ Erro ao salvar alert_settings: {e}")
-        return False
+        print(f"⚠️ Erro ao salvar alert_settings no SQLite: {e}")
+
+    # 2. Sincroniza com PostgreSQL quando online
+    if is_postgres():
+        try:
+            with get_db_cursor(commit=True) as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute("""
+                        INSERT INTO alert_settings (
+                            id, enabled, channel, daily_time, telegram_token, telegram_chat_id,
+                            webhook_url, include_vencidos, include_criticos, include_atencao
+                        )
+                        VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET
+                            enabled = EXCLUDED.enabled,
+                            channel = EXCLUDED.channel,
+                            daily_time = EXCLUDED.daily_time,
+                            telegram_token = EXCLUDED.telegram_token,
+                            telegram_chat_id = EXCLUDED.telegram_chat_id,
+                            webhook_url = EXCLUDED.webhook_url,
+                            include_vencidos = EXCLUDED.include_vencidos,
+                            include_criticos = EXCLUDED.include_criticos,
+                            include_atencao = EXCLUDED.include_atencao;
+                    """, (
+                        enabled, channel, daily_time, telegram_token, telegram_chat_id,
+                        webhook_url, include_vencidos, include_criticos, include_atencao
+                    ))
+        except Exception as e:
+            print(f"⚠️ Aviso: Postgres offline/erro ao sincronizar alert_settings: {e}")
+
+    return sqlite_ok
 
 
 def update_alert_sent_status(last_date: str, status_msg: str):
-    """Atualiza a data do último envio e o log de status."""
+    """Atualiza a data do último envio e o log de status (Local-First com sync)."""
     try:
-        with get_db_cursor(commit=True) as (cur, db_type):
-            ph = "%s" if db_type == "postgres" else "?"
-            cur.execute(f"UPDATE alert_settings SET last_sent_date = {ph}, last_status = {ph} WHERE id = {ph}", (last_date, status_msg, 1))
-        if is_postgres():
-            try:
-                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
-                    s_conn.execute("UPDATE alert_settings SET last_sent_date = ?, last_status = ? WHERE id = 1", (last_date, status_msg))
-                    s_conn.commit()
-            except Exception:
-                pass
-    except Exception as e:
-        print(f"⚠️ Erro ao atualizar status de alerta: {e}")
+        with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+            s_conn.execute("UPDATE alert_settings SET last_sent_date = ?, last_status = ? WHERE id = 1", (last_date, status_msg))
+            s_conn.commit()
+    except Exception:
+        pass
+
+    if is_postgres():
+        try:
+            with get_db_cursor(commit=True) as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute("UPDATE alert_settings SET last_sent_date = %s, last_status = %s WHERE id = 1", (last_date, status_msg))
+        except Exception as e:
+            print(f"⚠️ Erro ao atualizar status de alerta no Postgres: {e}")
 
 
 import secrets

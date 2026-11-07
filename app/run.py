@@ -1067,9 +1067,13 @@ from app.db import get_alert_settings, save_alert_settings
 
 @app.route("/api/alerts/settings", methods=["GET"])
 def api_get_alert_settings():
-    """Retorna as configurações atuais de alerta."""
-    st = get_alert_settings()
-    return jsonify(st), 200
+    """Retorna as configurações atuais de alerta (Local-First resiliente)."""
+    try:
+        st = get_alert_settings()
+        return jsonify(st), 200
+    except Exception as e:
+        print(f"⚠️ Erro ao consultar configurações de alerta: {e}")
+        return jsonify({"error": "Erro ao consultar configurações de alerta."}), 500
 
 
 @app.route("/api/alerts/settings", methods=["POST"])
