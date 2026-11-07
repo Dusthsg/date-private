@@ -63,7 +63,35 @@ def get_local_ip():
 app = Flask(__name__)
 sock = Sock(app)
 
-# Clientes WebSocket conectados
+class SafeWebSocket:
+    """Invólucro thread-safe para WebSocket que impede corrupção de sockets por escritas simultâneas."""
+    def __init__(self, ws, client_id=None):
+        self.ws = ws
+        self.client_id = client_id
+        self._lock = threading.Lock()
+        self.active = True
+
+    def send(self, data: str) -> bool:
+        if not self.active:
+            return False
+        with self._lock:
+            try:
+                self.ws.send(data)
+                return True
+            except Exception:
+                self.active = False
+                return False
+
+    def close(self):
+        self.active = False
+        with self._lock:
+            try:
+                self.ws.close()
+            except Exception:
+                pass
+
+
+# Clientes WebSocket conectados com invólucro thread-safe
 connected_clients = set()
 clients_lock = threading.Lock()
 
@@ -72,19 +100,27 @@ def broadcast_reload(reason="change", exclude_client_id=None):
     """
     Notifica todos os clientes WebSocket em thread paralela de alta velocidade.
     NUNCA bloqueia a resposta HTTP do usuário atual.
+    Garante proteção thread-safe absoluta e persistência contra quedas de socket.
     """
     def _async_notify():
         dead_clients = []
         with clients_lock:
             clients_copy = list(connected_clients)
 
-        payload = json.dumps({"type": "reload", "reason": reason, "sender": exclude_client_id})
+        reload_payload = json.dumps({"type": "reload", "reason": reason, "sender": exclude_client_id})
+        invalidate_payload = json.dumps({"type": "invalidate_cache", "reason": reason})
+
         for client in clients_copy:
             try:
-                # Não notifica o próprio cliente que acabou de enviar o formulário
+                # O próprio cliente autor da mutação recebe evento para invalidar o cache sem recarregar o DOM
                 if exclude_client_id and getattr(client, "client_id", None) == exclude_client_id:
+                    client.send(invalidate_payload)
                     continue
-                client.send(payload)
+
+                # Todos os outros clientes recebem reload completo para sincronização instantânea
+                ok = client.send(reload_payload)
+                if not ok:
+                    dead_clients.append(client)
             except Exception:
                 dead_clients.append(client)
 
@@ -213,11 +249,13 @@ def _prefetch_next_chunk(filtro: str, busca: str, page: int, limit: int = 50):
 def ws_handler(ws):
     """
     Canal WebSocket para busca instantânea e sincronização em tempo real entre dispositivos.
+    Utiliza SafeWebSocket para persistência blindada contra colisões de escrita.
     """
+    safe_ws = SafeWebSocket(ws)
     with clients_lock:
-        connected_clients.add(ws)
+        connected_clients.add(safe_ws)
     try:
-        while True:
+        while safe_ws.active:
             raw = ws.receive()
             if raw is None:
                 break
@@ -229,7 +267,7 @@ def ws_handler(ws):
 
             action = msg.get("action")
             if action == "register":
-                ws.client_id = msg.get("clientId")
+                safe_ws.client_id = msg.get("clientId")
                 continue
             elif action == "search":
                 filtro = msg.get("filtro", "todos")
@@ -254,7 +292,7 @@ def ws_handler(ws):
                     next_page=2
                 )
 
-                ws.send(json.dumps({
+                safe_ws.send(json.dumps({
                     "type": "lots_update",
                     "html": html,
                     "total": total,
@@ -264,12 +302,13 @@ def ws_handler(ws):
                     "prewarm": is_prewarm
                 }))
             elif action == "ping":
-                ws.send(json.dumps({"type": "pong"}))
+                safe_ws.send(json.dumps({"type": "pong"}))
     except Exception:
         pass
     finally:
+        safe_ws.active = False
         with clients_lock:
-            connected_clients.discard(ws)
+            connected_clients.discard(safe_ws)
 
 
 # ── Rotas HTTP (Render inicial + Fallback HTMX + Chunks) ────────────────────────

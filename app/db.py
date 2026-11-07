@@ -375,6 +375,7 @@ def get_db_cursor(commit=False):
         # Modo SQLite Local (Offline-first resiliente com WAL ultrarrápido)
         SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(SQLITE_PATH), timeout=10.0)
+        conn.isolation_level = None  # Autocommit: leituras sempre enxergam os commits mais recentes no WAL
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode = WAL;")
         conn.execute("PRAGMA synchronous = NORMAL;")

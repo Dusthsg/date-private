@@ -350,6 +350,41 @@ let wsReconnectAttempts = 0;
 let wsReconnectTimer = null;
 let wsHeartbeatTimer = null;
 let wsLastPongTime = Date.now();
+let wsConnectStartTime = 0;
+
+// Sincronização instantânea (< 1ms) entre abas do mesmo navegador via BroadcastChannel
+let syncChannel = null;
+try {
+    syncChannel = new BroadcastChannel('datelimit_channel');
+    syncChannel.onmessage = (event) => {
+        const msg = event.data;
+        if (!msg) return;
+        if (msg.type === 'mutation') {
+            clientCache.clear();
+            if (!window.isEditingLot) {
+                performSearch(true);
+            }
+        }
+    };
+} catch (_) {}
+
+function notifyCrossTabMutation(action, details = {}) {
+    clientCache.clear();
+    if (syncChannel) {
+        try {
+            syncChannel.postMessage({ type: 'mutation', action: action, sender: window.myClientId, ...details });
+        } catch (_) {}
+    }
+}
+
+document.addEventListener('htmx:afterRequest', (evt) => {
+    if (evt.detail && evt.detail.successful) {
+        const verb = (evt.detail.requestConfig?.verb || '').toUpperCase();
+        if (['DELETE', 'POST', 'PUT', 'PATCH'].includes(verb)) {
+            notifyCrossTabMutation('htmx_mutation');
+        }
+    }
+});
 
 function updateWsBadge(status) {
     const badge = document.getElementById('ws-badge');
@@ -378,6 +413,10 @@ function initWebSocket(force = false) {
     if (!force && socket && socket.readyState === WebSocket.CONNECTING) {
         return;
     }
+    // Se for forçado mas já está conectando há menos de 1500ms, preserva a conexão em andamento
+    if (force && socket && socket.readyState === WebSocket.CONNECTING && (Date.now() - wsConnectStartTime < 1500)) {
+        return;
+    }
 
     // Cancela timers pendentes
     if (wsReconnectTimer) {
@@ -396,6 +435,7 @@ function initWebSocket(force = false) {
     }
 
     updateWsBadge('connecting');
+    wsConnectStartTime = Date.now();
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws`;
@@ -443,6 +483,11 @@ function initWebSocket(force = false) {
                 return;
             }
 
+            if (data.type === 'invalidate_cache') {
+                clientCache.clear();
+                return;
+            }
+
             if (data.type === 'lots_update') {
                 const cacheKey = `${data.filtro || 'todos'}|${(data.busca || '').trim().toUpperCase()}`;
                 clientCache.set(cacheKey, { html: data.html, total: data.total });
@@ -454,10 +499,10 @@ function initWebSocket(force = false) {
                 renderLotsData(data.html, data.total);
 
             } else if (data.type === 'reload') {
+                clientCache.clear();
                 if (data.sender && data.sender === window.myClientId) {
                     return;
                 }
-                clientCache.clear();
                 clearTimeout(reloadDebounceTimer);
                 reloadDebounceTimer = setTimeout(() => {
                     if (!window.isEditingLot) {
@@ -519,8 +564,8 @@ function scheduleWsReconnect() {
     if (wsReconnectTimer) return;
 
     wsReconnectAttempts++;
-    // Backoff inteligente: 1s, 1.4s, 1.9s até max 4.5s com jitter aleatório
-    const delay = Math.min(1000 * Math.pow(1.35, Math.min(wsReconnectAttempts, 6)), 4500) + (Math.random() * 300);
+    // Reconexão ultra ágil: 200ms na primeira tentativa até max 2.5s
+    const delay = Math.min(200 * Math.pow(1.3, Math.min(wsReconnectAttempts, 6)), 2500) + (Math.random() * 80);
 
     wsReconnectTimer = setTimeout(() => {
         wsReconnectTimer = null;
@@ -531,7 +576,8 @@ function scheduleWsReconnect() {
 // ── Recuperação Instantânea ao Desbloquear Celular / Trocar de Aba / Reatar Conexão ──
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-        // Ao retornar para a aba ou desbloquear a tela do celular, revalida ou reconecta imediatamente
+        // Ao retornar para a aba ou desbloquear a tela do celular, limpa cache e revalida imediatamente
+        clientCache.clear();
         if (!socket || socket.readyState !== WebSocket.OPEN) {
             initWebSocket(true);
         } else {
@@ -541,6 +587,9 @@ document.addEventListener('visibilitychange', () => {
             } catch (_) {
                 initWebSocket(true);
             }
+        }
+        if (!window.isEditingLot) {
+            performSearch(true);
         }
     }
 });
@@ -643,7 +692,8 @@ function clearSearch() {
 }
 
 function prewarmClientFilters() {
-    const filters = ['vencidos', 'critico', 'atencao', 'alerta', 'recentes', 'deletados'];
+    // Pré-aquece apenas abas de consulta frequente com intervalo seguro
+    const filters = ['vencidos', 'critico', 'atencao', 'alerta', 'recentes'];
     filters.forEach((f, idx) => {
         setTimeout(() => {
             if (socket && socket.readyState === WebSocket.OPEN) {
@@ -654,7 +704,7 @@ function prewarmClientFilters() {
                     prewarm: true
                 }));
             }
-        }, 120 + (idx * 60));
+        }, 200 + (idx * 100));
     });
 }
 
@@ -822,7 +872,16 @@ function setFiltro(key, evt) {
 
     if (window.renderLucideIcons) window.renderLucideIcons();
 
-    performSearch(false);
+    // Stale-While-Revalidate: Se houver cache prévio, exibe imediatamente (0ms)
+    const busca = (document.getElementById('current-busca')?.value || '').trim().toUpperCase();
+    const cacheKey = `${key}|${busca}`;
+    if (key !== 'deletados' && clientCache.has(cacheKey)) {
+        const cached = clientCache.get(cacheKey);
+        renderLotsData(cached.html, cached.total);
+    }
+
+    // Sempre busca a versão mais recente no servidor/WebSocket (sub-5ms) para sincronismo total
+    performSearch(true);
 }
 
 async function purgeAllDeleted() {

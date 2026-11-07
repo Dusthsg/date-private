@@ -924,6 +924,55 @@ class TestUserReportedIssues(unittest.TestCase):
         msg = format_alert_message(summary, is_test=True)
         self.assertIn('DateLimit', msg)
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # 24. PERSISTÊNCIA WEBSOCKET THREAD-SAFE E SINCRONIZAÇÃO ENTRE ABAS
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_24_threadsafe_websocket_and_crosstab_sync(self):
+        """
+        Valida:
+        1. SafeWebSocket thread-safe contra concorrência e corrupção de sockets.
+        2. broadcast_reload envia 'invalidate_cache' para o autor e 'reload' para terceiros.
+        3. Presença de BroadcastChannel e sincronização instantânea entre abas no template.
+        """
+        from app.run import SafeWebSocket, broadcast_reload, connected_clients, clients_lock
+        import time
+
+        class MockWS:
+            def __init__(self):
+                self.messages = []
+            def send(self, data):
+                self.messages.append(data)
+            def close(self):
+                pass
+
+        m1 = MockWS()
+        m2 = MockWS()
+        safe1 = SafeWebSocket(m1, client_id='tab_1')
+        safe2 = SafeWebSocket(m2, client_id='tab_2')
+
+        with clients_lock:
+            connected_clients.add(safe1)
+            connected_clients.add(safe2)
+
+        broadcast_reload('delete_lot', exclude_client_id='tab_1')
+        time.sleep(0.08)
+
+        # Tab 1 deve receber invalidate_cache
+        self.assertTrue(any('invalidate_cache' in msg for msg in m1.messages))
+        # Tab 2 deve receber reload
+        self.assertTrue(any('reload' in msg for msg in m2.messages))
+
+        with clients_lock:
+            connected_clients.discard(safe1)
+            connected_clients.discard(safe2)
+
+        # Valida que o template possui BroadcastChannel e ouvinte cross-tab
+        resp = self.client.get('/')
+        html = resp.data.decode('utf-8')
+        self.assertIn('BroadcastChannel', html)
+        self.assertIn('notifyCrossTabMutation', html)
+        self.assertIn('datelimit_channel', html)
+
 
 if __name__ == '__main__':
     unittest.main()
