@@ -375,6 +375,7 @@ def get_db_cursor(commit=False):
         # Modo SQLite Local (Offline-first resiliente com WAL ultrarrápido)
         SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(SQLITE_PATH), timeout=10.0)
+        conn.isolation_level = None  # Autocommit: leituras sempre enxergam os commits mais recentes no WAL
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode = WAL;")
         conn.execute("PRAGMA synchronous = NORMAL;")
@@ -1622,12 +1623,9 @@ def delete_lot(lot_id: int, sync: bool = True) -> bool:
     Dá baixa no lote e registra a Lápide (tombstone) em stock_movements,
     garantindo que futuras importações de planilhas não ressuscitem esse lote (Item Zumbi).
     """
-    # 1. Remove do cache em RAM imediatamente (0.01ms)
+    # 1. Remove do cache em RAM imediatamente (0.01ms) e invalida cache de consultas
     _remove_cache_lot(lot_id)
-    with _cache_lock:
-        for k in list(_query_cache.keys()):
-            if k[0] in ("deletados", "deletado", "baixas"):
-                del _query_cache[k]
+    clear_query_cache(clear_catalog=False)
 
     # 2. Registra baixa e remove no SQLite local imediatamente (< 1ms)
     row_info = None
