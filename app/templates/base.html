@@ -84,11 +84,20 @@
         }
         #lot-display-container.view-mode-table thead th {
             display: table-cell !important;
-            padding: 0.52rem 0.75rem !important;
+            padding: 0.6rem 0.75rem !important;
             font-size: 0.74rem !important;
             font-weight: 700 !important;
             letter-spacing: 0.04em !important;
             line-height: 1.15 !important;
+            position: sticky;
+            top: 53px;
+            z-index: 10;
+            background-color: #f9fafb !important;
+            border-bottom: 2px solid #e5e7eb !important;
+        }
+        html.dark #lot-display-container.view-mode-table thead th {
+            background-color: #1f2937 !important;
+            border-bottom-color: #374151 !important;
         }
         #lot-display-container.view-mode-table tbody {
             display: table-row-group !important;
@@ -556,17 +565,41 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
                 </button>
             </div>
 
-            <!-- Controles Desktop (Visíveis em telas sm+) -->
-            <div class="hidden sm:flex flex-wrap items-center gap-2 text-xs">
+            <!-- Controles Desktop e Tablet (Visíveis em telas sm+) -->
+            <div class="hidden sm:flex items-center gap-2 text-xs">
                 <!-- Botão de Alertas Automáticos -->
                 <button id="btn-alerts-modal"
                         type="button"
                         onclick="openAlertsModal()"
                         class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-600 active:scale-95 text-white transition border border-amber-400/80 shadow-xs cursor-pointer select-none"
-                        title="Configurar Alertas Automáticos (Telegram / Webhook)">
+                        title="Configurar Alertas Automáticos">
                     <i data-lucide="bell" class="w-3.5 h-3.5"></i>
                     <span>Alertas</span>
                 </button>
+
+                <!-- Menu Popover de Conexões de Rede (Local e Wi-Fi) -->
+                <div class="relative group/net">
+                    <button type="button"
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-800/90 hover:bg-indigo-900 border border-indigo-600/50 text-indigo-100 transition shadow-xs cursor-pointer"
+                            title="Endereços de Acesso (Local e Wi-Fi)">
+                        <i data-lucide="wifi" class="w-3.5 h-3.5 text-emerald-400"></i>
+                        <span>Rede</span>
+                        <i data-lucide="chevron-down" class="w-3 h-3 opacity-70"></i>
+                    </button>
+                    <div class="hidden group-hover/net:block hover:block absolute right-0 top-full mt-1.5 w-64 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 p-2.5 z-50 transition-all">
+                        <div class="text-[10px] font-bold text-gray-400 dark:text-gray-400 uppercase tracking-wider px-1 mb-1.5">Endereços de Acesso</div>
+                        <a href="{{ local_url }}" target="_blank"
+                           class="flex items-center justify-between p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/70 transition text-xs group/link mb-1">
+                            <span class="flex items-center gap-1.5 font-medium"><i data-lucide="laptop" class="w-3.5 h-3.5 text-indigo-500"></i> Local</span>
+                            <span class="font-mono text-[11px] text-indigo-600 dark:text-indigo-400 group-hover/link:underline">{{ local_url }}</span>
+                        </a>
+                        <a href="{{ network_url }}" target="_blank"
+                           class="flex items-center justify-between p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/70 transition text-xs group/link">
+                            <span class="flex items-center gap-1.5 font-medium"><i data-lucide="smartphone" class="w-3.5 h-3.5 text-emerald-500"></i> Wi-Fi</span>
+                            <span class="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 group-hover/link:underline font-bold">{{ network_url }}</span>
+                        </a>
+                    </div>
+                </div>
 
                 <!-- Botão de Alternar Modo Escuro -->
                 <button id="btn-theme-toggle"
@@ -577,16 +610,6 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
                     <span id="theme-toggle-icon"><i data-lucide="moon" class="w-3.5 h-3.5 inline-block text-amber-300"></i></span>
                     <span id="theme-toggle-text">Modo Escuro</span>
                 </button>
-
-                <a href="{{ local_url }}" target="_blank"
-                   class="bg-indigo-800 hover:bg-indigo-900 dark:bg-gray-700 dark:hover:bg-gray-600 px-2.5 py-1.5 rounded-lg text-indigo-100 dark:text-gray-200 flex items-center gap-1 transition border border-indigo-600/40 dark:border-gray-600">
-                    <i data-lucide="laptop" class="w-3.5 h-3.5"></i> <span>Local:</span> <span class="font-mono text-white dark:text-indigo-200">{{ local_url }}</span>
-                </a>
-                <a href="{{ network_url }}" target="_blank"
-                   class="bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-600 px-2.5 py-1.5 rounded-lg text-white font-medium flex items-center gap-1 transition shadow-sm"
-                   title="Use este link no navegador do celular conectado no mesmo Wi-Fi">
-                    <i data-lucide="smartphone" class="w-3.5 h-3.5"></i> <span>Rede/Celular:</span> <span class="font-mono font-bold">{{ network_url }}</span>
-                </a>
             </div>
         </div>
     </header>
