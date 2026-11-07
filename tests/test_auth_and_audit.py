@@ -147,24 +147,54 @@ class TestAuthAndAudit(unittest.TestCase):
         self.assertIn("total", data)
 
     def test_08_switch_operator_session(self):
-        """Testa a rota de troca rápida de operador em chão de loja."""
-        u_name = f"op_switch_{uuid.uuid4().hex[:6]}"
+        """Testa a rota de troca rápida de operador em chão de loja e mutação completa de sessão."""
+        u_name = f"op_sw_{uuid.uuid4().hex[:6]}"
         create_user(u_name, "Operador Caixa", "123456", pin="7788", role="operador")
-
-        res = self.client.post("/api/operator/switch", json={"pin": "7788"})
-        self.assertEqual(res.status_code, 200)
-        data = res.get_json()
-        self.assertTrue(data["success"])
-        self.assertEqual(data["operator_name"], "Operador Caixa")
-
-        # Testa PIN inválido
-        res_inv = self.client.post("/api/operator/switch", json={"pin": "0000"})
-        self.assertEqual(res_inv.status_code, 401)
-
-        # Cleanup
         u = get_user_by_username(u_name)
-        if u:
-            delete_user(u["id"])
+        self.assertIsNotNone(u)
+
+        try:
+            # 1. Troca rápida para o operador
+            res = self.client.post("/api/operator/switch", json={"pin": "7788"})
+            self.assertEqual(res.status_code, 200)
+            data = res.get_json()
+            self.assertTrue(data["success"])
+            self.assertEqual(data["operator_name"], "Operador Caixa")
+            self.assertEqual(data["role"], "operador")
+            self.assertEqual(data["user_id"], u["id"])
+
+            # 2. Valida que a sessão Flask foi 100% sincronizada
+            with self.client.session_transaction() as sess:
+                self.assertEqual(sess["user_id"], u["id"])
+                self.assertEqual(sess["username"], u_name)
+                self.assertEqual(sess["name"], "Operador Caixa")
+                self.assertEqual(sess["role"], "operador")
+                self.assertEqual(sess["active_operator"], "Operador Caixa")
+
+            # 3. Operador não acessa /admin
+            res_admin_blocked = self.client.get("/admin")
+            self.assertEqual(res_admin_blocked.status_code, 403)
+
+            # 4. Troca rápida para Administrador (PIN 1234)
+            res_switch_admin = self.client.post("/api/operator/switch", json={"pin": "1234"})
+            self.assertEqual(res_switch_admin.status_code, 200)
+            data_adm = res_switch_admin.get_json()
+            self.assertEqual(data_adm["role"], "admin")
+
+            # 5. Valida que agora a sessão tem papel admin e acessa /admin com sucesso
+            with self.client.session_transaction() as sess:
+                self.assertEqual(sess["role"], "admin")
+                self.assertEqual(sess["name"], "Administrador")
+            res_admin_ok = self.client.get("/admin")
+            self.assertEqual(res_admin_ok.status_code, 200)
+
+            # 6. Testa PIN inválido
+            res_inv = self.client.post("/api/operator/switch", json={"pin": "0000"})
+            self.assertEqual(res_inv.status_code, 401)
+        finally:
+            u_clean = get_user_by_username(u_name)
+            if u_clean:
+                delete_user(u_clean["id"])
 
     def test_09_admin_panel_page_access(self):
         """Testa o acesso à página dedicada do painel de administração (/admin)."""

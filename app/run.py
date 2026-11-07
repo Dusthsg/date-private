@@ -206,11 +206,13 @@ def check_authentication():
     if (
         path.startswith("/static")
         or path.startswith("/favicon")
-        or path in ("/login", "/ws")
+        or path in ("/login", "/ws", "/api/operator/switch")
     ):
         return None
 
     if not session.get("user_id"):
+        if path.startswith("/api/"):
+            return jsonify({"error": "Sessão expirada. Faça login novamente."}), 401
         if request.headers.get("HX-Request"):
             return Response("", 200, {"HX-Redirect": "/login"})
         return redirect("/login")
@@ -1139,6 +1141,7 @@ def login_route():
                 session["name"] = user["name"]
                 session["role"] = user["role"]
                 session["active_operator"] = user["name"]
+                session["active_operator_username"] = user["username"]
                 log_audit(user["name"], "LOGIN", f"Acesso rápido via PIN ({user['role']})", user_id=user["id"], ip_address=ip)
                 return redirect("/")
             else:
@@ -1157,6 +1160,7 @@ def login_route():
                     session["name"] = user["name"]
                     session["role"] = user["role"]
                     session["active_operator"] = user["name"]
+                    session["active_operator_username"] = user["username"]
                     log_audit(user["name"], "LOGIN", f"Login com senha ({user['role']})", user_id=user["id"], ip_address=ip)
                     return redirect("/")
             else:
@@ -1186,12 +1190,29 @@ def switch_operator_route():
     if not user:
         return jsonify({"success": False, "error": "PIN não encontrado ou operador inativo."}), 401
 
-    old_op = session.get("active_operator", "Desconhecido")
+    old_op = session.get("name") or session.get("active_operator") or "Desconhecido"
+    session.permanent = True
+    session["user_id"] = user["id"]
+    session["username"] = user["username"]
+    session["name"] = user["name"]
+    session["role"] = user["role"]
     session["active_operator"] = user["name"]
     session["active_operator_username"] = user["username"]
     ip = request.remote_addr or "127.0.0.1"
-    log_audit(user["name"], "TROCA_OPERADOR", f"Trocou operador ativo no chão de loja (de '{old_op}' para '{user['name']}')", user_id=user["id"], ip_address=ip)
-    return jsonify({"success": True, "active_operator": user["name"], "operator_name": user["name"]})
+    log_audit(
+        user["name"],
+        "TROCA_OPERADOR",
+        f"Trocou operador ativo no chão de loja via PIN (de '{old_op}' para '{user['name']}' [{user['role']}])",
+        user_id=user["id"],
+        ip_address=ip
+    )
+    return jsonify({
+        "success": True,
+        "active_operator": user["name"],
+        "operator_name": user["name"],
+        "role": user["role"],
+        "user_id": user["id"]
+    })
 
 
 @app.route("/api/audit/logs", methods=["GET"])

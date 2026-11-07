@@ -1,5 +1,7 @@
 <!-- Modal de Troca Rápida de Operador no Chão de Loja -->
-<div id="modal-switch-operator" class="fixed inset-0 z-50 hidden bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+<div id="modal-switch-operator"
+     onclick="if(event.target === this) closeSwitchOperatorModal()"
+     class="fixed inset-0 z-50 hidden bg-black/60 backdrop-blur-xs items-center justify-center p-3 sm:p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         
         <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between bg-emerald-50/60 dark:bg-emerald-950/40">
@@ -21,7 +23,7 @@
             <div>
                 <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">Digite seu PIN de 4 dígitos</label>
                 <div class="relative">
-                    <input type="password" id="input-switch-pin" maxlength="8" pattern="[0-9]*" inputmode="numeric" required autofocus
+                    <input type="password" id="input-switch-pin" maxlength="8" pattern="[0-9]*" inputmode="numeric" required autofocus autocomplete="off"
                            placeholder="••••"
                            class="w-full text-center tracking-widest font-mono text-2xl py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
                 </div>
@@ -76,7 +78,10 @@ function appendSwitchPin(num) {
 
 function clearSwitchPin() {
     const inp = document.getElementById('input-switch-pin');
-    if (inp) inp.value = '';
+    if (inp) {
+        inp.value = '';
+        inp.focus();
+    }
 }
 
 function backspaceSwitchPin() {
@@ -90,27 +95,51 @@ function openSwitchOperatorModal() {
     const modal = document.getElementById('modal-switch-operator');
     if (!modal) return;
     modal.classList.remove('hidden');
+    modal.classList.add('flex');
     const input = document.getElementById('input-switch-pin');
     if (input) {
         input.value = '';
-        input.focus();
+        setTimeout(() => input.focus(), 60);
     }
     const msg = document.getElementById('switch-operator-msg');
     if (msg) msg.innerHTML = '';
-    if (window.refreshIcons) window.refreshIcons(modal);
+    if (window.refreshIcons) {
+        window.refreshIcons(modal);
+    } else if (window.lucide) {
+        window.lucide.createIcons();
+    }
 }
 
 function closeSwitchOperatorModal() {
     const modal = document.getElementById('modal-switch-operator');
-    if (modal) modal.classList.add('hidden');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
 }
 
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const modal = document.getElementById('modal-switch-operator');
+        if (modal && !modal.classList.contains('hidden')) {
+            closeSwitchOperatorModal();
+        }
+    }
+});
+
 async function submitSwitchOperator(evt) {
-    evt.preventDefault();
-    const pin = document.getElementById('input-switch-pin')?.value;
+    if (evt && evt.preventDefault) evt.preventDefault();
+    const input = document.getElementById('input-switch-pin');
+    const pin = (input?.value || '').trim();
     const msg = document.getElementById('switch-operator-msg');
 
-    if (!pin) return;
+    if (!pin) {
+        if (msg) msg.innerHTML = '<span class="text-amber-600 font-semibold">Digite seu PIN.</span>';
+        if (input) input.focus();
+        return;
+    }
+
+    if (msg) msg.innerHTML = '<span class="text-indigo-600 dark:text-indigo-400 font-semibold animate-pulse">Verificando...</span>';
 
     try {
         const resp = await fetch('/api/operator/switch', {
@@ -119,14 +148,24 @@ async function submitSwitchOperator(evt) {
             body: JSON.stringify({ pin: pin })
         });
         const res = await resp.json();
-        if (!resp.ok || !res.success) throw new Error(res.error || "PIN incorreto");
+        if (!resp.ok || !res.success) {
+            throw new Error(res.error || "PIN incorreto ou operador inativo.");
+        }
 
-        msg.innerHTML = `<span class="text-emerald-600 font-bold">✓ Operador ativo: ${res.active_operator}</span>`;
+        if (msg) {
+            msg.innerHTML = `<span class="text-emerald-600 dark:text-emerald-400 font-bold">✓ Conectado como ${res.active_operator} (${res.role || 'operador'})</span>`;
+        }
         setTimeout(() => {
             window.location.reload();
-        }, 600);
+        }, 400);
     } catch (e) {
-        msg.innerHTML = `<span class="text-rose-600 font-bold">✕ ${e.message}</span>`;
+        if (msg) {
+            msg.innerHTML = `<span class="text-rose-600 dark:text-rose-400 font-bold">✕ ${e.message}</span>`;
+        }
+        if (input) {
+            input.value = '';
+            input.focus();
+        }
     }
 }
 </script>
