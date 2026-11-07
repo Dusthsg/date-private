@@ -589,7 +589,7 @@ def init_sqlite_db():
             status TEXT DEFAULT 'NORMAL',
             origin TEXT DEFAULT 'MANUAL',
             created_at TEXT DEFAULT (date('now')),
-            updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
         );
     """)
@@ -609,6 +609,9 @@ def init_sqlite_db():
         cur.execute("ALTER TABLE products ADD COLUMN bar_code TEXT;")
     if "price" not in p_cols:
         cur.execute("ALTER TABLE products ADD COLUMN price REAL DEFAULT 0.0;")
+    if "updated_at" not in p_cols:
+        cur.execute("ALTER TABLE products ADD COLUMN updated_at TEXT;")
+        cur.execute("UPDATE products SET updated_at = datetime('now') WHERE updated_at IS NULL;")
         cur.execute("""
             UPDATE products
             SET price = COALESCE((
@@ -638,7 +641,7 @@ def init_sqlite_db():
         cur.execute("UPDATE product_lots SET created_at = date('now') WHERE created_at IS NULL;")
     if "updated_at" not in l_cols:
         cur.execute("ALTER TABLE product_lots ADD COLUMN updated_at TEXT;")
-        cur.execute("UPDATE product_lots SET updated_at = datetime('now', 'localtime') WHERE updated_at IS NULL;")
+        cur.execute("UPDATE product_lots SET updated_at = datetime('now') WHERE updated_at IS NULL;")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created ON product_lots(created_at);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_created_id ON product_lots(created_at, id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_product_lots_origin ON product_lots(origin);")
@@ -652,7 +655,7 @@ def init_sqlite_db():
             action TEXT NOT NULL,
             quant INTEGER DEFAULT 0,
             date_valid TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            created_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
         );
     """)
@@ -693,8 +696,8 @@ def init_sqlite_db():
             role TEXT DEFAULT 'operador',
             active INTEGER DEFAULT 1,
             api_token TEXT,
-            created_at TEXT DEFAULT (datetime('now', 'localtime')),
-            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
         );
     ''')
     try:
@@ -713,7 +716,7 @@ def init_sqlite_db():
             product_name TEXT,
             details TEXT NOT NULL,
             ip_address TEXT,
-            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            created_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
         );
     ''')
@@ -798,6 +801,7 @@ def init_pg_db():
             conn.rollback()
 
         cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
+        cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
         cur.execute("""
             UPDATE products
             SET price = COALESCE((
@@ -925,16 +929,22 @@ def init_pg_db():
 
 def pull_cloud_to_sqlite() -> dict:
     """
-    Puxa uma cópia integral dos dados do PostgreSQL na nuvem para o SQLite local em velocidade máxima:
-    - 1 único roundtrip de rede usando agregação JSON nativa do PostgreSQL (~0.9s vs ~3.5s)
-    - Gravação atômica em modo WAL sem travar consultas concorrentes (~0.18s)
-    - Proteção contra concorrência via thread lock
+    Sincronização bidirecional inteligente com resolução de conflitos por Timestamp (Last-Write-Wins):
+    1. Se o banco local SQLite foi utilizado durante falha/indisponibilidade do Neon,
+       detecta se as alterações locais são mais recentes que o Neon (updated_at local > Neon).
+    2. Realiza o upload/push para o Neon de:
+       - Lotes novos ou com updated_at mais recente
+       - Baixas (stock_movements) efetuadas localmente (removendo os lotes correspondentes no Neon)
+       - Produtos novos ou com preço/dados mais recentes
+       - Usuários e permissões com dados mais recentes
+       - Logs de auditoria locais não presentes no Neon
+    3. Atualiza os sequences do PostgreSQL para eliminar qualquer risco de colisão.
+    4. Atualiza o SQLite local com a cópia integral unificada em modo WAL.
     """
     t0 = time.time()
     if not is_postgres_configured():
         return {"success": False, "error": "PostgreSQL não configurado no .env"}
 
-    # Evita execuções simultâneas de sincronização que geram travamento
     if not _sync_lock.acquire(blocking=False):
         with _status_lock:
             return {
@@ -944,11 +954,26 @@ def pull_cloud_to_sqlite() -> dict:
                 "timestamp": _db_status["last_sync"] or time.strftime("%Y-%m-%d %H:%M:%S"),
             }
 
-    try:
-        # 1. Garante schema SQLite em modo WAL
-        init_sqlite_db()
+    from datetime import datetime
 
-        # 2. Busca todos os dados do PostgreSQL em 1 ÚNICO roundtrip de rede
+    def parse_ts(ts):
+        if not ts:
+            return datetime.min
+        s = str(ts).strip()
+        if "+" in s:
+            s = s.split("+")[0].strip()
+        if "." in s:
+            s = s.split(".")[0].strip()
+        try:
+            return datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            try:
+                return datetime.strptime(s[:10], "%Y-%m-%d")
+            except Exception:
+                return datetime.min
+
+    try:
+        init_sqlite_db()
         pool_inst = get_pg_pool()
         if pool_inst:
             pg_conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
@@ -957,9 +982,11 @@ def pull_cloud_to_sqlite() -> dict:
             is_from_pool = False
 
         pg_cur = pg_conn.cursor()
+
+        # 1. Puxa snapshot atual do PostgreSQL Neon
         pg_cur.execute("""
             SELECT
-                COALESCE((SELECT json_agg(p) FROM (SELECT id, name, bar_code, price FROM products) p), '[]'::json) AS prods,
+                COALESCE((SELECT json_agg(p) FROM (SELECT id, name, bar_code, price, COALESCE(updated_at::TEXT, '') AS updated_at FROM products) p), '[]'::json) AS prods,
                 COALESCE((SELECT json_agg(l) FROM (SELECT id, product_id, quant, price, date_valid::TEXT, location, status, origin, created_at::TEXT, updated_at::TEXT FROM product_lots) l), '[]'::json) AS lots,
                 COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves,
                 COALESCE((SELECT json_agg(u) FROM (SELECT id, username, name, password_hash, pin, role, active, COALESCE(api_token, '') AS api_token, created_at::TEXT, updated_at::TEXT FROM users) u), '[]'::json) AS users_data,
@@ -980,11 +1007,172 @@ def pull_cloud_to_sqlite() -> dict:
                 return col_val
             return []
 
-        products = _parse_json_col(raw_row[0]) if raw_row else []
-        lots = _parse_json_col(raw_row[1]) if raw_row else []
-        movements = _parse_json_col(raw_row[2]) if raw_row else []
-        users_list = _parse_json_col(raw_row[3]) if raw_row and len(raw_row) > 3 else []
-        audit_list = _parse_json_col(raw_row[4]) if raw_row and len(raw_row) > 4 else []
+        pg_products = {p["id"]: p for p in _parse_json_col(raw_row[0])} if raw_row else {}
+        pg_lots = {l["id"]: l for l in _parse_json_col(raw_row[1])} if raw_row else {}
+        pg_moves = {m["id"]: m for m in _parse_json_col(raw_row[2])} if raw_row else {}
+        pg_users = {u["id"]: u for u in (_parse_json_col(raw_row[3]) if raw_row and len(raw_row) > 3 else [])}
+        pg_audit = {a["id"]: a for a in (_parse_json_col(raw_row[4]) if raw_row and len(raw_row) > 4 else [])}
+
+        # 2. Lê snapshot local do SQLite
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+            s_conn.row_factory = sqlite3.Row
+            s_cur = s_conn.cursor()
+
+            s_cur.execute("SELECT id, name, bar_code, price, updated_at FROM products")
+            sq_products = {r["id"]: dict(r) for r in s_cur.fetchall()}
+
+            s_cur.execute("SELECT id, product_id, quant, price, date_valid, location, status, origin, created_at, updated_at FROM product_lots")
+            sq_lots = {r["id"]: dict(r) for r in s_cur.fetchall()}
+
+            s_cur.execute("SELECT id, product_id, lot_id, action, quant, date_valid, created_at FROM stock_movements")
+            sq_moves = {r["id"]: dict(r) for r in s_cur.fetchall()}
+
+            sq_users = {}
+            try:
+                s_cur.execute("SELECT id, username, name, password_hash, pin, role, active, api_token, created_at, updated_at FROM users")
+                sq_users = {r["id"]: dict(r) for r in s_cur.fetchall()}
+            except Exception:
+                pass
+
+            sq_audit = {}
+            try:
+                s_cur.execute("SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at FROM audit_logs")
+                sq_audit = {r["id"]: dict(r) for r in s_cur.fetchall()}
+            except Exception:
+                pass
+
+        uploaded_prods = 0
+        uploaded_lots = 0
+        uploaded_moves = 0
+        uploaded_users = 0
+        uploaded_audits = 0
+
+        # 3. CONCILIAÇÃO DE PRODUTOS: Se local for mais recente ou novo -> Upload para Neon
+        pg_prods_by_name = {p["name"].strip().upper(): p for p in pg_products.values() if p.get("name")}
+        for sq_id, sq_p in sq_products.items():
+            name_key = sq_p["name"].strip().upper()
+            if name_key in pg_prods_by_name:
+                pg_p = pg_prods_by_name[name_key]
+                if parse_ts(sq_p.get("updated_at")) > parse_ts(pg_p.get("updated_at")):
+                    pg_cur.execute(
+                        "UPDATE products SET price = %s, bar_code = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                        (sq_p.get("price", 0.0), sq_p.get("bar_code"), pg_p["id"])
+                    )
+                    uploaded_prods += 1
+            elif sq_id not in pg_products:
+                pg_cur.execute(
+                    "INSERT INTO products (id, name, bar_code, price, updated_at) VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP) ON CONFLICT (name) DO UPDATE SET price = EXCLUDED.price",
+                    (sq_id, sq_p["name"], sq_p.get("bar_code"), sq_p.get("price", 0.0))
+                )
+                uploaded_prods += 1
+
+        # 4. CONCILIAÇÃO DE MOVIMENTAÇÕES (BAIXAS): Se local tem baixas não presentes no Neon -> Upload e Remove Lote no Neon
+        pg_baixa_lot_ids = {m["lot_id"] for m in pg_moves.values() if m.get("action") == "BAIXA" and m.get("lot_id")}
+        for sq_id, sq_m in sq_moves.items():
+            if sq_m.get("action") == "BAIXA" and sq_m.get("lot_id"):
+                l_id = sq_m["lot_id"]
+                if l_id not in pg_baixa_lot_ids:
+                    pg_cur.execute(
+                        "INSERT INTO stock_movements (product_id, lot_id, action, quant, date_valid, created_at) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)",
+                        (sq_m["product_id"], l_id, sq_m["action"], sq_m.get("quant", 0), str(sq_m["date_valid"])[:10])
+                    )
+                    pg_cur.execute("DELETE FROM product_lots WHERE id = %s", (l_id,))
+                    pg_baixa_lot_ids.add(l_id)
+                    uploaded_moves += 1
+
+        # 5. CONCILIAÇÃO DE LOTES: Se alteração local for mais recente que o Neon -> Upload para Neon
+        for sq_id, sq_l in sq_lots.items():
+            if sq_id in pg_baixa_lot_ids:
+                continue
+
+            if sq_id in pg_lots:
+                pg_l = pg_lots[sq_id]
+                sq_time = parse_ts(sq_l.get("updated_at") or sq_l.get("created_at"))
+                pg_time = parse_ts(pg_l.get("updated_at") or pg_l.get("created_at"))
+                if sq_time > pg_time:
+                    # Alteração local é mais recente! Faz upload para o Neon
+                    pg_cur.execute(
+                        """UPDATE product_lots
+                           SET quant = %s, price = %s, date_valid = %s, location = %s, status = %s, updated_at = CURRENT_TIMESTAMP
+                           WHERE id = %s""",
+                        (sq_l["quant"], sq_l.get("price", 0.0), str(sq_l["date_valid"])[:10], sq_l.get("location", "LOJA"), sq_l.get("status", "NORMAL"), sq_id)
+                    )
+                    uploaded_lots += 1
+            else:
+                # Lote novo cadastrado localmente durante indisponibilidade do Neon -> Upload
+                pg_cur.execute(
+                    """INSERT INTO product_lots (id, product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE, CURRENT_TIMESTAMP)
+                       ON CONFLICT (id) DO UPDATE SET quant = EXCLUDED.quant, price = EXCLUDED.price, updated_at = CURRENT_TIMESTAMP""",
+                    (sq_id, sq_l["product_id"], sq_l["quant"], sq_l.get("price", 0.0), str(sq_l["date_valid"])[:10], sq_l.get("location", "LOJA"), sq_l.get("status", "NORMAL"), sq_l.get("origin", "MANUAL"))
+                )
+                uploaded_lots += 1
+
+        # 6. CONCILIAÇÃO DE USUÁRIOS: Se local for mais recente ou novo -> Upload para Neon
+        for sq_id, sq_u in sq_users.items():
+            if sq_id in pg_users:
+                pg_u = pg_users[sq_id]
+                sq_time = parse_ts(sq_u.get("updated_at") or sq_u.get("created_at"))
+                pg_time = parse_ts(pg_u.get("updated_at") or pg_u.get("created_at"))
+                if sq_time > pg_time:
+                    pg_cur.execute(
+                        """UPDATE users
+                           SET name = %s, password_hash = %s, pin = %s, role = %s, active = %s, api_token = %s, updated_at = CURRENT_TIMESTAMP
+                           WHERE id = %s""",
+                        (sq_u["name"], sq_u["password_hash"], sq_u.get("pin"), sq_u.get("role", "operador"), bool(sq_u.get("active", 1)), sq_u.get("api_token"), sq_id)
+                    )
+                    uploaded_users += 1
+            else:
+                pg_cur.execute(
+                    """INSERT INTO users (id, username, name, password_hash, pin, role, active, api_token, created_at, updated_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                       ON CONFLICT (username) DO UPDATE SET name = EXCLUDED.name, pin = EXCLUDED.pin, updated_at = CURRENT_TIMESTAMP""",
+                    (sq_id, sq_u["username"], sq_u["name"], sq_u["password_hash"], sq_u.get("pin"), sq_u.get("role", "operador"), bool(sq_u.get("active", 1)), sq_u.get("api_token"))
+                )
+                uploaded_users += 1
+
+        # 7. CONCILIAÇÃO DE AUDITORIA: Envia logs criados localmente
+        pg_audit_keys = {(a["username"], a["action"], str(a["created_at"])[:19]) for a in pg_audit.values()}
+        for sq_id, sq_a in sq_audit.items():
+            k = (sq_a["username"], sq_a["action"], str(sq_a["created_at"])[:19])
+            if k not in pg_audit_keys and sq_id not in pg_audit:
+                pg_cur.execute(
+                    """INSERT INTO audit_logs (user_id, username, action, target_id, product_name, details, ip_address, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (sq_a.get("user_id"), sq_a["username"], sq_a["action"], sq_a.get("target_id"), sq_a.get("product_name"), sq_a.get("details", ""), sq_a.get("ip_address"), sq_a["created_at"])
+                )
+                uploaded_audits += 1
+
+        # 8. Sincroniza sequences do PostgreSQL
+        pg_cur.execute("SELECT setval('products_id_seq', (SELECT COALESCE(MAX(id), 1) FROM products));")
+        pg_cur.execute("SELECT setval('product_lots_id_seq', (SELECT COALESCE(MAX(id), 1) FROM product_lots));")
+        pg_cur.execute("SELECT setval('stock_movements_id_seq', (SELECT COALESCE(MAX(id), 1) FROM stock_movements));")
+        try:
+            pg_cur.execute("SELECT setval('users_id_seq', (SELECT COALESCE(MAX(id), 1) FROM users));")
+        except Exception:
+            pass
+        try:
+            pg_cur.execute("SELECT setval('audit_logs_id_seq', (SELECT COALESCE(MAX(id), 1) FROM audit_logs));")
+        except Exception:
+            pass
+
+        pg_conn.commit()
+
+        # 9. Puxa a versão unificada e final para o SQLite
+        pg_cur.execute("""
+            SELECT
+                COALESCE((SELECT json_agg(p) FROM (SELECT id, name, bar_code, price, COALESCE(updated_at::TEXT, '') AS updated_at FROM products) p), '[]'::json) AS prods,
+                COALESCE((SELECT json_agg(l) FROM (SELECT id, product_id, quant, price, date_valid::TEXT, location, status, origin, created_at::TEXT, updated_at::TEXT FROM product_lots) l), '[]'::json) AS lots,
+                COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves,
+                COALESCE((SELECT json_agg(u) FROM (SELECT id, username, name, password_hash, pin, role, active, COALESCE(api_token, '') AS api_token, created_at::TEXT, updated_at::TEXT FROM users) u), '[]'::json) AS users_data,
+                COALESCE((SELECT json_agg(a) FROM (SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at::TEXT FROM audit_logs ORDER BY id DESC LIMIT 500) a), '[]'::json) AS audit_data;
+        """)
+        fresh_row = pg_cur.fetchone()
+        products = _parse_json_col(fresh_row[0]) if fresh_row else []
+        lots = _parse_json_col(fresh_row[1]) if fresh_row else []
+        movements = _parse_json_col(fresh_row[2]) if fresh_row else []
+        users_list = _parse_json_col(fresh_row[3]) if fresh_row and len(fresh_row) > 3 else []
+        audit_list = _parse_json_col(fresh_row[4]) if fresh_row and len(fresh_row) > 4 else []
 
         pg_cur.close()
         if is_from_pool and pool_inst:
@@ -992,28 +1180,19 @@ def pull_cloud_to_sqlite() -> dict:
         else:
             pg_conn.close()
 
-    except Exception as e:
-        _sync_lock.release()
-        with _status_lock:
-            _db_status["postgres_online"] = False
-            _db_status["last_error"] = str(e)
-        return {"success": False, "error": f"Falha ao conectar no PostgreSQL: {e}"}
-
-    # 3. Grava atomicamente no SQLite local usando WAL sem travar leituras
-    try:
+        # Grava atomicamente no SQLite local em modo WAL
         sqlite_conn = sqlite3.connect(str(SQLITE_PATH), timeout=10.0)
         sqlite_cur = sqlite_conn.cursor()
         sqlite_cur.execute("PRAGMA journal_mode = WAL;")
         sqlite_cur.execute("PRAGMA synchronous = NORMAL;")
-        sqlite_cur.execute("PRAGMA busy_timeout = 10000;")
         sqlite_cur.execute("PRAGMA foreign_keys = OFF;")
         sqlite_cur.execute("BEGIN TRANSACTION;")
 
         sqlite_cur.execute("DELETE FROM products;")
         if products:
             sqlite_cur.executemany(
-                "INSERT INTO products (id, name, bar_code, price) VALUES (?, ?, ?, ?);",
-                [(p["id"], p["name"], p.get("bar_code"), p.get("price", 0.0)) for p in products]
+                "INSERT INTO products (id, name, bar_code, price, updated_at) VALUES (?, ?, ?, ?, ?);",
+                [(p["id"], p["name"], p.get("bar_code"), p.get("price", 0.0), p.get("updated_at")) for p in products]
             )
 
         sqlite_cur.execute("DELETE FROM product_lots;")
@@ -1086,46 +1265,53 @@ def pull_cloud_to_sqlite() -> dict:
                     a["id"],
                     a.get("user_id"),
                     a.get("username", "Sistema"),
-                    a.get("action", "ACAO"),
+                    a.get("action", ""),
                     a.get("target_id"),
                     a.get("product_name"),
                     a.get("details", ""),
-                    a.get("ip_address", ""),
+                    a.get("ip_address"),
                     a.get("created_at")
                 )
                 for a in audit_list
             ])
 
         sqlite_conn.commit()
-        sqlite_cur.execute("PRAGMA foreign_keys = ON;")
         sqlite_conn.close()
 
-        duration = round(time.time() - t0, 2)
-        sync_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        with _status_lock:
-            _db_status["postgres_online"] = True
-            _db_status["last_sync"] = sync_time
-            _db_status["last_error"] = None
-            _db_status["total_products"] = len(products)
-            _db_status["total_lots"] = len(lots)
-
-        clear_query_cache()
-        return {
-            "success": True,
-            "products_count": len(products),
-            "lots_count": len(lots),
-            "movements_count": len(movements),
-            "duration_s": duration,
-            "timestamp": sync_time,
-        }
     except Exception as e:
-        return {"success": False, "error": f"Falha ao gravar no SQLite local: {e}"}
-    finally:
-        try:
-            _sync_lock.release()
-        except RuntimeError:
-            pass
+        _sync_lock.release()
+        with _status_lock:
+            _db_status["postgres_online"] = False
+            _db_status["last_error"] = str(e)
+        return {"success": False, "error": f"Falha na conciliação com PostgreSQL: {e}"}
 
+    _sync_lock.release()
+    clear_query_cache()
+
+    duration = round(time.time() - t0, 3)
+    sync_ts = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    with _status_lock:
+        _db_status["postgres_online"] = True
+        _db_status["last_sync"] = sync_ts
+        _db_status["last_error"] = None
+        _db_status["total_products"] = len(products)
+        _db_status["total_lots"] = len(lots)
+
+    print(f"🔄 Conciliação concluída em {duration}s! Uploads para Neon: {uploaded_lots} lotes, {uploaded_prods} produtos, {uploaded_moves} baixas, {uploaded_users} usuários.")
+
+    return {
+        "success": True,
+        "message": f"Sincronização concluída com sucesso! Uploads para Neon: {uploaded_lots} lotes, {uploaded_prods} produtos, {uploaded_moves} baixas.",
+        "duration_s": duration,
+        "timestamp": sync_ts,
+        "total_products": len(products),
+        "total_lots": len(lots),
+        "uploaded_lots": uploaded_lots,
+        "uploaded_prods": uploaded_prods,
+        "uploaded_moves": uploaded_moves,
+        "uploaded_users": uploaded_users
+    }
 
 def init_db():
     """
@@ -1394,7 +1580,7 @@ def update_lot_quant(lot_id: int, quant: int) -> bool:
     # 1. Atualiza cache em RAM instantaneamente (0.01ms) — zero espera
     _update_cache_lot_field(lot_id, "quant", quant)
     # 2. Grava no SQLite local em WAL mode (< 1ms)
-    _mirror_to_sqlite("UPDATE product_lots SET quant = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (quant, lot_id))
+    _mirror_to_sqlite("UPDATE product_lots SET quant = ?, updated_at = datetime('now') WHERE id = ?", (quant, lot_id))
     # 3. Sincroniza com PostgreSQL na nuvem em segundo plano sem travar a resposta HTTP
     if is_postgres():
         def _sync_pg():
@@ -1416,7 +1602,7 @@ def update_lot_price(lot_id: int, price: float) -> bool:
         _catalog_cache = None
     # 2. Grava no SQLite local: atualiza products e espelha em product_lots (< 1ms)
     _mirror_to_sqlite("UPDATE products SET price = ? WHERE id = (SELECT product_id FROM product_lots WHERE id = ?)", (price, lot_id))
-    _mirror_to_sqlite("UPDATE product_lots SET price = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (price, lot_id))
+    _mirror_to_sqlite("UPDATE product_lots SET price = ?, updated_at = datetime('now') WHERE id = ?", (price, lot_id))
     # 3. Sincroniza com PostgreSQL na nuvem em segundo plano sem travar a resposta HTTP
     if is_postgres():
         def _sync_pg():
@@ -1539,7 +1725,7 @@ def restore_lot(movement_id: int, sync: bool = True) -> bool:
 
             s_cur.execute(
                 """INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, 'LOJA', 'NORMAL', 'MANUAL', date('now'), datetime('now', 'localtime'))""",
+                   VALUES (?, ?, ?, ?, 'LOJA', 'NORMAL', 'MANUAL', date('now'), datetime('now'))""",
                 (p_id, quant, price, d_valid)
             )
             new_lot_id = s_cur.lastrowid
@@ -1691,14 +1877,14 @@ def create_lot(name: str, quant: int, price: float, date_valid: str, location: s
             old_quant = existing_lot[1] or 0
             new_quant = old_quant + quant
             cur.execute(
-                "UPDATE product_lots SET quant = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
+                "UPDATE product_lots SET quant = ?, updated_at = datetime('now') WHERE id = ?",
                 (new_quant, lot_id)
             )
             is_new_lot = False
         else:
             cur.execute(
                 """INSERT INTO product_lots (product_id, quant, price, date_valid, location, status, origin, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, 'MANUAL', date('now'), datetime('now', 'localtime'))""",
+                   VALUES (?, ?, ?, ?, ?, ?, 'MANUAL', date('now'), datetime('now'))""",
                 (product_id, quant, price, date_valid, location, status)
             )
             lot_id = cur.lastrowid
@@ -2303,7 +2489,7 @@ def update_user(user_id: int, name: str = None, username: str = None, password: 
         return False, "Nenhum campo informado para atualização."
 
     fields_pg.append("updated_at = CURRENT_TIMESTAMP")
-    fields_sq.append("updated_at = datetime('now', 'localtime')")
+    fields_sq.append("updated_at = datetime('now')")
 
     try:
         with get_db_cursor(commit=True) as (cur, db_type):
@@ -2371,7 +2557,7 @@ def log_audit(username: str, action: str, details: str, user_id: int = None, tar
             s_conn.execute("PRAGMA journal_mode = WAL;")
             s_conn.execute(
                 """INSERT INTO audit_logs (user_id, username, action, target_id, product_name, details, ip_address, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
                 (user_id, username, action, target_id, product_name, details, ip_address)
             )
             s_conn.commit()
