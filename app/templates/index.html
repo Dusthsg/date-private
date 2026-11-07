@@ -271,6 +271,50 @@
     </div>
 </div>
 
+<!-- Painel de Métricas / Resumo Consolidado do Estoque (Aba Total) -->
+<div id="total-summary-panel" class="{% if filtro not in ('todos', 'total') %}hidden{% endif %} mb-4 grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 transition-all duration-200">
+    <div class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-indigo-100 dark:border-indigo-950/60 shadow-xs flex items-center gap-3">
+        <div class="p-2 sm:p-2.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 shrink-0">
+            <i data-lucide="boxes" class="w-5 h-5"></i>
+        </div>
+        <div class="min-w-0">
+            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Total de Lotes</span>
+            <span id="summary-total-lots" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_lots_count or total or 0 }}</span>
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-emerald-100 dark:border-emerald-950/60 shadow-xs flex items-center gap-3">
+        <div class="p-2 sm:p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 shrink-0">
+            <i data-lucide="package-check" class="w-5 h-5"></i>
+        </div>
+        <div class="min-w-0">
+            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Unidades em Estoque</span>
+            <span id="summary-total-units" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_units_count or 0 }}</span>
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-blue-100 dark:border-blue-950/60 shadow-xs flex items-center gap-3">
+        <div class="p-2 sm:p-2.5 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 shrink-0">
+            <i data-lucide="layers" class="w-5 h-5"></i>
+        </div>
+        <div class="min-w-0">
+            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Produtos Distintos</span>
+            <span id="summary-total-products" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_products_count or 0 }}</span>
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-amber-100 dark:border-amber-950/60 shadow-xs flex items-center gap-3">
+        <div class="p-2 sm:p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 shrink-0">
+            <i data-lucide="circle-dollar-sign" class="w-5 h-5"></i>
+        </div>
+        <div class="min-w-0">
+            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Valor Estimado</span>
+            <span class="text-xs sm:text-sm font-semibold text-gray-500 dark:text-gray-400 mr-0.5">R$</span>
+            <span id="summary-total-value" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_value_formatted or '0,00' }}</span>
+        </div>
+    </div>
+</div>
+
 <!-- Container de Exibição de Lotes (Lista ou Cards conforme preferência do usuário) -->
 <div id="lot-display-container" class="view-mode-table transition-all duration-200">
     <table class="w-full text-left text-sm">
@@ -496,6 +540,9 @@ function initWebSocket(force = false) {
                 if (data.seq !== undefined && data.seq < currentSearchSeq) return;
                 if (window.isEditingLot) return;
 
+                if (data.summary) {
+                    updateSummaryUI(data.summary);
+                }
                 renderLotsData(data.html, data.total);
 
             } else if (data.type === 'reload') {
@@ -508,6 +555,7 @@ function initWebSocket(force = false) {
                     if (!window.isEditingLot) {
                         performSearch(true);
                     }
+                    fetch('/api/inventory/summary').then(r => r.json()).then(updateSummaryUI).catch(() => {});
                     fetch('/api/connection/status').then(r => r.json()).then(st => {
                         const dbBadge = document.getElementById('db-badge');
                         const dbLabel = document.getElementById('db-label');
@@ -603,6 +651,32 @@ window.addEventListener('focus', () => {
         initWebSocket(true);
     }
 });
+
+
+function updateSummaryUI(summary) {
+    if (!summary) return;
+    const badgeTotal = document.getElementById('badge-total-lots');
+    if (badgeTotal && summary.total_lots !== undefined) {
+        badgeTotal.innerText = summary.total_lots;
+    }
+    const sumLots = document.getElementById('summary-total-lots');
+    if (sumLots && summary.total_lots !== undefined) {
+        sumLots.innerText = summary.total_lots;
+    }
+    const sumUnits = document.getElementById('summary-total-units');
+    if (sumUnits && summary.total_units !== undefined) {
+        sumUnits.innerText = summary.total_units;
+    }
+    const sumProducts = document.getElementById('summary-total-products');
+    if (sumProducts && summary.total_products !== undefined) {
+        sumProducts.innerText = summary.total_products;
+    }
+    const sumValue = document.getElementById('summary-total-value');
+    if (sumValue && summary.total_value !== undefined) {
+        const val = Number(summary.total_value) || 0;
+        sumValue.innerText = val.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+}
 
 function renderLotsData(html, total) {
     const tbody = document.getElementById('lot-table-body');
@@ -838,6 +912,16 @@ function setFiltro(key, evt) {
         window.history.replaceState({}, '', url);
     } catch (_) {}
 
+    // Alterna a exibição do resumo consolidado para a aba Total
+    const summaryPanel = document.getElementById('total-summary-panel');
+    if (summaryPanel) {
+        if (key === 'todos' || key === 'total') {
+            summaryPanel.classList.remove('hidden');
+        } else {
+            summaryPanel.classList.add('hidden');
+        }
+    }
+
     // Alterna a exibição do botão "Limpar Todos os Deletados"
     const purgeWrapper = document.getElementById('btn-purge-deleted-wrapper');
     if (purgeWrapper) {
@@ -859,8 +943,16 @@ function setFiltro(key, evt) {
                 btn.className = "filter-btn shrink-0 flex-shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm font-semibold cursor-pointer select-none";
             }
             if (iconEl) iconEl.className = "w-3.5 h-3.5 text-white";
+            const badgeEl = btn.querySelector('#badge-total-lots');
+            if (badgeEl) {
+                badgeEl.className = "ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold tracking-tight bg-indigo-800/60 text-white";
+            }
         } else {
             btn.className = "filter-btn shrink-0 flex-shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 cursor-pointer select-none";
+            const badgeEl = btn.querySelector('#badge-total-lots');
+            if (badgeEl) {
+                badgeEl.className = "ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold tracking-tight bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200";
+            }
         }
     });
 

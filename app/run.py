@@ -38,6 +38,7 @@ from app.db import (
     create_lot,
     search_products,
     clear_query_cache,
+    get_inventory_summary,
     register_cache_clear_callback,
     DATABASE_URL
 )
@@ -292,6 +293,7 @@ def ws_handler(ws):
                     next_page=2
                 )
 
+                summary = get_inventory_summary()
                 safe_ws.send(json.dumps({
                     "type": "lots_update",
                     "html": html,
@@ -299,7 +301,8 @@ def ws_handler(ws):
                     "filtro": filtro,
                     "busca": busca,
                     "seq": seq,
-                    "prewarm": is_prewarm
+                    "prewarm": is_prewarm,
+                    "summary": summary
                 }))
             elif action == "ping":
                 safe_ws.send(json.dumps({"type": "pong"}))
@@ -354,6 +357,9 @@ def index():
             next_page=next_page
         )
 
+    summary = get_inventory_summary()
+    val = summary.get("total_value", 0.0)
+    val_str = f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return render_template(
         "index.html",
         lots=lots,
@@ -362,7 +368,12 @@ def index():
         busca=busca,
         page=1,
         has_more=has_more,
-        next_page=next_page
+        next_page=next_page,
+        summary=summary,
+        total_lots_count=summary.get("total_lots", total),
+        total_units_count=summary.get("total_units", 0),
+        total_products_count=summary.get("total_products", 0),
+        total_value_formatted=val_str
     )
 
 
@@ -933,6 +944,12 @@ def export_git():
 
 
 # ── Rotas de Controle de Conexão e Cópia Local (Pull) ─────────────────────────
+
+@app.route("/api/inventory/summary", methods=["GET"])
+def inventory_summary_api():
+    """Retorna métricas consolidadas do estoque em tempo real para a aba Total."""
+    return jsonify(get_inventory_summary())
+
 
 @app.route("/api/connection/status", methods=["GET"])
 def connection_status():
