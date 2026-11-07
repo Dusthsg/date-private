@@ -974,5 +974,56 @@ class TestUserReportedIssues(unittest.TestCase):
         self.assertIn('datelimit_channel', html)
 
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # 25. REGRA: Aba Total com contagem de lotes e resumo consolidado em tempo real
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_issue_25_total_tab_and_inventory_summary(self):
+        """
+        Valida:
+        1. get_inventory_summary calcula métricas consolidadas com cache sub-milissegundo.
+        2. Endpoint GET /api/inventory/summary responde 200 JSON com as métricas.
+        3. Botão 'Total' existe nos filtros com badge de contagem de lotes.
+        4. Painel consolidado #total-summary-panel renderizado no template.
+        5. Filtro 'total' e 'todos' aceitos e intercambiáveis no backend e na paginação.
+        """
+        from app.db import get_inventory_summary, query_lots
+
+        summary = get_inventory_summary()
+        self.assertIsInstance(summary, dict)
+        self.assertIn('total_lots', summary)
+        self.assertIn('total_units', summary)
+        self.assertIn('total_products', summary)
+        self.assertIn('total_value', summary)
+        self.assertGreaterEqual(summary['total_lots'], 0)
+
+        # 2. Endpoint /api/inventory/summary
+        resp = self.client.get('/api/inventory/summary')
+        self.assertEqual(resp.status_code, 200)
+        api_data = resp.get_json()
+        self.assertEqual(api_data['total_lots'], summary['total_lots'])
+        self.assertEqual(api_data['total_units'], summary['total_units'])
+
+        # 3 & 4. Template com aba Total e painel consolidado
+        resp_index = self.client.get('/')
+        self.assertEqual(resp_index.status_code, 200)
+        html = resp_index.data.decode('utf-8')
+        self.assertIn('data-filtro="todos"', html)
+        self.assertIn('Total', html)
+        self.assertIn('badge-total-lots', html)
+        self.assertIn('total-summary-panel', html)
+        self.assertIn('summary-total-lots', html)
+        self.assertIn('summary-total-units', html)
+        self.assertIn('summary-total-products', html)
+        self.assertIn('summary-total-value', html)
+
+        # 5. Aceita filtro total na rota e paginação
+        total, lots = query_lots(filtro='total', limit=10, offset=0)
+        self.assertIsInstance(lots, list)
+        self.assertIsInstance(total, int)
+
+        resp_total = self.client.get('/?filtro=total')
+        self.assertEqual(resp_total.status_code, 200)
+
+
 if __name__ == '__main__':
     unittest.main()

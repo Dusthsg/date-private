@@ -1,7 +1,7 @@
 {# Partial: botões de filtro atualizáveis via OOB ou direto com Lucide Icons #}
 <div class="flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth py-1 px-1 select-none touch-pan-x cursor-grab active:cursor-grabbing w-full" id="filtros" hx-swap-oob="true">
     {% set filtros = [
-        ('todos',     'clipboard-list', 'Todos', ''),
+        ('todos',     'boxes',          'Total', ''),
         ('recentes',  'sparkles',       'Adicionados Recentemente', 'text-amber-500 dark:text-amber-400'),
         ('vencidos',  'alert-octagon',  'Vencidos', 'text-rose-500 dark:text-rose-400'),
         ('critico',   'alert-triangle', 'Crítico (7d)', 'text-amber-500 dark:text-amber-400'),
@@ -10,12 +10,13 @@
         ('deletados', 'trash-2',        'Deletados (Auditoria)', 'text-rose-500 dark:text-rose-400')
     ] %}
     {% for key, icon, label, icon_color in filtros %}
+        {% set is_active = (key == 'todos' and (not filtro or filtro in ('todos', 'total'))) or (key != 'todos' and filtro == key) or (key == 'recentes' and filtro in ('hoje', 'recente')) or (key == 'deletados' and filtro in ('deletado', 'baixas')) %}
         <button
             type="button"
             data-filtro="{{ key }}"
             onclick="setFiltro('{{ key }}', event);"
             class="filter-btn shrink-0 flex-shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition cursor-pointer select-none
-                   {% if filtro == key or (key == 'recentes' and filtro in ('hoje', 'recente')) or (key == 'deletados' and filtro in ('deletado', 'baixas')) %}
+                   {% if is_active %}
                        {% if key == 'deletados' %}
                            bg-rose-600 dark:bg-rose-500 text-white shadow-sm font-semibold
                        {% else %}
@@ -24,8 +25,13 @@
                    {% else %}
                        bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200
                    {% endif %}">
-            <i data-lucide="{{ icon }}" class="w-3.5 h-3.5 {% if filtro == key or (key == 'recentes' and filtro in ('hoje', 'recente')) or (key == 'deletados' and filtro in ('deletado', 'baixas')) %}text-white{% else %}{{ icon_color }}{% endif %}"></i>
+            <i data-lucide="{{ icon }}" class="w-3.5 h-3.5 {% if is_active %}text-white{% else %}{{ icon_color }}{% endif %}"></i>
             <span>{{ label }}</span>
+            {% if key == 'todos' %}
+                <span id="badge-total-lots" class="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold tracking-tight {% if is_active %}bg-indigo-800/60 text-white{% else %}bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200{% endif %}">
+                    {{ total_lots_count or total or 0 }}
+                </span>
+            {% endif %}
         </button>
     {% endfor %}
 </div>
