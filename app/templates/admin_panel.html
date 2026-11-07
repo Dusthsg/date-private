@@ -1,0 +1,691 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Topo / Header da Página de Administração -->
+    <div class="bg-white dark:bg-gray-800 rounded-2xl p-4 sm:p-6 shadow-sm border border-gray-200/80 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-colors">
+        <div class="flex items-center gap-3">
+            <div class="w-12 h-12 rounded-xl bg-purple-600 dark:bg-purple-700 text-white flex items-center justify-center shadow-md">
+                <i data-lucide="shield-alert" class="w-6 h-6"></i>
+            </div>
+            <div>
+                <div class="flex items-center gap-2">
+                    <h1 class="text-xl sm:text-2xl font-black text-gray-900 dark:text-white tracking-tight">Painel de Administração</h1>
+                    <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                        Admin Master
+                    </span>
+                </div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    Gerencie seu perfil de administrador, tokens de acesso, operadores e visualize a auditoria completa.
+                </p>
+            </div>
+        </div>
+
+        <!-- Botões de Ação Rápida -->
+        <div class="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+            <a href="/"
+               class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 transition border border-gray-200 dark:border-gray-600 cursor-pointer shadow-xs active:scale-95">
+                <i data-lucide="arrow-left" class="w-4 h-4"></i>
+                <span>Voltar ao Estoque</span>
+            </a>
+            <a href="/api/audit/export"
+               class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white transition shadow-sm cursor-pointer"
+               title="Baixar planilha CSV com histórico completo">
+                <i data-lucide="download" class="w-4 h-4"></i>
+                <span>Exportar Auditoria (CSV)</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Cards de Resumo e Estatísticas Rápidas -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+        <div class="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200/80 dark:border-gray-700 shadow-xs">
+            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 flex items-center justify-between">
+                <span>Admin Conectado</span>
+                <i data-lucide="user-check" class="w-4 h-4 text-purple-500"></i>
+            </div>
+            <div class="text-lg font-black text-gray-900 dark:text-white mt-1 truncate" id="stat-admin-name">{{ admin['name'] }}</div>
+            <div class="text-xs text-purple-600 dark:text-purple-400 font-mono mt-0.5 truncate" id="stat-admin-username">@{{ admin['username'] }}</div>
+        </div>
+
+        <div class="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200/80 dark:border-gray-700 shadow-xs">
+            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 flex items-center justify-between">
+                <span>Banco de Dados</span>
+                <i data-lucide="database" class="w-4 h-4 {% if is_postgres %}text-blue-500{% else %}text-amber-500{% endif %}"></i>
+            </div>
+            <div class="text-lg font-black text-gray-900 dark:text-white mt-1">{{ db_status['db_name'] }}</div>
+            <div class="text-xs text-gray-400 mt-0.5">{% if is_postgres %}Nuvem Conectada{% else %}Armazenamento Local{% endif %}</div>
+        </div>
+
+        <div class="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200/80 dark:border-gray-700 shadow-xs">
+            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 flex items-center justify-between">
+                <span>Usuários no Sistema</span>
+                <i data-lucide="users" class="w-4 h-4 text-indigo-500"></i>
+            </div>
+            <div class="text-lg font-black text-gray-900 dark:text-white mt-1" id="stat-users-count">{{ users|length }}</div>
+            <div class="text-xs text-gray-400 mt-0.5">Operadores & Admins</div>
+        </div>
+
+        <div class="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200/80 dark:border-gray-700 shadow-xs">
+            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 flex items-center justify-between">
+                <span>Lotes no Estoque</span>
+                <i data-lucide="package" class="w-4 h-4 text-emerald-500"></i>
+            </div>
+            <div class="text-lg font-black text-gray-900 dark:text-white mt-1">{{ total_lots }}</div>
+            <div class="text-xs text-gray-400 mt-0.5">Produtos cadastrados</div>
+        </div>
+    </div>
+
+    <!-- Seção 1: Meu Perfil de Administrador (Edição de Nome, Usuário, Senha, PIN e Token) -->
+    <div class="bg-white dark:bg-gray-800 rounded-2xl p-5 sm:p-6 shadow-sm border border-purple-200/70 dark:border-purple-900/60 transition-colors">
+        <div class="flex items-center justify-between pb-3 mb-5 border-b border-gray-100 dark:border-gray-700">
+            <div class="flex items-center gap-2">
+                <i data-lucide="key" class="w-5 h-5 text-purple-600 dark:text-purple-400"></i>
+                <h2 class="text-base sm:text-lg font-bold text-gray-900 dark:text-white">Meu Perfil de Administrador & Credenciais</h2>
+            </div>
+            <span class="text-xs text-gray-400 hidden sm:inline">Edite suas credenciais de acesso e gere seu token de API</span>
+        </div>
+
+        <!-- Mensagens de Alerta (Sucesso / Erro) -->
+        <div id="admin-profile-msg" class="mb-4 hidden p-3 rounded-xl text-xs font-semibold"></div>
+
+        <form id="form-admin-profile" onsubmit="submitAdminProfile(event)" class="space-y-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                
+                <!-- Nome Completo -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                        Nome Completo *
+                    </label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                            <i data-lucide="user" class="w-4 h-4"></i>
+                        </span>
+                        <input type="text"
+                               id="admin-name"
+                               name="name"
+                               value="{{ admin['name'] }}"
+                               required
+                               class="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:outline-none">
+                    </div>
+                </div>
+
+                <!-- Nome de Usuário (Login) -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                        Nome de Usuário / Login (@) *
+                    </label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                            <i data-lucide="at-sign" class="w-4 h-4"></i>
+                        </span>
+                        <input type="text"
+                               id="admin-username"
+                               name="username"
+                               value="{{ admin['username'] }}"
+                               required
+                               class="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:outline-none font-mono">
+                    </div>
+                </div>
+
+                <!-- Nova Senha -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                        Nova Senha
+                        <span class="font-normal text-gray-400 text-[11px]">(deixe em branco para manter a atual)</span>
+                    </label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                            <i data-lucide="lock" class="w-4 h-4"></i>
+                        </span>
+                        <input type="password"
+                               id="admin-password"
+                               name="password"
+                               placeholder="Digite uma nova senha se quiser alterar..."
+                               class="w-full pl-9 pr-10 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:outline-none">
+                        <button type="button"
+                                onclick="togglePasswordVisibility('admin-password', 'icon-pw-admin')"
+                                class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer">
+                            <i data-lucide="eye" id="icon-pw-admin" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- PIN Chão de Loja -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                        Código PIN de Acesso Rápido
+                        <span class="font-normal text-gray-400 text-[11px]">(4 dígitos numéricos)</span>
+                    </label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                            <i data-lucide="hash" class="w-4 h-4"></i>
+                        </span>
+                        <input type="text"
+                               id="admin-pin"
+                               name="pin"
+                               value="{{ admin['pin'] }}"
+                               maxlength="10"
+                               placeholder="Ex: 1234"
+                               class="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:outline-none font-mono tracking-widest font-bold">
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Token de Acesso / API Token -->
+            <div class="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+                <div class="flex items-center justify-between mb-1.5">
+                    <label class="block text-xs font-bold text-gray-700 dark:text-gray-300">
+                        Token de Acesso / API Secret Token
+                    </label>
+                    <span class="text-[10px] text-gray-400">Use no header <code class="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-purple-600 dark:text-purple-300">Authorization: Bearer &lt;token&gt;</code></span>
+                </div>
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <div class="relative flex-1">
+                        <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                            <i data-lucide="shield-check" class="w-4 h-4 text-purple-500"></i>
+                        </span>
+                        <input type="text"
+                               id="admin-api-token"
+                               name="api_token"
+                               value="{{ admin['api_token'] }}"
+                               class="w-full pl-9 pr-24 py-2 text-xs rounded-xl border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/80 text-purple-700 dark:text-purple-300 font-mono font-bold select-all focus:outline-none">
+                        <button type="button"
+                                onclick="copyAdminToken()"
+                                id="btn-copy-token"
+                                class="absolute inset-y-1 right-1 px-2.5 rounded-lg bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200 text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer">
+                            <i data-lucide="copy" class="w-3.5 h-3.5"></i> <span>Copiar</span>
+                        </button>
+                    </div>
+                    <button type="button"
+                            onclick="generateNewAdminToken()"
+                            class="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900/80 text-purple-700 dark:text-purple-300 text-xs font-bold border border-purple-200 dark:border-purple-800 transition cursor-pointer">
+                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                        <span>Gerar Novo Token</span>
+                    </button>
+                </div>
+                <p class="text-[11px] text-gray-400 mt-1">
+                    Este token permite que scripts e integrações externas autentiquem no DateLimit com privilégios de administrador.
+                </p>
+            </div>
+
+            <!-- Botão Salvar -->
+            <div class="pt-3 flex justify-end">
+                <button type="submit"
+                        id="btn-save-admin-profile"
+                        class="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 active:scale-95 text-white text-xs font-bold transition shadow-md cursor-pointer">
+                    <i data-lucide="check" class="w-4 h-4"></i>
+                    <span>Salvar Dados do Administrador</span>
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Seção 2: Gerenciamento de Usuários e Operadores -->
+    <div class="bg-white dark:bg-gray-800 rounded-2xl p-5 sm:p-6 shadow-sm border border-gray-200/80 dark:border-gray-700 transition-colors">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 mb-4 border-b border-gray-100 dark:border-gray-700">
+            <div class="flex items-center gap-2">
+                <i data-lucide="users" class="w-5 h-5 text-indigo-600 dark:text-indigo-400"></i>
+                <h2 class="text-base sm:text-lg font-bold text-gray-900 dark:text-white">Usuários & Operadores de Loja</h2>
+            </div>
+            <button type="button"
+                    onclick="toggleAddUserFormAdmin()"
+                    class="inline-flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold py-2 px-3.5 rounded-xl transition shadow-xs cursor-pointer self-start sm:self-auto">
+                <i data-lucide="user-plus" class="w-3.5 h-3.5"></i> <span>Novo Usuário</span>
+            </button>
+        </div>
+
+        <!-- Formulário Colapsável de Novo Usuário -->
+        <div id="form-add-user-panel" class="hidden mb-5 p-4 rounded-xl bg-indigo-50/60 dark:bg-gray-750 border border-indigo-100 dark:border-gray-700">
+            <div class="flex items-center justify-between mb-3">
+                <span class="text-xs font-bold text-gray-800 dark:text-gray-200">Cadastrar Novo Usuário</span>
+                <button type="button" onclick="toggleAddUserFormAdmin()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><i data-lucide="x" class="w-4 h-4"></i></button>
+            </div>
+            <form id="form-create-user-admin" onsubmit="submitCreateUserAdmin(event)" class="space-y-3">
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                    <div>
+                        <label class="block text-[11px] font-bold text-gray-600 dark:text-gray-300 mb-1">Nome Completo *</label>
+                        <input type="text" id="new-user-name" required placeholder="Ex: Lucas Silva"
+                               class="w-full text-xs px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-gray-600 dark:text-gray-300 mb-1">Usuário / Login *</label>
+                        <input type="text" id="new-user-username" required placeholder="Ex: lucas"
+                               class="w-full text-xs px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-gray-600 dark:text-gray-300 mb-1">Senha *</label>
+                        <input type="password" id="new-user-password" required placeholder="Senha inicial"
+                               class="w-full text-xs px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-gray-600 dark:text-gray-300 mb-1">PIN (4 dígitos)</label>
+                        <input type="text" id="new-user-pin" maxlength="10" placeholder="Ex: 5678"
+                               class="w-full text-xs px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono font-bold tracking-widest">
+                    </div>
+                </div>
+                <div class="flex items-center justify-between pt-1">
+                    <div class="flex items-center gap-4 text-xs">
+                        <span class="font-bold text-gray-600 dark:text-gray-300">Papel:</span>
+                        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                            <input type="radio" name="new-user-role" value="operador" checked class="text-indigo-600 focus:ring-indigo-500">
+                            <span>Operador (Chão de Loja)</span>
+                        </label>
+                        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                            <input type="radio" name="new-user-role" value="admin" class="text-indigo-600 focus:ring-indigo-500">
+                            <span>Administrador</span>
+                        </label>
+                    </div>
+                    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold py-1.5 px-4 rounded-lg transition cursor-pointer shadow-xs">
+                        Criar Usuário
+                    </button>
+                </div>
+            </form>
+            <div id="users-create-msg" class="mt-2 text-xs font-semibold"></div>
+        </div>
+
+        <!-- Tabela de Usuários -->
+        <div class="overflow-x-auto rounded-xl border border-gray-200/80 dark:border-gray-700">
+            <table class="w-full text-left text-xs">
+                <thead class="bg-gray-50 dark:bg-gray-700/80 text-gray-600 dark:text-gray-300 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
+                    <tr>
+                        <th class="px-3.5 py-3 font-bold">Usuário / Nome</th>
+                        <th class="px-3.5 py-3 font-bold">Papel</th>
+                        <th class="px-3.5 py-3 font-bold">PIN Rápido</th>
+                        <th class="px-3.5 py-3 font-bold text-center">Status</th>
+                        <th class="px-3.5 py-3 font-bold text-right">Ações</th>
+                    </tr>
+                </thead>
+                <tbody id="admin-users-table-body" class="divide-y divide-gray-100 dark:divide-gray-700/60">
+                    {% for u in users %}
+                    <tr class="hover:bg-gray-50/80 dark:hover:bg-gray-700/40 transition">
+                        <td class="px-3.5 py-3">
+                            <div class="font-bold text-gray-900 dark:text-white text-sm">{{ u['name'] }}</div>
+                            <div class="text-[11px] font-mono text-gray-500 dark:text-gray-400">@{{ u['username'] }}</div>
+                        </td>
+                        <td class="px-3.5 py-3 whitespace-nowrap">
+                            {% if u['role'] == 'admin' %}
+                                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                                    <i data-lucide="shield" class="w-3 h-3"></i> Admin
+                                </span>
+                            {% else %}
+                                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                    <i data-lucide="user" class="w-3 h-3"></i> Operador
+                                </span>
+                            {% endif %}
+                        </td>
+                        <td class="px-3.5 py-3 whitespace-nowrap">
+                            {% if u['pin'] %}
+                                <span class="font-mono bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded font-bold tracking-widest text-gray-700 dark:text-gray-200">{{ u['pin'] }}</span>
+                            {% else %}
+                                <span class="text-gray-400 italic">Sem PIN</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-3.5 py-3 text-center whitespace-nowrap">
+                            <span class="inline-block w-2.5 h-2.5 rounded-full {% if u['active'] %}bg-emerald-500{% else %}bg-gray-400{% endif %}" title="{% if u['active'] %}Ativo{% else %}Inativo{% endif %}"></span>
+                        </td>
+                        <td class="px-3.5 py-3 text-right whitespace-nowrap space-x-1">
+                            <button type="button"
+                                    onclick="promptEditUserAdmin({{ u['id'] }}, '{{ u['name']|replace("'", "\\'") }}', '{{ u['pin'] }}', '{{ u['role'] }}')"
+                                    class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-indigo-600 dark:text-indigo-400 transition cursor-pointer" title="Editar">
+                                <i data-lucide="edit-3" class="w-4 h-4"></i>
+                            </button>
+                            {% if u['username'] != 'admin' and u['id'] != admin['id'] %}
+                            <button type="button"
+                                    onclick="deleteUserAdmin({{ u['id'] }}, '{{ u['name']|replace("'", "\\'") }}')"
+                                    class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-rose-600 dark:text-rose-400 transition cursor-pointer" title="Excluir">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Seção 3: Trilha de Auditoria Completa ("Quem Mexeu") -->
+    <div class="bg-white dark:bg-gray-800 rounded-2xl p-5 sm:p-6 shadow-sm border border-gray-200/80 dark:border-gray-700 transition-colors">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 mb-4 border-b border-gray-100 dark:border-gray-700">
+            <div class="flex items-center gap-2">
+                <i data-lucide="history" class="w-5 h-5 text-amber-500"></i>
+                <h2 class="text-base sm:text-lg font-bold text-gray-900 dark:text-white">Registro e Trilha de Auditoria ("Quem Mexeu")</h2>
+            </div>
+            <a href="/api/audit/export"
+               class="inline-flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-bold">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i> <span>Baixar CSV</span>
+            </a>
+        </div>
+
+        <!-- Filtros da Auditoria -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-4">
+            <div>
+                <input type="text"
+                       id="audit-filter-search"
+                       oninput="loadAuditLogsAdmin()"
+                       placeholder="Buscar ação ou produto..."
+                       class="w-full text-xs px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500">
+            </div>
+            <div>
+                <select id="audit-filter-action"
+                        onchange="loadAuditLogsAdmin()"
+                        class="w-full text-xs px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <option value="">Todas as Ações</option>
+                    <option value="LOGIN">LOGIN</option>
+                    <option value="LOGOUT">LOGOUT</option>
+                    <option value="TROCA_OPERADOR">TROCA DE OPERADOR</option>
+                    <option value="CRIAR_LOTE">CRIAR LOTE</option>
+                    <option value="BAIXA_LOTE">BAIXA DE LOTE</option>
+                    <option value="RESTAURAR_LOTE">RESTAURAR LOTE</option>
+                    <option value="EXCLUIR_MOVIMENTO">EXCLUIR PERMANENTE</option>
+                    <option value="EDITAR_QUANT">EDITAR QUANTIDADE</option>
+                    <option value="EDITAR_PRECO">EDITAR PREÇO</option>
+                    <option value="IMPORTACAO">IMPORTAÇÃO DE PLANILHA</option>
+                    <option value="PERFIL_ADMIN_ATUALIZADO">PERFIL ATUALIZADO</option>
+                </select>
+            </div>
+            <div>
+                <select id="audit-filter-user"
+                        onchange="loadAuditLogsAdmin()"
+                        class="w-full text-xs px-3 py-2 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <option value="">Todos os Usuários / Operadores</option>
+                    {% for u in users %}
+                    <option value="{{ u['name'] }}">{{ u['name'] }} (@{{ u['username'] }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <!-- Tabela da Trilha de Auditoria -->
+        <div class="overflow-x-auto rounded-xl border border-gray-200/80 dark:border-gray-700 max-h-96 overflow-y-auto">
+            <table class="w-full text-left text-xs">
+                <thead class="bg-gray-50 dark:bg-gray-700/80 text-gray-600 dark:text-gray-300 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700 sticky top-0">
+                    <tr>
+                        <th class="px-3.5 py-2.5 font-bold">Data / Hora</th>
+                        <th class="px-3.5 py-2.5 font-bold">Quem Mexeu</th>
+                        <th class="px-3.5 py-2.5 font-bold">Ação</th>
+                        <th class="px-3.5 py-2.5 font-bold">Detalhes</th>
+                        <th class="px-3.5 py-2.5 font-bold">IP</th>
+                    </tr>
+                </thead>
+                <tbody id="admin-audit-table-body" class="divide-y divide-gray-100 dark:divide-gray-700/60 font-sans">
+                    <tr>
+                        <td colspan="5" class="px-4 py-8 text-center text-gray-400">
+                            Carregando registros de auditoria...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<!-- Scripts Client-side do Painel de Administração -->
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    loadAuditLogsAdmin();
+});
+
+function togglePasswordVisibility(inputId, iconId) {
+    const input = document.getElementById(inputId);
+    const icon = document.getElementById(iconId);
+    if (!input) return;
+    if (input.type === 'password') {
+        input.type = 'text';
+        if (icon) icon.setAttribute('data-lucide', 'eye-off');
+    } else {
+        input.type = 'password';
+        if (icon) icon.setAttribute('data-lucide', 'eye');
+    }
+    if (window.refreshIcons) window.refreshIcons();
+}
+
+function copyAdminToken() {
+    const input = document.getElementById('admin-api-token');
+    const btn = document.getElementById('btn-copy-token');
+    if (!input) return;
+    input.select();
+    input.setSelectionRange(0, 99999);
+    try {
+        navigator.clipboard.writeText(input.value);
+        if (btn) {
+            btn.innerHTML = '<i data-lucide="check" class="w-3.5 h-3.5 text-emerald-600"></i> <span class="text-emerald-600 font-bold">Copiado!</span>';
+            if (window.refreshIcons) window.refreshIcons(btn);
+            setTimeout(() => {
+                btn.innerHTML = '<i data-lucide="copy" class="w-3.5 h-3.5"></i> <span>Copiar</span>';
+                if (window.refreshIcons) window.refreshIcons(btn);
+            }, 2500);
+        }
+    } catch (e) {
+        alert("Token copiado para a área de transferência!");
+    }
+}
+
+async function generateNewAdminToken() {
+    if (!confirm("Deseja gerar um novo Token de API? Lembre-se de clicar em 'Salvar Dados do Administrador' para gravar a alteração.")) return;
+    try {
+        const resp = await fetch('/api/admin/generate-token', { method: 'POST' });
+        const res = await resp.json();
+        if (res.success && res.token) {
+            const input = document.getElementById('admin-api-token');
+            if (input) input.value = res.token;
+            alert("Novo token gerado no campo! Clique em 'Salvar Dados do Administrador' para confirmar.");
+        } else {
+            alert("Erro ao gerar token: " + (res.error || "Tente novamente"));
+        }
+    } catch (e) {
+        alert("Erro na requisição: " + e.message);
+    }
+}
+
+async function submitAdminProfile(evt) {
+    evt.preventDefault();
+    const name = document.getElementById('admin-name').value.trim();
+    const username = document.getElementById('admin-username').value.trim();
+    const password = document.getElementById('admin-password').value;
+    const pin = document.getElementById('admin-pin').value.trim();
+    const api_token = document.getElementById('admin-api-token').value.trim();
+    const msg = document.getElementById('admin-profile-msg');
+    const btn = document.getElementById('btn-save-admin-profile');
+
+    if (!name || !username) {
+        alert("Nome e Usuário são obrigatórios.");
+        return;
+    }
+
+    try {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> <span>Salvando...</span>';
+        if (window.refreshIcons) window.refreshIcons(btn);
+
+        const resp = await fetch('/api/admin/profile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, username, password, pin, api_token })
+        });
+        const res = await resp.json();
+
+        if (!resp.ok || !res.success) {
+            throw new Error(res.error || "Erro ao atualizar dados.");
+        }
+
+        // Sucesso
+        msg.className = "mb-4 p-3 rounded-xl text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 flex items-center gap-2";
+        msg.innerHTML = '<i data-lucide="check-circle" class="w-4 h-4 text-emerald-600"></i> <span>Perfil e credenciais de administrador atualizados com sucesso!</span>';
+        msg.classList.remove('hidden');
+
+        // Atualiza estatísticas no topo
+        const statName = document.getElementById('stat-admin-name');
+        const statUser = document.getElementById('stat-admin-username');
+        if (statName) statName.innerText = name;
+        if (statUser) statUser.innerText = '@' + username;
+
+        // Limpa campo de nova senha
+        document.getElementById('admin-password').value = '';
+
+        if (window.refreshIcons) window.refreshIcons(msg);
+        setTimeout(() => msg.classList.add('hidden'), 5000);
+    } catch (e) {
+        msg.className = "mb-4 p-3 rounded-xl text-xs font-semibold bg-rose-100 dark:bg-rose-950/80 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800 flex items-center gap-2";
+        msg.innerHTML = `<i data-lucide="alert-triangle" class="w-4 h-4 text-rose-600"></i> <span>${e.message}</span>`;
+        msg.classList.remove('hidden');
+        if (window.refreshIcons) window.refreshIcons(msg);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> <span>Salvar Dados do Administrador</span>';
+        if (window.refreshIcons) window.refreshIcons(btn);
+    }
+}
+
+// ── Funções de Gerenciamento de Usuários ───────────────────────────────────────
+
+function toggleAddUserFormAdmin() {
+    const panel = document.getElementById('form-add-user-panel');
+    if (panel) {
+        panel.classList.toggle('hidden');
+        if (!panel.classList.contains('hidden')) {
+            document.getElementById('new-user-name').focus();
+        }
+    }
+}
+
+async function submitCreateUserAdmin(evt) {
+    evt.preventDefault();
+    const name = document.getElementById('new-user-name').value.trim();
+    const username = document.getElementById('new-user-username').value.trim();
+    const password = document.getElementById('new-user-password').value;
+    const pin = document.getElementById('new-user-pin').value.trim();
+    const role = document.querySelector('input[name="new-user-role"]:checked')?.value || 'operador';
+    const msg = document.getElementById('users-create-msg');
+
+    try {
+        const resp = await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, username, password, pin, role })
+        });
+        const res = await resp.json();
+        if (!resp.ok || !res.success) throw new Error(res.error || "Erro ao salvar usuário.");
+
+        msg.innerHTML = '<span class="text-emerald-600 font-bold">✓ Usuário cadastrado com sucesso! Recarregando...</span>';
+        setTimeout(() => location.reload(), 800);
+    } catch (e) {
+        msg.innerHTML = `<span class="text-rose-600 font-bold">✕ ${e.message}</span>`;
+    }
+}
+
+async function promptEditUserAdmin(id, currentName, currentPin, currentRole) {
+    const newName = prompt("Nome completo do usuário:", currentName);
+    if (newName === null) return;
+    const newPin = prompt("Código PIN (4 dígitos numéricos):", currentPin || '');
+    if (newPin === null) return;
+    const newPassword = prompt("Nova senha (deixe em branco para não alterar):", "");
+    if (newPassword === null) return;
+
+    try {
+        const resp = await fetch(`/api/users/${id}/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: newName,
+                pin: newPin,
+                password: newPassword || undefined
+            })
+        });
+        const res = await resp.json();
+        if (!resp.ok || !res.success) throw new Error(res.error || "Erro ao atualizar.");
+        location.reload();
+    } catch (e) {
+        alert("Erro: " + e.message);
+    }
+}
+
+async function deleteUserAdmin(id, name) {
+    if (!confirm(`Tem certeza que deseja excluir o usuário ${name}? Esta ação não pode ser desfeita.`)) return;
+    try {
+        const resp = await fetch(`/api/users/${id}/delete`, { method: 'POST' });
+        const res = await resp.json();
+        if (!resp.ok || !res.success) throw new Error(res.error || "Erro ao excluir.");
+        location.reload();
+    } catch (e) {
+        alert("Erro: " + e.message);
+    }
+}
+
+// ── Funções de Auditoria ──────────────────────────────────────────────────────
+
+async function loadAuditLogsAdmin() {
+    const tbody = document.getElementById('admin-audit-table-body');
+    if (!tbody) return;
+
+    const action = document.getElementById('audit-filter-action')?.value || '';
+    const user = document.getElementById('audit-filter-user')?.value || '';
+    const search = document.getElementById('audit-filter-search')?.value.trim() || '';
+
+    let url = `/api/audit/logs?limit=100`;
+    if (action) url += `&action=${encodeURIComponent(action)}`;
+    if (user) url += `&user=${encodeURIComponent(user)}`;
+    if (search) url += `&search=${encodeURIComponent(search)}`;
+
+    try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error("Falha ao carregar registros");
+        const data = await resp.json();
+        const logs = data.logs || [];
+
+        if (logs.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="px-4 py-8 text-center text-gray-400">
+                        Nenhum registro de auditoria encontrado com esses filtros.
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        let html = '';
+        logs.forEach(log => {
+            let actionBadge = 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
+            if (log.action.includes('CRIAR') || log.action.includes('RESTAURAR')) {
+                actionBadge = 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300';
+            } else if (log.action.includes('BAIXA') || log.action.includes('EXCLUIR') || log.action.includes('DELETE')) {
+                actionBadge = 'bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300';
+            } else if (log.action.includes('EDITAR') || log.action.includes('ATUALIZADO')) {
+                actionBadge = 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300';
+            } else if (log.action.includes('LOGIN') || log.action.includes('OPERADOR')) {
+                actionBadge = 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/80 dark:text-indigo-300';
+            }
+
+            html += `
+                <tr class="hover:bg-gray-50/70 dark:hover:bg-gray-700/30 transition text-xs">
+                    <td class="px-3.5 py-2.5 whitespace-nowrap font-mono text-gray-500 dark:text-gray-400 text-[11px]">${log.created_at || ''}</td>
+                    <td class="px-3.5 py-2.5 whitespace-nowrap font-bold text-gray-800 dark:text-gray-200">${log.username}</td>
+                    <td class="px-3.5 py-2.5 whitespace-nowrap">
+                        <span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${actionBadge}">${log.action}</span>
+                    </td>
+                    <td class="px-3.5 py-2.5 text-gray-700 dark:text-gray-300 max-w-md truncate" title="${log.details || ''}">
+                        ${log.details || ''}
+                    </td>
+                    <td class="px-3.5 py-2.5 whitespace-nowrap font-mono text-[11px] text-gray-400">${log.ip_address || ''}</td>
+                </tr>
+            `;
+        });
+        tbody.innerHTML = html;
+        if (window.refreshIcons) window.refreshIcons(tbody);
+    } catch (e) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="px-4 py-8 text-center text-rose-500">
+                    Erro ao carregar auditoria: ${e.message}
+                </td>
+            </tr>
+        `;
+    }
+}
+</script>
+{% endblock %}

@@ -90,6 +90,19 @@
                 <!-- Lista de Ações Principais -->
                 <div class="space-y-1.5 text-sm">
                     {% if is_admin %}
+                    <a href="/admin"
+                       class="w-full flex items-center justify-between p-3 rounded-xl bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-purple-800 dark:text-purple-300 transition cursor-pointer text-left border border-purple-200 dark:border-purple-800">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="shield" class="w-4 h-4 text-purple-600 dark:text-purple-400"></i>
+                            <div>
+                                <div class="font-bold text-xs">Painel Administrativo</div>
+                                <div class="text-[10px] text-purple-600/80 dark:text-purple-400/80">Meu perfil, tokens, operadores e auditoria</div>
+                            </div>
+                        </div>
+                        <i data-lucide="chevron-right" class="w-4 h-4 text-purple-400"></i>
+                    </a>
+                    {% endif %}
+                    {% if is_admin %}
                     <button type="button"
                             onclick="closeMobileMenu(); openAuditModal();"
                             class="w-full flex items-center justify-between p-2.5 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition cursor-pointer text-left">

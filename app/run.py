@@ -51,6 +51,7 @@ from app.db import (
     create_user,
     update_user,
     delete_user,
+    generate_api_token,
     log_audit,
     query_audit_logs,
     DATABASE_URL
@@ -1250,6 +1251,98 @@ def user_delete_api(user_id: int):
         return jsonify({"success": True, "message": msg})
     return jsonify({"success": False, "error": msg}), 400
 
+
+
+
+# ── Rota do Painel Administrativo Dedicado ─────────────────────────────────────
+
+@app.route("/admin")
+@app.route("/admin/painel")
+def admin_panel_route():
+    if not session.get("user_id"):
+        return redirect("/login")
+    if session.get("role") != "admin":
+        return redirect("/")
+
+    admin_id = session.get("user_id")
+    admin_user = get_user_by_id(admin_id)
+    if not admin_user:
+        return redirect("/login")
+
+    # Se o admin ainda não tiver token gerado, gera um automaticamente
+    if not admin_user.get("api_token"):
+        new_tok = generate_api_token()
+        update_user(admin_id, api_token=new_tok)
+        admin_user["api_token"] = new_tok
+
+    users_list = list_users()
+    db_status = get_db_status()
+    total_lots, _ = query_lots(limit=1)
+    total_audit, _ = query_audit_logs(limit=1)
+
+    return render_template(
+        "admin_panel.html",
+        admin=admin_user,
+        users=users_list,
+        db_status=db_status,
+        total_lots=total_lots,
+        total_audit=total_audit
+    )
+
+
+@app.route("/api/admin/profile", methods=["POST"])
+def admin_profile_update():
+    if not session.get("user_id") or session.get("role") != "admin":
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    admin_id = session.get("user_id")
+    data = request.get_json(silent=True) or request.form
+    name = (data.get("name") or "").strip()
+    username = (data.get("username") or "").strip().lower()
+    password = (data.get("password") or "").strip() or None
+    pin = data.get("pin")
+    api_token = (data.get("api_token") or "").strip() or None
+
+    if not name:
+        return jsonify({"success": False, "error": "Nome completo não pode ficar em branco."}), 400
+    if not username:
+        return jsonify({"success": False, "error": "Nome de usuário não pode ficar em branco."}), 400
+
+    ok, msg = update_user(
+        admin_id,
+        name=name,
+        username=username,
+        password=password,
+        pin=pin,
+        api_token=api_token
+    )
+    if ok:
+        # Atualiza a sessão ativa imediatamente para refletir na interface
+        session["name"] = name
+        session["username"] = username
+        if session.get("active_operator") == session.get("name"):
+            session["active_operator"] = name
+
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(
+            name,
+            "PERFIL_ADMIN_ATUALIZADO",
+            f"Admin atualizou dados de cadastro (Nome: '{name}', Login: '@{username}')",
+            user_id=admin_id,
+            ip_address=ip
+        )
+        updated_user = get_user_by_id(admin_id)
+        return jsonify({"success": True, "message": "Perfil de administrador atualizado com sucesso!", "admin": updated_user})
+    return jsonify({"success": False, "error": msg}), 400
+
+
+@app.route("/api/admin/generate-token", methods=["POST"])
+def admin_generate_token_route():
+    if not session.get("user_id") or session.get("role") != "admin":
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    token = generate_api_token()
+    return jsonify({"success": True, "token": token})
 
 if __name__ == "__main__":
     ip = get_local_ip()

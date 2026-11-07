@@ -692,10 +692,15 @@ def init_sqlite_db():
             pin TEXT,
             role TEXT DEFAULT 'operador',
             active INTEGER DEFAULT 1,
+            api_token TEXT,
             created_at TEXT DEFAULT (datetime('now', 'localtime')),
             updated_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
     ''')
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN api_token TEXT;")
+    except Exception:
+        pass
 
     # Tabela de logs de auditoria completos para SQLite
     cur.execute('''
@@ -862,10 +867,15 @@ def init_pg_db():
                 pin VARCHAR(10),
                 role VARCHAR(20) DEFAULT 'operador',
                 active BOOLEAN DEFAULT TRUE,
+                api_token VARCHAR(128),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         ''')
+        try:
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS api_token VARCHAR(128);")
+        except Exception:
+            pass
 
         cur.execute('''
             CREATE TABLE IF NOT EXISTS audit_logs (
@@ -1932,6 +1942,12 @@ def update_alert_sent_status(last_date: str, status_msg: str):
         print(f"⚠️ Erro ao atualizar status de alerta: {e}")
 
 
+import secrets
+
+def generate_api_token() -> str:
+    """Gera um token de acesso de alta entropia para integração e APIs do DateLimit."""
+    return "dkl_live_" + secrets.token_urlsafe(24)
+
 # ── Módulo de Autenticação, Usuários e Auditoria Completa ───────────────────────
 
 def get_user_by_username(username: str) -> dict | None:
@@ -1941,7 +1957,7 @@ def get_user_by_username(username: str) -> dict | None:
     with get_db_cursor() as (cur, db_type):
         ph = "%s" if db_type == "postgres" else "?"
         cur.execute(
-            f"SELECT id, username, name, password_hash, pin, role, active, created_at FROM users WHERE LOWER(username) = LOWER({ph}) LIMIT 1",
+            f"SELECT id, username, name, password_hash, pin, role, active, created_at, COALESCE(api_token, '') FROM users WHERE LOWER(username) = LOWER({ph}) LIMIT 1",
             (username.strip(),)
         )
         row = cur.fetchone()
@@ -1955,7 +1971,8 @@ def get_user_by_username(username: str) -> dict | None:
             "pin": row[4] or "",
             "role": row[5] or "operador",
             "active": bool(row[6]),
-            "created_at": str(row[7])[:19] if row[7] else ""
+            "created_at": str(row[7])[:19] if row[7] else "",
+            "api_token": row[8] or ""
         }
 
 
@@ -1966,7 +1983,7 @@ def get_user_by_id(user_id: int) -> dict | None:
     with get_db_cursor() as (cur, db_type):
         ph = "%s" if db_type == "postgres" else "?"
         cur.execute(
-            f"SELECT id, username, name, password_hash, pin, role, active, created_at FROM users WHERE id = {ph} LIMIT 1",
+            f"SELECT id, username, name, password_hash, pin, role, active, created_at, COALESCE(api_token, '') FROM users WHERE id = {ph} LIMIT 1",
             (user_id,)
         )
         row = cur.fetchone()
@@ -1980,7 +1997,8 @@ def get_user_by_id(user_id: int) -> dict | None:
             "pin": row[4] or "",
             "role": row[5] or "operador",
             "active": bool(row[6]),
-            "created_at": str(row[7])[:19] if row[7] else ""
+            "created_at": str(row[7])[:19] if row[7] else "",
+            "api_token": row[8] or ""
         }
 
 
@@ -2013,7 +2031,7 @@ def get_user_by_pin(pin: str) -> dict | None:
 def list_users() -> list[dict]:
     """Lista todos os usuários cadastrados no sistema para o painel de administração."""
     with get_db_cursor() as (cur, db_type):
-        cur.execute("SELECT id, username, name, pin, role, active, created_at FROM users ORDER BY (CASE WHEN role='admin' THEN 0 ELSE 1 END), name ASC")
+        cur.execute("SELECT id, username, name, pin, role, active, created_at, COALESCE(api_token, '') FROM users ORDER BY (CASE WHEN role='admin' THEN 0 ELSE 1 END), name ASC")
         rows = cur.fetchall()
         users = []
         for r in rows:
@@ -2024,7 +2042,8 @@ def list_users() -> list[dict]:
                 "pin": r[3] or "",
                 "role": r[4] or "operador",
                 "active": bool(r[5]),
-                "created_at": str(r[6])[:19] if r[6] else ""
+                "created_at": str(r[6])[:19] if r[6] else "",
+                "api_token": r[7] or ""
             })
         return users
 
@@ -2077,8 +2096,8 @@ def create_user(username: str, name: str, password: str, pin: str = "", role: st
         return False, f"Erro ao criar usuário: {e}"
 
 
-def update_user(user_id: int, name: str = None, password: str = None, pin: str = None, role: str = None, active: bool = None) -> tuple[bool, str]:
-    """Atualiza dados, senha, PIN ou papel de um usuário existente."""
+def update_user(user_id: int, name: str = None, username: str = None, password: str = None, pin: str = None, role: str = None, active: bool = None, api_token: str = None) -> tuple[bool, str]:
+    """Atualiza dados, login, senha, PIN, token ou papel de um usuário existente."""
     from werkzeug.security import generate_password_hash
     fields_pg = []
     fields_sq = []
@@ -2087,6 +2106,14 @@ def update_user(user_id: int, name: str = None, password: str = None, pin: str =
         fields_pg.append("name = %s")
         fields_sq.append("name = ?")
         params.append(name.strip())
+    if username:
+        u_clean = username.strip().lower()
+        existing = get_user_by_username(u_clean)
+        if existing and existing["id"] != user_id:
+            return False, "Nome de usuário já está em uso por outro usuário."
+        fields_pg.append("username = %s")
+        fields_sq.append("username = ?")
+        params.append(u_clean)
     if password:
         fields_pg.append("password_hash = %s")
         fields_sq.append("password_hash = ?")
@@ -2095,6 +2122,10 @@ def update_user(user_id: int, name: str = None, password: str = None, pin: str =
         fields_pg.append("pin = %s")
         fields_sq.append("pin = ?")
         params.append(pin.strip() if pin.strip() else None)
+    if api_token is not None:
+        fields_pg.append("api_token = %s")
+        fields_sq.append("api_token = ?")
+        params.append(api_token.strip() if api_token.strip() else None)
     if role:
         r = "admin" if role.lower() == "admin" else "operador"
         fields_pg.append("role = %s")

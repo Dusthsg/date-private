@@ -183,5 +183,76 @@ class TestAuthAndAudit(unittest.TestCase):
         self.assertIn("Detalhes", content)
 
 
+
+    def test_09_admin_panel_page_access(self):
+        """Valida que apenas administradores acessam a página /admin dedicada."""
+        # Não autenticado -> redireciona para login
+        res_anon = self.client.get("/admin", follow_redirects=False)
+        self.assertEqual(res_anon.status_code, 302)
+        self.assertIn("/login", res_anon.headers.get("Location"))
+
+        # Operador comum -> redireciona para estoque principal
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = 2
+            sess["username"] = "operador"
+            sess["name"] = "Operador Loja"
+            sess["role"] = "operador"
+
+        res_op = self.client.get("/admin", follow_redirects=False)
+        self.assertEqual(res_op.status_code, 302)
+        self.assertEqual(res_op.headers.get("Location"), "/")
+
+        # Administrador -> acesso autorizado 200
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = 1
+            sess["username"] = "admin"
+            sess["name"] = "Administrador"
+            sess["role"] = "admin"
+
+        res_admin = self.client.get("/admin")
+        self.assertEqual(res_admin.status_code, 200)
+        html = res_admin.data.decode("utf-8")
+        self.assertIn("Painel de Administração", html)
+        self.assertIn("Meu Perfil de Administrador", html)
+        self.assertIn("Token de Acesso", html)
+
+    def test_10_admin_profile_update_and_token_generation(self):
+        """Valida que o administrador pode atualizar seu nome, login, pin, senha e token de API."""
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = 1
+            sess["username"] = "admin"
+            sess["name"] = "Administrador"
+            sess["role"] = "admin"
+
+        # 1. Gera novo token
+        res_tok = self.client.post("/api/admin/generate-token")
+        self.assertEqual(res_tok.status_code, 200)
+        tok_data = res_tok.get_json()
+        self.assertTrue(tok_data["success"])
+        self.assertTrue(tok_data["token"].startswith("dkl_live_"))
+        new_token = tok_data["token"]
+
+        # 2. Atualiza perfil
+        res_profile = self.client.post("/api/admin/profile", json={
+            "name": "Admin Gestor Master",
+            "username": "admin",
+            "pin": "9988",
+            "api_token": new_token
+        })
+        self.assertEqual(res_profile.status_code, 200)
+        p_data = res_profile.get_json()
+        self.assertTrue(p_data["success"])
+
+        # Verifica persistência no banco
+        admin_db = get_user_by_username("admin")
+        self.assertEqual(admin_db["name"], "Admin Gestor Master")
+        self.assertEqual(admin_db["pin"], "9988")
+        self.assertEqual(admin_db["api_token"], new_token)
+
+        # Verifica se a sessão ativa foi atualizada
+        with self.client.session_transaction() as sess:
+            self.assertEqual(sess.get("name"), "Admin Gestor Master")
+
+
 if __name__ == "__main__":
     unittest.main()

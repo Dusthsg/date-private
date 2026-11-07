@@ -60,7 +60,7 @@
         /* MODO DE EXIBIÇÃO: LISTA (TABELA) vs CARDS                   */
         /* ============================================================ */
 
-        /* --- MODO TABELA (LISTA) --- */
+        /* --- MODO TABELA (LISTA COMPACTA ERP) --- */
         #lot-display-container.view-mode-table {
             overflow-x: auto;
             background-color: #ffffff;
@@ -84,15 +84,58 @@
         }
         #lot-display-container.view-mode-table thead th {
             display: table-cell !important;
+            padding: 0.4rem 0.65rem !important;
+            font-size: 0.72rem !important;
+            font-weight: 700 !important;
+            letter-spacing: 0.04em !important;
+            line-height: 1.1 !important;
         }
         #lot-display-container.view-mode-table tbody {
             display: table-row-group !important;
         }
         #lot-display-container.view-mode-table tr.lot-row {
             display: table-row !important;
+            height: auto !important;
         }
         #lot-display-container.view-mode-table tr.lot-row td {
             display: table-cell !important;
+            padding: 0.32rem 0.65rem !important;
+            vertical-align: middle !important;
+            font-size: 0.8125rem !important;
+            line-height: 1.25 !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-actions {
+            padding: 0.2rem 0.5rem !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-actions button {
+            padding: 0.22rem 0.55rem !important;
+            font-size: 0.72rem !important;
+            border-radius: 0.45rem !important;
+            line-height: 1.1 !important;
+            gap: 0.25rem !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-actions button i {
+            width: 0.8rem !important;
+            height: 0.8rem !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-product {
+            max-width: 48ch !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            padding-top: 0.25rem !important;
+            padding-bottom: 0.25rem !important;
+            font-size: 0.8125rem !important;
+            font-weight: 500 !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-lot-id span {
+            padding: 0.05rem 0.35rem !important;
+            font-size: 0.7rem !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-valid span {
+            padding: 0.12rem 0.45rem !important;
+            font-size: 0.72rem !important;
+            line-height: 1.1 !important;
         }
         #lot-display-container.view-mode-table .card-label {
             display: none !important;
@@ -106,6 +149,7 @@
         #lot-display-container.view-mode-table tr#infinite-scroll-trigger td,
         #lot-display-container.view-mode-table tr#limit-note td {
             display: table-cell !important;
+            padding: 0.4rem 0.65rem !important;
         }
 
         /* --- MODO CARDS --- */
@@ -487,6 +531,13 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
 
             <!-- Controles Mobile (Visíveis apenas em celular < sm) -->
             <div class="flex sm:hidden items-center gap-1.5">
+                {% if is_admin %}
+                <a href="/admin"
+                   class="p-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 active:scale-95 text-white transition shadow-xs cursor-pointer"
+                   title="Painel Admin">
+                    <i data-lucide="shield" class="w-4 h-4"></i>
+                </a>
+                {% endif %}
                 <!-- Operador Ativo e Troca Rápida de PIN no Mobile -->
                 <button type="button"
                         onclick="openSwitchOperatorModal()"
@@ -509,6 +560,14 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
             <!-- Controles Desktop (Visíveis em telas sm+) -->
             <div class="hidden sm:flex flex-wrap items-center gap-2 text-xs">
                 {% if is_admin %}
+                <!-- Link direto para o Painel Administrativo -->
+                <a href="/admin"
+                   class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-600 hover:bg-purple-700 active:scale-95 text-white transition border border-purple-500 shadow-xs cursor-pointer select-none"
+                   title="Painel de Administração (Perfil, Token, Usuários e Auditoria)">
+                    <i data-lucide="shield" class="w-3.5 h-3.5"></i>
+                    <span>Painel Admin</span>
+                </a>
+
                 <!-- Botão de Auditoria Completa (Admin) -->
                 <button id="btn-audit-modal"
                         type="button"
