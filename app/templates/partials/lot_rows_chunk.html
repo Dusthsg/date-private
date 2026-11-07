@@ -1,10 +1,10 @@
 {# Partial: chunk subsequente de lotes carregados via rolagem infinita #}
 {% for lot in lots %}
-<tr class="block sm:table-row bg-white dark:bg-gray-800 rounded-2xl sm:rounded-none p-3.5 sm:p-0 mb-3 sm:mb-0 shadow-xs sm:shadow-none border border-gray-200/80 dark:border-gray-700/80 sm:border-0 sm:border-b sm:border-gray-100 sm:dark:border-gray-700/80 hover:bg-indigo-50/60 dark:hover:bg-gray-700/50 transition odd:bg-white even:bg-gray-50/40 dark:odd:bg-gray-800 dark:even:bg-gray-800/60"
+<tr class="lot-row border-b border-gray-100 dark:border-gray-700/80 hover:bg-indigo-50/60 dark:hover:bg-gray-700/50 transition odd:bg-white even:bg-gray-50/40 dark:odd:bg-gray-800 dark:even:bg-gray-800/60"
     id="lot-{{ lot['lot_id'] }}">
 
     <!-- Lote ID -->
-    <td class="inline-block sm:table-cell px-0 sm:px-3 py-0 sm:py-2.5 font-mono text-gray-500 dark:text-gray-400 whitespace-nowrap text-xs">
+    <td class="td-lot-id px-3 py-2.5 font-mono text-gray-500 dark:text-gray-400 whitespace-nowrap text-xs">
         {% if lot.get('is_deleted') %}
             <span class="text-[11px] sm:text-xs bg-red-100 text-red-700 dark:bg-red-950/80 dark:text-red-300 px-2 py-0.5 rounded-md font-bold">#{{ lot['lot_id'] }}</span>
         {% else %}
@@ -13,7 +13,7 @@
     </td>
 
     <!-- Nome do Produto -->
-    <td class="block sm:table-cell px-0 sm:px-3 py-1.5 sm:py-2.5 font-semibold sm:font-medium text-gray-900 dark:text-gray-100 sm:min-w-[280px] sm:max-w-[55ch] sm:truncate text-sm"
+    <td class="td-product px-3 py-2.5 font-semibold sm:font-medium text-gray-900 dark:text-gray-100 sm:min-w-[280px] sm:max-w-[55ch] sm:truncate text-sm"
         title="{{ lot['product_name'] }}">
         <span>{{ lot['product_name'] }}</span>
         {% if lot.get('is_deleted') and lot.get('deleted_at') %}
@@ -24,12 +24,12 @@
     </td>
 
     <!-- Quantidade -->
-    <td class="inline-flex sm:table-cell items-center gap-1.5 px-0 sm:px-3 py-1 sm:py-2.5 text-gray-600 dark:text-gray-300 whitespace-nowrap mr-3 sm:mr-0 text-xs sm:text-sm" id="quant-cell-{{ lot['lot_id'] }}">
-        <span class="text-[11px] text-gray-400 dark:text-gray-500 sm:hidden">Qtd:</span>
+    <td class="td-quant px-3 py-2.5 text-gray-600 dark:text-gray-300 whitespace-nowrap text-xs sm:text-sm" id="quant-cell-{{ lot['lot_id'] }}">
+        <span class="card-label text-[11px] text-gray-400 dark:text-gray-500 mr-1 font-semibold">Qtd:</span>
         {% if lot.get('is_deleted') %}
             <span class="font-bold text-red-600 dark:text-red-400">-{{ lot['quant'] }}</span>
         {% else %}
-            <div id="view-quant-{{ lot['lot_id'] }}" class="flex items-center gap-1.5 whitespace-nowrap">
+            <div id="view-quant-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 whitespace-nowrap">
                 <span class="font-bold sm:font-medium text-gray-800 dark:text-gray-100 bg-gray-50 dark:bg-gray-700/70 sm:bg-transparent px-2 py-0.5 sm:p-0 rounded">{{ lot['quant'] }}</span>
                 <button type="button"
                         onclick="startEditing({{ lot['lot_id'] }})"
@@ -41,7 +41,7 @@
                   hx-target="#quant-cell-{{ lot['lot_id'] }}"
                   hx-swap="outerHTML"
                   onsubmit="window.isEditingLot = false;"
-                  class="flex items-center gap-1"
+                  class="inline-flex items-center gap-1"
                   style="display: none;">
                 <input type="number" id="input-quant-{{ lot['lot_id'] }}" name="quant" value="{{ lot['quant'] }}" min="0" required
                        class="w-16 border border-indigo-400 dark:border-indigo-500 rounded px-1.5 py-0.5 text-xs text-gray-800 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
@@ -57,12 +57,12 @@
     </td>
 
     <!-- Preço -->
-    <td class="inline-flex sm:table-cell items-center gap-1.5 px-0 sm:px-3 py-1 sm:py-2.5 text-gray-600 dark:text-gray-300 whitespace-nowrap mr-3 sm:mr-0 text-xs sm:text-sm" id="price-cell-{{ lot['lot_id'] }}">
-        <span class="text-[11px] text-gray-400 dark:text-gray-500 sm:hidden">Preço:</span>
+    <td class="td-price px-3 py-2.5 text-gray-600 dark:text-gray-300 whitespace-nowrap text-xs sm:text-sm" id="price-cell-{{ lot['lot_id'] }}">
+        <span class="card-label text-[11px] text-gray-400 dark:text-gray-500 mr-1 font-semibold">Preço:</span>
         {% if lot.get('is_deleted') %}
             <span class="font-medium text-gray-600 dark:text-gray-400">R$ {{ "%.2f" | format(lot['price']) }}</span>
         {% else %}
-            <div id="view-price-{{ lot['lot_id'] }}" class="flex items-center gap-1.5 whitespace-nowrap">
+            <div id="view-price-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 whitespace-nowrap">
                 <span class="font-bold sm:font-medium text-gray-800 dark:text-gray-100 bg-gray-50 dark:bg-gray-700/70 sm:bg-transparent px-2 py-0.5 sm:p-0 rounded">R$ {{ "%.2f" | format(lot['price']) }}</span>
                 <button type="button"
                         onclick="startEditingPrice({{ lot['lot_id'] }})"
@@ -74,7 +74,7 @@
                   hx-target="#price-cell-{{ lot['lot_id'] }}"
                   hx-swap="outerHTML"
                   onsubmit="window.isEditingLot = false;"
-                  class="flex items-center gap-1"
+                  class="inline-flex items-center gap-1"
                   style="display: none;">
                 <input type="number" id="input-price-{{ lot['lot_id'] }}" name="price" value="{{ "%.2f" | format(lot['price']) }}" step="0.01" min="0" required
                        class="w-20 border border-indigo-400 dark:border-indigo-500 rounded px-1.5 py-0.5 text-xs text-gray-800 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
@@ -90,8 +90,8 @@
     </td>
 
     <!-- Validade -->
-    <td class="inline-block sm:table-cell px-0 sm:px-3 py-1 sm:py-2.5 whitespace-nowrap">
-        <span class="inline-flex items-center gap-1 px-2.5 py-1 sm:py-0.5 rounded-lg sm:rounded-full text-xs font-bold sm:font-semibold
+    <td class="td-valid px-3 py-2.5 whitespace-nowrap">
+        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold sm:font-semibold
             {% if lot['date_valid'] < now_date %}
                 bg-red-100 text-red-700 dark:bg-red-900/60 dark:text-red-300
             {% elif lot['date_valid'] <= critico_date %}
@@ -101,44 +101,48 @@
             {% else %}
                 bg-green-100 text-green-700 dark:bg-green-900/60 dark:text-green-300
             {% endif %}">
-            <i data-lucide="calendar" class="w-3 h-3 sm:hidden"></i>
+            <i data-lucide="calendar" class="card-label w-3 h-3"></i>
             <span>{{ lot['date_valid'][8:] }}/{{ lot['date_valid'][5:7] }}/{{ lot['date_valid'][:4] }}</span>
         </span>
     </td>
 
     <!-- Localização (Loja / Galpão) -->
-    <td class="hidden md:table-cell px-3 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap">{{ lot['location'] }}</td>
+    <td class="td-location px-3 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap">
+        <span class="card-label text-[11px] text-gray-400 dark:text-gray-500 mr-1 font-semibold">Local:</span>
+        <span>{{ lot['location'] }}</span>
+    </td>
     
     <!-- Status -->
-    <td class="hidden md:table-cell px-3 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap">
+    <td class="td-status px-3 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap">
         {% if lot.get('is_deleted') %}
             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
                 <i data-lucide="trash-2" class="w-3 h-3"></i> Baixado
             </span>
         {% else %}
-            {{ lot['status'] }}
+            <span class="card-label text-[11px] text-gray-400 dark:text-gray-500 mr-1 font-semibold">Status:</span>
+            <span>{{ lot['status'] }}</span>
         {% endif %}
     </td>
 
     <!-- Botões de Ação -->
-    <td class="block sm:table-cell mt-3 sm:mt-0 pt-2.5 sm:pt-2.5 border-t sm:border-t-0 border-gray-100 dark:border-gray-700/60 sm:text-center whitespace-nowrap">
+    <td class="td-actions px-3 py-2.5 text-center whitespace-nowrap">
         {% if lot.get('is_deleted') %}
-            <div class="flex sm:inline-flex items-center gap-2 w-full sm:w-auto">
+            <div class="inline-flex items-center gap-2 w-full sm:w-auto">
                 <button hx-post="/lote/restaurar/{{ lot.get('movement_id', lot['lot_id']) }}"
                         hx-target="#lot-{{ lot['lot_id'] }}"
                         hx-swap="outerHTML swap:0.15s"
                         hx-confirm="Deseja restaurar este lote baixado (#{{ lot['lot_id'] }} — {{ lot['product_name'] }}) de volta para a loja?"
-                        class="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold py-2.5 sm:py-1.5 px-3 rounded-xl sm:rounded-lg transition shadow-xs cursor-pointer"
+                        class="inline-flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition shadow-xs cursor-pointer"
                         title="Restaurar este lote para a loja">
-                    <i data-lucide="rotate-ccw" class="w-4 h-4 sm:w-3.5 sm:h-3.5"></i> <span>Restaurar Lote</span>
+                    <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> <span>Restaurar Lote</span>
                 </button>
                 <button hx-delete="/lote/movimento/{{ lot.get('movement_id', lot['lot_id']) }}"
                         hx-target="#lot-{{ lot['lot_id'] }}"
                         hx-swap="outerHTML swap:0.15s"
                         hx-confirm="Tem certeza que deseja excluir DEFINITIVAMENTE este registro de baixa (#{{ lot['lot_id'] }} — {{ lot['product_name'] }}) do histórico de auditoria?"
-                        class="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold py-2.5 sm:py-1.5 px-3 rounded-xl sm:rounded-lg transition shadow-xs cursor-pointer"
+                        class="inline-flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition shadow-xs cursor-pointer"
                         title="Excluir permanentemente da auditoria">
-                    <i data-lucide="trash-2" class="w-4 h-4 sm:w-3.5 sm:h-3.5"></i> <span>Excluir</span>
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> <span>Excluir</span>
                 </button>
             </div>
         {% else %}
@@ -146,9 +150,9 @@
                     hx-target="#lot-{{ lot['lot_id'] }}"
                     hx-swap="outerHTML swap:0.15s"
                     hx-confirm="Tem certeza que deseja deletar/dar baixa no lote #{{ lot['lot_id'] }} — {{ lot['product_name'] }}?"
-                    class="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold py-2.5 sm:py-1.5 px-3.5 rounded-xl sm:rounded-lg transition shadow-xs cursor-pointer"
+                    class="inline-flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold py-1.5 px-3.5 rounded-lg transition shadow-xs cursor-pointer"
                     title="Deletar lote (enviar para auditoria)">
-                <i data-lucide="trash-2" class="w-4 h-4 sm:w-3.5 sm:h-3.5"></i> <span>Dar Baixa (Deletar)</span>
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> <span>Dar Baixa</span>
             </button>
         {% endif %}
     </td>
@@ -160,8 +164,8 @@
     hx-get="/lots/page?filtro={{ filtro }}&busca={{ busca }}&page={{ next_page }}"
     hx-trigger="intersect once rootMargin:600px, revealed"
     hx-swap="outerHTML"
-    class="block sm:table-row bg-gray-50/50 hover:bg-gray-100 transition rounded-xl">
-    <td colspan="8" class="block sm:table-cell py-3 text-center text-gray-500 text-xs">
+    class="bg-gray-50/50 hover:bg-gray-100 transition rounded-xl">
+    <td colspan="8" class="py-3 text-center text-gray-500 text-xs">
         <div class="inline-flex items-center gap-2 font-medium">
             <svg class="animate-spin h-4 w-4 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -173,8 +177,8 @@
 </tr>
 {% else %}
 {% if total > 50 %}
-<tr id="limit-note" class="block sm:table-row">
-    <td colspan="8" class="block sm:table-cell px-4 py-3 text-center text-xs text-gray-400 bg-gray-50 italic border-t rounded-xl">
+<tr id="limit-note">
+    <td colspan="8" class="px-4 py-3 text-center text-xs text-gray-400 bg-gray-50 italic border-t rounded-xl">
         <span class="inline-flex items-center gap-1"><i data-lucide="check-check" class="w-3.5 h-3.5 text-emerald-600"></i> Todos os {{ total }} lotes foram carregados.</span>
     </td>
 </tr>

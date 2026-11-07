@@ -55,7 +55,194 @@
             -ms-overflow-style: none;
             scrollbar-width: none;
         }
-    </style>
+    
+        /* ============================================================ */
+        /* MODO DE EXIBIÇÃO: LISTA (TABELA) vs CARDS                   */
+        /* ============================================================ */
+
+        /* --- MODO TABELA (LISTA) --- */
+        #lot-display-container.view-mode-table {
+            overflow-x: auto;
+            background-color: #ffffff;
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.07);
+        }
+        html.dark #lot-display-container.view-mode-table {
+            background-color: #1f2937;
+        }
+        #lot-display-container.view-mode-table table {
+            width: 100%;
+            min-width: 680px;
+            display: table;
+            border-collapse: collapse;
+        }
+        #lot-display-container.view-mode-table thead {
+            display: table-header-group !important;
+        }
+        #lot-display-container.view-mode-table thead tr {
+            display: table-row !important;
+        }
+        #lot-display-container.view-mode-table thead th {
+            display: table-cell !important;
+        }
+        #lot-display-container.view-mode-table tbody {
+            display: table-row-group !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row {
+            display: table-row !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td {
+            display: table-cell !important;
+        }
+        #lot-display-container.view-mode-table .card-label {
+            display: none !important;
+        }
+        #lot-display-container.view-mode-table tr.empty-row,
+        #lot-display-container.view-mode-table tr#infinite-scroll-trigger,
+        #lot-display-container.view-mode-table tr#limit-note {
+            display: table-row !important;
+        }
+        #lot-display-container.view-mode-table tr.empty-row td,
+        #lot-display-container.view-mode-table tr#infinite-scroll-trigger td,
+        #lot-display-container.view-mode-table tr#limit-note td {
+            display: table-cell !important;
+        }
+
+        /* --- MODO CARDS --- */
+        #lot-display-container.view-mode-cards {
+            overflow: visible !important;
+            background: transparent !important;
+            box-shadow: none !important;
+        }
+        #lot-display-container.view-mode-cards table {
+            width: 100% !important;
+            min-width: 0 !important;
+            display: block !important;
+            border-collapse: separate !important;
+        }
+        #lot-display-container.view-mode-cards thead {
+            display: none !important;
+        }
+        #lot-display-container.view-mode-cards tbody {
+            display: grid !important;
+            grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)) !important;
+            gap: 0.85rem !important;
+            width: 100% !important;
+        }
+        @media (max-width: 440px) {
+            #lot-display-container.view-mode-cards tbody {
+                grid-template-columns: 1fr !important;
+            }
+        }
+        #lot-display-container.view-mode-cards tr.lot-row {
+            display: grid !important;
+            grid-template-columns: 1fr auto !important;
+            align-items: center !important;
+            gap: 0.35rem 0.5rem !important;
+            padding: 1rem !important;
+            border-radius: 1rem !important;
+            background-color: #ffffff !important;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.07), 0 1px 2px -1px rgba(0, 0, 0, 0.05) !important;
+            border: 1px solid rgba(229, 231, 235, 0.9) !important;
+            transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.08) !important;
+        }
+        html.dark #lot-display-container.view-mode-cards tr.lot-row {
+            background-color: #1f2937 !important;
+            border-color: #374151 !important;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3) !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-lot-id {
+            display: block !important;
+            grid-column: 1 !important;
+            padding: 0 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-valid {
+            display: block !important;
+            grid-column: 2 !important;
+            text-align: right !important;
+            padding: 0 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-product {
+            display: block !important;
+            grid-column: 1 / -1 !important;
+            font-weight: 700 !important;
+            font-size: 0.95rem !important;
+            line-height: 1.35 !important;
+            padding: 0.2rem 0 !important;
+            min-width: 0 !important;
+            max-width: none !important;
+            white-space: normal !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-quant {
+            display: inline-flex !important;
+            align-items: center !important;
+            grid-column: 1 !important;
+            padding: 0.15rem 0 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-price {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            grid-column: 2 !important;
+            padding: 0.15rem 0 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-location {
+            display: inline-flex !important;
+            align-items: center !important;
+            grid-column: 1 !important;
+            font-size: 0.75rem !important;
+            padding: 0.1rem 0 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-status {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            grid-column: 2 !important;
+            font-size: 0.75rem !important;
+            padding: 0.1rem 0 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-actions {
+            display: block !important;
+            grid-column: 1 / -1 !important;
+            margin-top: 0.5rem !important;
+            padding: 0.5rem 0 0 0 !important;
+            border-top: 1px solid #f3f4f6 !important;
+            text-align: center !important;
+        }
+        html.dark #lot-display-container.view-mode-cards tr.lot-row td.td-actions {
+            border-top-color: #374151 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-actions button {
+            display: flex !important;
+            width: 100% !important;
+            justify-content: center !important;
+            padding-top: 0.55rem !important;
+            padding-bottom: 0.55rem !important;
+            font-size: 0.8125rem !important;
+            border-radius: 0.625rem !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row .card-label {
+            display: inline-block !important;
+        }
+        #lot-display-container.view-mode-cards tr.empty-row,
+        #lot-display-container.view-mode-cards tr#infinite-scroll-trigger,
+        #lot-display-container.view-mode-cards tr#limit-note {
+            display: block !important;
+            grid-column: 1 / -1 !important;
+            width: 100% !important;
+            border-radius: 1rem !important;
+        }
+        #lot-display-container.view-mode-cards tr.empty-row td,
+        #lot-display-container.view-mode-cards tr#infinite-scroll-trigger td,
+        #lot-display-container.view-mode-cards tr#limit-note td {
+            display: block !important;
+            width: 100% !important;
+        }
+</style>
     <script>
                 // Suporte a Lucide Icons com re-renderização de alta performance com escopo e requestAnimationFrame
         let _iconRafPending = false;
@@ -204,6 +391,84 @@
             window.updateThemeUI();
         }
     </script>
+<script>
+        // ============================================================
+        // MODO DE EXIBIÇÃO: LISTA vs CARDS (COM PERSISTÊNCIA)
+        // ============================================================
+        window.getLotViewMode = function() {
+            try {
+                const saved = localStorage.getItem('datelimit_view_mode');
+                if (saved === 'table' || saved === 'cards') return saved;
+            } catch (e) {}
+            return (window.innerWidth < 640) ? 'cards' : 'table';
+        };
+
+        window.setLotViewMode = function(mode, save) {
+            if (mode !== 'table' && mode !== 'cards') mode = 'table';
+            if (save) {
+                try {
+                    localStorage.setItem('datelimit_view_mode', mode);
+                } catch (e) {}
+            }
+            const container = document.getElementById('lot-display-container');
+            if (container) {
+                if (mode === 'cards') {
+                    container.classList.remove('view-mode-table');
+                    container.classList.add('view-mode-cards');
+                } else {
+                    container.classList.remove('view-mode-cards');
+                    container.classList.add('view-mode-table');
+                }
+            }
+
+            // Atualiza visual dos botões do seletor
+            const btnTable = document.getElementById('btn-view-table');
+            const btnCards = document.getElementById('btn-view-cards');
+            const drawerTable = document.getElementById('drawer-view-table');
+            const drawerCards = document.getElementById('drawer-view-cards');
+
+            const activeBtn = ['bg-white', 'dark:bg-gray-700', 'text-indigo-600', 'dark:text-indigo-400', 'shadow-xs', 'font-bold'];
+            const inactiveBtn = ['text-gray-500', 'dark:text-gray-400', 'hover:text-gray-700', 'dark:hover:text-gray-200', 'font-medium'];
+
+            if (btnTable && btnCards) {
+                if (mode === 'table') {
+                    btnTable.classList.add(...activeBtn);
+                    btnTable.classList.remove(...inactiveBtn);
+                    btnCards.classList.remove(...activeBtn);
+                    btnCards.classList.add(...inactiveBtn);
+                } else {
+                    btnCards.classList.add(...activeBtn);
+                    btnCards.classList.remove(...inactiveBtn);
+                    btnTable.classList.remove(...activeBtn);
+                    btnTable.classList.add(...inactiveBtn);
+                }
+            }
+
+            if (drawerTable && drawerCards) {
+                const dActive = ['bg-indigo-600', 'text-white', 'border-indigo-600', 'shadow-xs'];
+                const dInactive = ['bg-white', 'dark:bg-gray-800', 'text-gray-600', 'dark:text-gray-300', 'border-gray-200', 'dark:border-gray-700'];
+                if (mode === 'table') {
+                    drawerTable.classList.add(...dActive);
+                    drawerTable.classList.remove(...dInactive);
+                    drawerCards.classList.remove(...dActive);
+                    drawerCards.classList.add(...dInactive);
+                } else {
+                    drawerCards.classList.add(...dActive);
+                    drawerCards.classList.remove(...dInactive);
+                    drawerTable.classList.remove(...dActive);
+                    drawerTable.classList.add(...dInactive);
+                }
+            }
+            if (window.refreshIcons) window.refreshIcons();
+        };
+
+        window.initLotViewMode = function() {
+            window.setLotViewMode(window.getLotViewMode(), false);
+        };
+
+document.addEventListener('DOMContentLoaded', window.initLotViewMode);
+document.addEventListener('htmx:afterSettle', window.initLotViewMode);
+</script>
 </head>
 <body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen transition-colors duration-200">
 
