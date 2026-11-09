@@ -29,6 +29,34 @@ from app.auditor_import import (
 )
 
 
+def clean_test_product(product_name):
+    """
+    Remove produtos, lotes e movimentações de teste de ambos os bancos (SQLite e Postgres)
+    garantindo que os testes não poluam nem alterem o banco de dados de produção/desenvolvimento.
+    """
+    from app.db import _connect_pg_direct, is_postgres_configured
+    try:
+        with sqlite3.connect(SQLITE_PATH) as s_conn:
+            s_conn.execute("DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name = ?)", (product_name,))
+            s_conn.execute("DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = ?)", (product_name,))
+            s_conn.execute("DELETE FROM products WHERE name = ?", (product_name,))
+            s_conn.commit()
+    except Exception:
+        pass
+
+    if is_postgres_configured():
+        try:
+            pg_conn = _connect_pg_direct(timeout=4)
+            pg_cur = pg_conn.cursor()
+            pg_cur.execute("DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name = %s)", (product_name,))
+            pg_cur.execute("DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = %s)", (product_name,))
+            pg_cur.execute("DELETE FROM products WHERE name = %s", (product_name,))
+            pg_conn.commit()
+            pg_conn.close()
+        except Exception:
+            pass
+
+
 class TestUserReportedIssues(unittest.TestCase):
 
     @classmethod
@@ -62,18 +90,14 @@ class TestUserReportedIssues(unittest.TestCase):
         """
         Valida que os endpoints de edição inline de quantidade (/lote/<id>/quantidade)
         e preço (/lote/<id>/preco) atualizam o banco e retornam as células parciais HTMX.
+        Cria um lote temporário exclusivo e o limpa ao final, sem tocar em lotes reais do banco.
         """
-        # Pega um lote existente no banco local (tabela product_lots)
-        conn = sqlite3.connect(SQLITE_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, quant, price FROM product_lots ORDER BY id DESC LIMIT 1")
-        row = cursor.fetchone()
-        conn.close()
+        from app.db import create_lot
+        unique_name = f"TEMP TEST INLINE {uuid.uuid4().hex[:6].upper()}"
+        d_valid = (datetime.date.today() + datetime.timedelta(days=30)).strftime('%Y-%m-%d')
+        prod_id, lot_id = create_lot(unique_name, quant=5, price=10.00, date_valid=d_valid, location="LOJA")
 
-        if row:
-            lot_id = row['id']
-            
+        try:
             # Testa atualização de quantidade
             resp_quant = self.client.post(f'/lote/{lot_id}/quantidade', data={'quant': '99'})
             self.assertEqual(resp_quant.status_code, 200)
@@ -85,6 +109,8 @@ class TestUserReportedIssues(unittest.TestCase):
             self.assertEqual(resp_price.status_code, 200)
             self.assertIn(f'price-cell-{lot_id}', resp_price.data.decode('utf-8'))
             self.assertIn('12.50', resp_price.data.decode('utf-8'))
+        finally:
+            clean_test_product(unique_name)
 
     # ──────────────────────────────────────────────────────────────────────────
     # 3. ERRO: Digitação sem CapsLock salvava em minúsculas (Msg 67)
@@ -94,27 +120,32 @@ class TestUserReportedIssues(unittest.TestCase):
         Valida que ao cadastrar um novo lote com nome em minúsculas,
         o sistema normaliza obrigatoriamente para MAIÚSCULAS no banco de dados.
         """
-        test_name_lower = "produto teste capslock normalizado"
+        uid = uuid.uuid4().hex[:6].lower()
+        test_name_lower = f"produto teste capslock {uid}"
+        test_name_upper = test_name_lower.upper()
         tomorrow = (datetime.date.today() + datetime.timedelta(days=30)).strftime('%Y-%m-%d')
 
-        response = self.client.post('/lote', data={
-            'name': test_name_lower,
-            'date_valid': tomorrow,
-            'quant': '10',
-            'location': 'LOJA'
-        })
-        self.assertEqual(response.status_code, 200)
+        try:
+            response = self.client.post('/lote', data={
+                'name': test_name_lower,
+                'date_valid': tomorrow,
+                'quant': '10',
+                'location': 'LOJA'
+            })
+            self.assertEqual(response.status_code, 200)
 
-        # Verifica no banco ativo se foi gravado em maiúsculas
-        from app.db import get_db_cursor
-        with get_db_cursor() as (cur, db_type):
-            ph = '%s' if db_type == 'postgres' else '?'
-            cur.execute(f"SELECT name FROM products WHERE UPPER(name) = {ph}", (test_name_lower.upper(),))
-            saved_prod = cur.fetchone()
+            # Verifica no banco ativo se foi gravado em maiúsculas
+            from app.db import get_db_cursor
+            with get_db_cursor() as (cur, db_type):
+                ph = '%s' if db_type == 'postgres' else '?'
+                cur.execute(f"SELECT name FROM products WHERE UPPER(name) = {ph}", (test_name_upper,))
+                saved_prod = cur.fetchone()
 
-        self.assertIsNotNone(saved_prod)
-        saved_name = saved_prod[0] if isinstance(saved_prod, (tuple, list)) else saved_prod['name']
-        self.assertEqual(saved_name, test_name_lower.upper())
+            self.assertIsNotNone(saved_prod)
+            saved_name = saved_prod[0] if isinstance(saved_prod, (tuple, list)) else saved_prod['name']
+            self.assertEqual(saved_name, test_name_upper)
+        finally:
+            clean_test_product(test_name_upper)
 
     # ──────────────────────────────────────────────────────────────────────────
     # 4. ERRO: Filtro Adicionados Hoje precisando marcar 2 semanas atrás (Msg 64)
@@ -462,12 +493,7 @@ class TestUserReportedIssues(unittest.TestCase):
         self.assertGreaterEqual(stats2.get('inalterados', 0), 1)
 
         # Limpeza
-        from app.db import get_db_cursor
-        with get_db_cursor(commit=True) as (cur, db_type):
-            ph = '%s' if db_type == 'postgres' else '?'
-            cur.execute(f"DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
-            cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
-            cur.execute(f"DELETE FROM products WHERE name = {ph}", (unique_name,))
+        clean_test_product(unique_name)
 
     # ──────────────────────────────────────────────────────────────────────────
     # 16. REGRA: Produto já existente preserva preço e atualiza/cria lote sem alterar preço
@@ -531,11 +557,7 @@ class TestUserReportedIssues(unittest.TestCase):
             conn.close()
 
         finally:
-            with get_db_cursor(commit=True) as (cur, db_type):
-                ph = '%s' if db_type == 'postgres' else '?'
-                cur.execute(f"DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
-                cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
-                cur.execute(f"DELETE FROM products WHERE name = {ph}", (unique_name,))
+            clean_test_product(unique_name)
 
     # ──────────────────────────────────────────────────────────────────────────
     # 17. AUDITORIA: Aba de itens deletados (Lápides) e fluxo de restauração
@@ -594,11 +616,7 @@ class TestUserReportedIssues(unittest.TestCase):
             self.assertEqual(found_active['quant'], 25)
 
         finally:
-            with get_db_cursor(commit=True) as (cur, db_type):
-                ph = '%s' if db_type == 'postgres' else '?'
-                cur.execute(f"DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
-                cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
-                cur.execute(f"DELETE FROM products WHERE name = {ph}", (unique_name,))
+            clean_test_product(unique_name)
 
     # ──────────────────────────────────────────────────────────────────────────
     # 18. PREÇO EM PRODUCTS: Auto-pull ao adicionar lote e persistência
@@ -663,11 +681,8 @@ class TestUserReportedIssues(unittest.TestCase):
             self.assertIn('input-add-lot-price', html)
 
         finally:
-            with get_db_cursor(commit=True) as (cur, db_type):
-                ph = '%s' if db_type == 'postgres' else '?'
-                cur.execute(f"DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name IN ({ph}, {ph}))", (unique_name, zero_name))
-                cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name IN ({ph}, {ph}))", (unique_name, zero_name))
-                cur.execute(f"DELETE FROM products WHERE name IN ({ph}, {ph})", (unique_name, zero_name))
+            clean_test_product(unique_name)
+            clean_test_product(zero_name)
 
     # ──────────────────────────────────────────────────────────────────────────
     # 19. BOTÕES DE DELETADOS & AUDITORIA E ELIMINAÇÃO DE LAG (Msg 10)
@@ -733,11 +748,7 @@ class TestUserReportedIssues(unittest.TestCase):
             self.assertTrue(callable(purge_all_deleted_route))
 
         finally:
-            with get_db_cursor(commit=True) as (cur, db_type):
-                ph = '%s' if db_type == 'postgres' else '?'
-                cur.execute(f"DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
-                cur.execute(f"DELETE FROM product_lots WHERE product_id IN (SELECT id FROM products WHERE name = {ph})", (unique_name,))
-                cur.execute(f"DELETE FROM products WHERE name = {ph}", (unique_name,))
+            clean_test_product(unique_name)
 
 
     # ──────────────────────────────────────────────────────────────────────────
