@@ -10,7 +10,13 @@
             <button type="button"
                     onclick="window.toggleLotDropdown('menu-stat-{{ lot['lot_id'] }}', event)"
                     class="lot-dropdown-trigger inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold sm:font-semibold border transition cursor-pointer select-none active:scale-95 shadow-2xs hover:shadow-xs
-                    {% if lot['status'] == 'QUEIMA-DE-ESTOQUE' %}
+                    {% if lot['status'] == 'VENCIDO' %}
+                        bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300 border-rose-200 dark:border-rose-800 hover:bg-rose-200 dark:hover:bg-rose-900/60
+                    {% elif lot['status'] in ('CRÍTICO', 'CRITICO') %}
+                        bg-orange-100 text-orange-800 dark:bg-orange-950/70 dark:text-orange-300 border-orange-200 dark:border-orange-800 hover:bg-orange-200 dark:hover:bg-orange-900/60
+                    {% elif lot['status'] in ('ATENÇÃO', 'ATENCAO') %}
+                        bg-yellow-100 text-yellow-800 dark:bg-yellow-950/70 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800 hover:bg-yellow-200 dark:hover:bg-yellow-900/60
+                    {% elif lot['status'] == 'QUEIMA-DE-ESTOQUE' %}
                         bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border-amber-200 dark:border-amber-800 hover:bg-amber-200 dark:hover:bg-amber-900/60
                     {% elif lot['status'] == 'PROMOCIONAL' %}
                         bg-purple-100 text-purple-800 dark:bg-purple-950/70 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:bg-purple-200 dark:hover:bg-purple-900/60
@@ -29,16 +35,25 @@
                 <div class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-700/60">
                     Status do Lote
                 </div>
-                {% for st_opt in (available_statuses or [{'name': 'NORMAL'}, {'name': 'QUEIMA-DE-ESTOQUE'}, {'name': 'PROMOCIONAL'}]) %}
+                {% for st_opt in (available_statuses or [{'name': 'NORMAL'}, {'name': 'ATENÇÃO'}, {'name': 'CRÍTICO'}, {'name': 'VENCIDO'}, {'name': 'QUEIMA-DE-ESTOQUE'}, {'name': 'PROMOCIONAL'}]) %}
                 <button type="button"
                         hx-post="/lote/{{ lot['lot_id'] }}/status"
                         hx-vals='{"status": "{{ st_opt.name }}"}'
                         hx-target="#status-cell-{{ lot['lot_id'] }}"
                         hx-swap="outerHTML"
                         onclick="window.closeAllLotDropdowns()"
-                        class="w-full text-left px-3 py-1.5 text-xs font-medium flex items-center justify-between hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-gray-700 dark:text-gray-200 hover:text-emerald-600 dark:hover:text-emerald-400 transition cursor-pointer">
+                        class="w-full text-left px-3 py-1.5 text-xs font-medium flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/50 text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-white transition cursor-pointer">
                     <span class="flex items-center gap-1.5">
-                        <span class="w-2 h-2 rounded-full {% if st_opt.name == 'QUEIMA-DE-ESTOQUE' %}bg-amber-500{% elif st_opt.name == 'PROMOCIONAL' %}bg-purple-500{% else %}bg-emerald-500{% endif %}"></span> {{ st_opt.name }}
+                        <span class="w-2 h-2 rounded-full
+                            {% if st_opt.name == 'VENCIDO' %}bg-rose-500
+                            {% elif st_opt.name in ('CRÍTICO', 'CRITICO') %}bg-orange-500
+                            {% elif st_opt.name in ('ATENÇÃO', 'ATENCAO') %}bg-yellow-500
+                            {% elif st_opt.name == 'QUEIMA-DE-ESTOQUE' %}bg-amber-500
+                            {% elif st_opt.name == 'PROMOCIONAL' %}bg-purple-500
+                            {% elif st_opt.name == 'NORMAL' %}bg-emerald-500
+                            {% else %}bg-slate-400
+                            {% endif %}"></span>
+                        <span>{{ st_opt.name }}</span>
                     </span>
                     {% if lot['status'] == st_opt.name %}<i data-lucide="check" class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400"></i>{% endif %}
                 </button>

@@ -820,11 +820,20 @@ async function loadFieldOptionsAdmin() {
         if (statContainer && data.statuses) {
             statContainer.innerHTML = data.statuses.map(st => {
                 const isNormal = st.name === 'NORMAL';
-                const colorClass = st.name === 'QUEIMA-DE-ESTOQUE' 
-                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border-amber-200 dark:border-amber-800'
-                    : (st.name === 'PROMOCIONAL'
-                        ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/70 dark:text-purple-300 border-purple-200 dark:border-purple-800'
-                        : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800');
+                let colorClass = 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700';
+                if (st.name === 'VENCIDO') {
+                    colorClass = 'bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300 border-rose-200 dark:border-rose-800';
+                } else if (st.name === 'CRÍTICO' || st.name === 'CRITICO') {
+                    colorClass = 'bg-orange-100 text-orange-800 dark:bg-orange-950/70 dark:text-orange-300 border-orange-200 dark:border-orange-800';
+                } else if (st.name === 'ATENÇÃO' || st.name === 'ATENCAO') {
+                    colorClass = 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950/70 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800';
+                } else if (st.name === 'QUEIMA-DE-ESTOQUE') {
+                    colorClass = 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border-amber-200 dark:border-amber-800';
+                } else if (st.name === 'PROMOCIONAL') {
+                    colorClass = 'bg-purple-100 text-purple-800 dark:bg-purple-950/70 dark:text-purple-300 border-purple-200 dark:border-purple-800';
+                } else if (st.name === 'NORMAL') {
+                    colorClass = 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800';
+                }
                 return `
                     <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${colorClass} border shadow-2xs">
                         <i data-lucide="tag" class="w-3 h-3"></i>

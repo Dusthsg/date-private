@@ -397,7 +397,9 @@ class TestUserReportedIssues(unittest.TestCase):
         Valida que a rota /lots/page entrega blocos paginados de 50 itens
         para rolagem infinita, evitando travamento da página.
         """
-        response = self.client.get('/lots/page?offset=0&limit=50&filtro=todos')
+        from app.db import create_lot
+        create_lot("TEST PRODUCT PAGINATION", 10, 5.0, "2026-12-31", "LOJA", "NORMAL")
+        response = self.client.get('/lots/page?page=1&filtro=todos')
         self.assertEqual(response.status_code, 200)
         html = response.data.decode('utf-8')
         # Deve retornar linhas de tabela HTML

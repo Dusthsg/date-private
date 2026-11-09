@@ -820,6 +820,9 @@ def init_sqlite_db():
             ("location", "LOJA", "sky", 1),
             ("location", "GALPÃO", "indigo", 0),
             ("status", "NORMAL", "emerald", 1),
+            ("status", "ATENÇÃO", "yellow", 0),
+            ("status", "CRÍTICO", "orange", 0),
+            ("status", "VENCIDO", "red", 0),
             ("status", "QUEIMA-DE-ESTOQUE", "amber", 0),
             ("status", "PROMOCIONAL", "purple", 0),
         ]
@@ -1021,6 +1024,9 @@ def init_pg_db():
                 ("location", "LOJA", "sky", 1),
                 ("location", "GALPÃO", "indigo", 0),
                 ("status", "NORMAL", "emerald", 1),
+                ("status", "ATENÇÃO", "yellow", 0),
+                ("status", "CRÍTICO", "orange", 0),
+                ("status", "VENCIDO", "red", 0),
                 ("status", "QUEIMA-DE-ESTOQUE", "amber", 0),
                 ("status", "PROMOCIONAL", "purple", 0),
             ]
@@ -1869,8 +1875,11 @@ def get_field_options(field_type: str) -> list:
         elif ft == "status":
             options = [
                 {"id": 3, "field_type": "status", "name": "NORMAL", "color": "emerald", "is_default": 1},
-                {"id": 4, "field_type": "status", "name": "QUEIMA-DE-ESTOQUE", "color": "amber", "is_default": 0},
-                {"id": 5, "field_type": "status", "name": "PROMOCIONAL", "color": "purple", "is_default": 0},
+                {"id": 4, "field_type": "status", "name": "ATENÇÃO", "color": "yellow", "is_default": 0},
+                {"id": 5, "field_type": "status", "name": "CRÍTICO", "color": "orange", "is_default": 0},
+                {"id": 6, "field_type": "status", "name": "VENCIDO", "color": "red", "is_default": 0},
+                {"id": 7, "field_type": "status", "name": "QUEIMA-DE-ESTOQUE", "color": "amber", "is_default": 0},
+                {"id": 8, "field_type": "status", "name": "PROMOCIONAL", "color": "purple", "is_default": 0},
             ]
 
     with _field_options_lock:
