@@ -1,969 +1,998 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DateLimit — Controle de Validade</title>
-
-    <!-- TailwindCSS via CDN com suporte a darkMode: 'class' -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {}
-            }
-        };
-    </script>
-
-    <!-- Detecção Instantânea de Tema Salvo (Evita tela branca ao carregar) -->
-    <script>
-        (function() {
-            try {
-                const saved = localStorage.getItem('datelimit_theme');
-                const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-                if (saved === 'dark' || (!saved && prefersDark)) {
-                    document.documentElement.classList.add('dark');
-                } else {
-                    document.documentElement.classList.remove('dark');
-                }
-            } catch (e) {}
-        })();
-    </script>
-
-    <!-- HTMX via CDN -->
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-    <!-- Lucide Icons via CDN -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-
-    <style>
-        /* Animação de fade-out ao deletar */
-        tr.htmx-swapping { opacity: 0; transform: scaleY(0.7); transition: all 0.15s ease-out; }
-
-        /* Ajuste do esquema de cores nativo (scrollbars e controles do navegador) */
-        html.dark {
-            color-scheme: dark;
-        }
-        html:not(.dark) {
-            color-scheme: light;
-        }
-        /* Oculta scrollbars nativas mas mantém rolagem e arraste por toque e mouse */
-        .no-scrollbar::-webkit-scrollbar {
-            display: none;
-        }
-        .no-scrollbar {
-            -ms-overflow-style: none;
-            scrollbar-width: none;
-        }
-    
-        /* ============================================================ */
-        /* MODO DE EXIBIÇÃO: LISTA (TABELA) vs CARDS                   */
-        /* ============================================================ */
-
-        /* --- MODO TABELA (LISTA COMPACTA ERP) --- */
-        #lot-display-container.view-mode-table {
-            overflow-x: auto;
-            background-color: #ffffff;
-            border-radius: 0.75rem;
-            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.07);
-        }
-        html.dark #lot-display-container.view-mode-table {
-            background-color: #1f2937;
-        }
-        #lot-display-container.view-mode-table table {
-            width: 100%;
-            min-width: 680px;
-            display: table;
-            border-collapse: collapse;
-        }
-        #lot-display-container.view-mode-table thead {
-            display: table-header-group !important;
-        }
-        #lot-display-container.view-mode-table thead tr {
-            display: table-row !important;
-        }
-        #lot-display-container.view-mode-table thead th {
-            display: table-cell !important;
-            padding: 0.65rem 0.75rem !important;
-            font-size: 0.74rem !important;
-            font-weight: 700 !important;
-            letter-spacing: 0.04em !important;
-            line-height: 1.15 !important;
-            position: relative;
-            background-color: #f9fafb !important;
-            border-bottom: 2px solid #e5e7eb !important;
-        }
-        html.dark #lot-display-container.view-mode-table thead th {
-            background-color: #1f2937 !important;
-            border-bottom-color: #374151 !important;
-        }
-        #lot-display-container.view-mode-table tbody {
-            display: table-row-group !important;
-        }
-        #lot-display-container.view-mode-table tr.lot-row {
-            display: table-row !important;
-            height: auto !important;
-        }
-        #lot-display-container.view-mode-table tr.lot-row td {
-            display: table-cell !important;
-            padding: 0.52rem 0.75rem !important;
-            vertical-align: middle !important;
-            font-size: 0.85rem !important;
-            line-height: 1.35 !important;
-        }
-        #lot-display-container.view-mode-table tr.lot-row td.td-actions {
-            padding: 0.35rem 0.65rem !important;
-        }
-        #lot-display-container.view-mode-table tr.lot-row td.td-actions button {
-            padding: 0.32rem 0.65rem !important;
-            font-size: 0.75rem !important;
-            border-radius: 0.5rem !important;
-            line-height: 1.15 !important;
-            gap: 0.3rem !important;
-        }
-        #lot-display-container.view-mode-table tr.lot-row td.td-actions button i {
-            width: 0.85rem !important;
-            height: 0.85rem !important;
-        }
-        #lot-display-container.view-mode-table tr.lot-row td.td-product {
-            max-width: 52ch !important;
-            white-space: nowrap !important;
-            overflow: hidden !important;
-            text-overflow: ellipsis !important;
-            padding-top: 0.45rem !important;
-            padding-bottom: 0.45rem !important;
-            font-size: 0.85rem !important;
-            font-weight: 500 !important;
-        }
-        #lot-display-container.view-mode-table tr.lot-row td.td-lot-id span {
-            padding: 0.12rem 0.42rem !important;
-            font-size: 0.74rem !important;
-        }
-        #lot-display-container.view-mode-table tr.lot-row td.td-valid span {
-            padding: 0.18rem 0.52rem !important;
-            font-size: 0.75rem !important;
-            line-height: 1.15 !important;
-        }
-        #lot-display-container.view-mode-table .card-label {
-            display: none !important;
-        }
-        #lot-display-container.view-mode-table tr.empty-row,
-        #lot-display-container.view-mode-table tr#infinite-scroll-trigger,
-        #lot-display-container.view-mode-table tr#limit-note {
-            display: table-row !important;
-        }
-        #lot-display-container.view-mode-table tr.empty-row td,
-        #lot-display-container.view-mode-table tr#infinite-scroll-trigger td,
-        #lot-display-container.view-mode-table tr#limit-note td {
-            display: table-cell !important;
-            padding: 0.4rem 0.65rem !important;
-        }
-
-        /* --- MODO CARDS --- */
-        #lot-display-container.view-mode-cards {
-            overflow: visible !important;
-            background: transparent !important;
-            box-shadow: none !important;
-        }
-        #lot-display-container.view-mode-cards table {
-            width: 100% !important;
-            min-width: 0 !important;
-            display: block !important;
-            border-collapse: separate !important;
-        }
-        #lot-display-container.view-mode-cards thead {
-            display: none !important;
-        }
-        #lot-display-container.view-mode-cards tbody {
-            display: grid !important;
-            grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)) !important;
-            gap: 0.85rem !important;
-            width: 100% !important;
-        }
-        @media (max-width: 440px) {
-            #lot-display-container.view-mode-cards tbody {
-                grid-template-columns: 1fr !important;
-            }
-        }
-        #lot-display-container.view-mode-cards tr.lot-row {
-            display: grid !important;
-            grid-template-columns: 1fr auto !important;
-            align-items: center !important;
-            gap: 0.35rem 0.5rem !important;
-            padding: 1rem !important;
-            border-radius: 1rem !important;
-            background-color: #ffffff !important;
-            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.07), 0 1px 2px -1px rgba(0, 0, 0, 0.05) !important;
-            border: 1px solid rgba(229, 231, 235, 0.9) !important;
-            transition: transform 0.15s ease, box-shadow 0.15s ease !important;
-        }
-        #lot-display-container.view-mode-cards tr.lot-row:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.08) !important;
-        }
-        html.dark #lot-display-container.view-mode-cards tr.lot-row {
-            background-color: #1f2937 !important;
-            border-color: #374151 !important;
-            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3) !important;
-        }
-        #lot-display-container.view-mode-cards tr.lot-row td.td-lot-id {
-            display: block !important;
-            grid-column: 1 !important;
-            padding: 0 !important;
-        }
-        #lot-display-container.view-mode-cards tr.lot-row td.td-valid {
-            display: block !important;
-            grid-column: 2 !important;
-            text-align: right !important;
-            padding: 0 !important;
-        }
-        #lot-display-container.view-mode-cards tr.lot-row td.td-product {
-            display: block !important;
-            grid-column: 1 / -1 !important;
-            font-weight: 700 !important;
-            font-size: 0.95rem !important;
-            line-height: 1.35 !important;
-            padding: 0.2rem 0 !important;
-            min-width: 0 !important;
-            max-width: none !important;
-            white-space: normal !important;
-        }
-        #lot-display-container.view-mode-cards tr.lot-row td.td-quant {
-            display: inline-flex !important;
-            align-items: center !important;
-            grid-column: 1 !important;
-            padding: 0.15rem 0 !important;
-        }
-        #lot-display-container.view-mode-cards tr.lot-row td.td-price {
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: flex-end !important;
-            grid-column: 2 !important;
-            padding: 0.15rem 0 !important;
-        }
-        #lot-display-container.view-mode-cards tr.lot-row td.td-location {
-            display: inline-flex !important;
-            align-items: center !important;
-            grid-column: 1 !important;
-            font-size: 0.75rem !important;
-            padding: 0.1rem 0 !important;
-        }
-        #lot-display-container.view-mode-cards tr.lot-row td.td-status {
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: flex-end !important;
-            grid-column: 2 !important;
-            font-size: 0.75rem !important;
-            padding: 0.1rem 0 !important;
-        }
-        #lot-display-container.view-mode-cards tr.lot-row td.td-actions {
-            display: block !important;
-            grid-column: 1 / -1 !important;
-            margin-top: 0.5rem !important;
-            padding: 0.5rem 0 0 0 !important;
-            border-top: 1px solid #f3f4f6 !important;
-            text-align: center !important;
-        }
-        html.dark #lot-display-container.view-mode-cards tr.lot-row td.td-actions {
-            border-top-color: #374151 !important;
-        }
-        #lot-display-container.view-mode-cards tr.lot-row td.td-actions button {
-            display: flex !important;
-            width: 100% !important;
-            justify-content: center !important;
-            padding-top: 0.55rem !important;
-            padding-bottom: 0.55rem !important;
-            font-size: 0.8125rem !important;
-            border-radius: 0.625rem !important;
-        }
-        #lot-display-container.view-mode-cards tr.lot-row .card-label {
-            display: inline-block !important;
-        }
-        #lot-display-container.view-mode-cards tr.empty-row,
-        #lot-display-container.view-mode-cards tr#infinite-scroll-trigger,
-        #lot-display-container.view-mode-cards tr#limit-note {
-            display: block !important;
-            grid-column: 1 / -1 !important;
-            width: 100% !important;
-            border-radius: 1rem !important;
-        }
-        #lot-display-container.view-mode-cards tr.empty-row td,
-        #lot-display-container.view-mode-cards tr#infinite-scroll-trigger td,
-        #lot-display-container.view-mode-cards tr#limit-note td {
-            display: block !important;
-            width: 100% !important;
-        }
-</style>
-    <script>
-                // Suporte a Lucide Icons com re-renderização de alta performance com escopo e requestAnimationFrame
-        let _iconRafPending = false;
-        window.refreshIcons = function(rootEl) {
-            if (!window.lucide || typeof window.lucide.createIcons !== 'function') return;
-            try {
-                if (rootEl && rootEl.nodeType === Node.ELEMENT_NODE) {
-                    window.lucide.createIcons({ root: rootEl });
-                } else {
-                    if (_iconRafPending) return;
-                    _iconRafPending = true;
-                    requestAnimationFrame(() => {
-                        _iconRafPending = false;
-                        try {
-                            window.lucide.createIcons();
-                        } catch (e) {}
-                    });
-                }
-            } catch (e) {
-                console.error("Erro ao renderizar Lucide icons:", e);
-            }
-        };
-
-        document.addEventListener('DOMContentLoaded', () => window.refreshIcons());
-        document.addEventListener('htmx:afterSwap', (evt) => {
-            const target = evt.detail && evt.detail.target;
-            window.refreshIcons(target || document.body);
-        });
-        document.addEventListener('htmx:afterSettle', (evt) => {
-            const target = evt.detail && evt.detail.target;
-            window.refreshIcons(target || document.body);
-        });
-        document.addEventListener('htmx:load', (evt) => {
-            const elt = evt.detail && evt.detail.elt;
-            window.refreshIcons(elt || document.body);
-        });
-
-        // Flag global de edição
-        window.isEditingLot = false;
-
-        function startEditing(lotId) {
-            window.isEditingLot = true;
-            const viewDiv = document.getElementById('view-quant-' + lotId);
-            if (viewDiv) viewDiv.style.display = 'none';
-            const editForm = document.getElementById('edit-quant-' + lotId);
-            if (editForm) {
-                editForm.style.display = 'flex';
-                const input = document.getElementById('input-quant-' + lotId);
-                if (input) {
-                    input.focus();
-                    input.select();
-                }
-            }
-            window.refreshIcons();
-        }
-
-        function stopEditing(lotId) {
-            window.isEditingLot = false;
-            const editForm = document.getElementById('edit-quant-' + lotId);
-            if (editForm) editForm.style.display = 'none';
-            const viewDiv = document.getElementById('view-quant-' + lotId);
-            if (viewDiv) viewDiv.style.display = 'flex';
-            window.refreshIcons();
-        }
-
-        function startEditingPrice(lotId) {
-            window.isEditingLot = true;
-            const viewDiv = document.getElementById('view-price-' + lotId);
-            if (viewDiv) viewDiv.style.display = 'none';
-            const editForm = document.getElementById('edit-price-' + lotId);
-            if (editForm) {
-                editForm.style.display = 'flex';
-                const input = document.getElementById('input-price-' + lotId);
-                if (input) {
-                    input.focus();
-                    input.select();
-                }
-            }
-            window.refreshIcons();
-        }
-
-        function stopEditingPrice(lotId) {
-            window.isEditingLot = false;
-            const editForm = document.getElementById('edit-price-' + lotId);
-            if (editForm) editForm.style.display = 'none';
-            const viewDiv = document.getElementById('view-price-' + lotId);
-            if (viewDiv) viewDiv.style.display = 'flex';
-            window.refreshIcons();
-        }
-
-        // Bloqueia qualquer requisição de polling (every 5s) se o usuário estiver editando ou com foco em input
-        document.addEventListener("htmx:confirm", function(evt) {
-            // Se a requisição veio do polling da tabela
-            if (evt.target && evt.target.id === "lot-table-body") {
-                if (window.isEditingLot) {
-                    evt.preventDefault();
-                    return;
-                }
-                const openEditForms = Array.from(document.querySelectorAll("form[id^='edit-quant-'], form[id^='edit-price-']"))
-                    .filter(f => f.style.display === 'flex' || (!f.classList.contains('hidden') && f.style.display !== 'none'));
-                if (openEditForms && openEditForms.length > 0) {
-                    window.isEditingLot = true;
-                    evt.preventDefault();
-                    return;
-                }
-                const active = document.activeElement;
-                if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
-                    evt.preventDefault();
-                    return;
-                }
-            }
-        });
-
-        // Alternância e persistência de Modo Escuro
-        window.updateThemeUI = function() {
-            const isDark = document.documentElement.classList.contains('dark');
-            if (document.body) {
-                if (isDark) document.body.classList.add('dark');
-                else document.body.classList.remove('dark');
-            }
-            const icon = document.getElementById('theme-toggle-icon');
-            const text = document.getElementById('theme-toggle-text');
-            const btn = document.getElementById('btn-theme-toggle');
-            if (icon) { icon.innerHTML = `<i data-lucide="${isDark ? 'sun' : 'moon'}" class="w-3.5 h-3.5 inline-block text-amber-300"></i>`; window.refreshIcons(icon); }
-            if (text) text.innerText = isDark ? 'Modo Claro' : 'Modo Escuro';
-            if (btn) btn.title = isDark ? 'Mudar para Modo Claro' : 'Mudar para Modo Escuro';
-            const mText = document.getElementById('mobile-theme-text');
-            if (mText) mText.innerText = isDark ? 'Modo Claro' : 'Modo Escuro';
-        };
-
-        window.toggleDarkMode = function() {
-            const isDark = document.documentElement.classList.toggle('dark');
-            if (document.body) {
-                if (isDark) document.body.classList.add('dark');
-                else document.body.classList.remove('dark');
-            }
-            try {
-                localStorage.setItem('datelimit_theme', isDark ? 'dark' : 'light');
-            } catch (e) {}
-            window.updateThemeUI();
-        };
-
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', window.updateThemeUI);
-        } else {
-            window.updateThemeUI();
-        }
-    </script>
-<script>
-        // ============================================================
-        // MODO DE EXIBIÇÃO: LISTA vs CARDS (COM PERSISTÊNCIA)
-        // ============================================================
-        window.getLotViewMode = function() {
-            try {
-                const saved = localStorage.getItem('datelimit_view_mode');
-                if (saved === 'table' || saved === 'cards') return saved;
-            } catch (e) {}
-            return (window.innerWidth < 640) ? 'cards' : 'table';
-        };
-
-        window.setLotViewMode = function(mode, save) {
-            if (mode !== 'table' && mode !== 'cards') mode = 'table';
-            if (save) {
-                try {
-                    localStorage.setItem('datelimit_view_mode', mode);
-                } catch (e) {}
-            }
-            const container = document.getElementById('lot-display-container');
-            if (container) {
-                if (mode === 'cards') {
-                    container.classList.remove('view-mode-table');
-                    container.classList.add('view-mode-cards');
-                } else {
-                    container.classList.remove('view-mode-cards');
-                    container.classList.add('view-mode-table');
-                }
-            }
-
-            // Atualiza visual dos botões do seletor
-            const btnTable = document.getElementById('btn-view-table');
-            const btnCards = document.getElementById('btn-view-cards');
-            const drawerTable = document.getElementById('drawer-view-table');
-            const drawerCards = document.getElementById('drawer-view-cards');
-
-            const activeBtn = ['bg-white', 'dark:bg-gray-700', 'text-indigo-600', 'dark:text-indigo-400', 'shadow-xs', 'font-bold'];
-            const inactiveBtn = ['text-gray-500', 'dark:text-gray-400', 'hover:text-gray-700', 'dark:hover:text-gray-200', 'font-medium'];
-
-            if (btnTable && btnCards) {
-                if (mode === 'table') {
-                    btnTable.classList.add(...activeBtn);
-                    btnTable.classList.remove(...inactiveBtn);
-                    btnCards.classList.remove(...activeBtn);
-                    btnCards.classList.add(...inactiveBtn);
-                } else {
-                    btnCards.classList.add(...activeBtn);
-                    btnCards.classList.remove(...inactiveBtn);
-                    btnTable.classList.remove(...activeBtn);
-                    btnTable.classList.add(...inactiveBtn);
-                }
-            }
-
-            if (drawerTable && drawerCards) {
-                const dActive = ['bg-indigo-600', 'text-white', 'border-indigo-600', 'shadow-xs'];
-                const dInactive = ['bg-white', 'dark:bg-gray-800', 'text-gray-600', 'dark:text-gray-300', 'border-gray-200', 'dark:border-gray-700'];
-                if (mode === 'table') {
-                    drawerTable.classList.add(...dActive);
-                    drawerTable.classList.remove(...dInactive);
-                    drawerCards.classList.remove(...dActive);
-                    drawerCards.classList.add(...dInactive);
-                } else {
-                    drawerCards.classList.add(...dActive);
-                    drawerCards.classList.remove(...dInactive);
-                    drawerTable.classList.remove(...dActive);
-                    drawerTable.classList.add(...dInactive);
-                }
-            }
-            if (window.refreshIcons) window.refreshIcons();
-        };
-
-        window.initLotViewMode = function() {
-            window.setLotViewMode(window.getLotViewMode(), false);
-        };
-
-document.addEventListener('DOMContentLoaded', window.initLotViewMode);
-document.addEventListener('htmx:afterSettle', window.initLotViewMode);
-</script>
-</head>
-<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen transition-colors duration-200">
-
-    <!-- Header Responsivo com Suporte a Mobile First -->
-    <header class="bg-indigo-700 dark:bg-gray-800 text-white shadow-lg border-b border-indigo-800 dark:border-gray-700 transition-colors duration-200 sticky top-0 z-30">
-        <div class="max-w-7xl mx-auto px-3 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between gap-2 sm:gap-3">
-            
-            <!-- Logo e Título -->
-            <div class="flex items-center gap-2">
-                <a href="/" class="text-lg sm:text-2xl font-bold tracking-tight inline-flex items-center gap-2 cursor-pointer hover:opacity-95 transition">
-                    <i data-lucide="package" class="w-5 h-5 sm:w-6 sm:h-6 text-indigo-300 dark:text-indigo-400"></i>
-                    <span>DateLimit</span>
-                </a>
-                <span class="text-indigo-200 dark:text-indigo-300 text-xs hidden sm:inline">Controle de Validade</span>
-            </div>
-
-            <!-- Controles Mobile (Visíveis apenas em celular < sm) -->
-            <div class="flex sm:hidden items-center gap-1.5">
-                <a id="mobile-header-admin-link" href="/admin"
-                   class="{% if not is_admin %}hidden {% endif %}p-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 active:scale-95 text-white transition shadow-xs cursor-pointer"
-                   title="Painel Admin">
-                    <i data-lucide="shield" class="w-4 h-4"></i>
-                </a>
-                <!-- Operador Ativo e Troca Rápida de PIN no Mobile -->
-                <button type="button"
-                        onclick="openSwitchOperatorModal()"
-                        class="inline-flex items-center gap-1 bg-emerald-800/90 text-emerald-100 px-2 py-1 rounded-full border border-emerald-600/50 text-[11px] active:scale-95 transition cursor-pointer font-medium"
-                        title="Operador ativo. Toque para alternar operador via PIN">
-                    <i data-lucide="user-check" class="w-3.5 h-3.5 text-emerald-300"></i>
-                    <span id="mobile-operator-name" class="max-w-[85px] truncate font-semibold">{{ active_operator }}</span>
-                    <span class="text-[9px] bg-emerald-600 text-white px-1 py-0.2 rounded font-bold">PIN</span>
-                </button>
-
-                <!-- Botão Menu Gaveta -->
-                <button type="button"
-                        onclick="openMobileMenu()"
-                        class="p-1.5 rounded-lg bg-indigo-800/80 hover:bg-indigo-900 active:scale-95 text-indigo-100 border border-indigo-600/60 transition cursor-pointer"
-                        title="Abrir menu de opções">
-                    <i data-lucide="menu" class="w-5 h-5"></i>
-                </button>
-            </div>
-
-            <!-- Controles Desktop e Tablet (Visíveis em telas sm+) -->
-            <div class="hidden sm:flex items-center gap-1.5 lg:gap-2 text-xs">
-                <!-- Grupo Admin: Painel, Auditoria e Usuários -->
-                <div id="header-admin-group" class="{% if not is_admin %}hidden {% endif %}inline-flex items-center bg-purple-900/60 p-0.5 rounded-lg border border-purple-500/50 shadow-xs">
-                    <a href="/admin"
-                       class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-white hover:bg-purple-600 transition"
-                       title="Painel de Administração">
-                        <i data-lucide="shield" class="w-3.5 h-3.5"></i>
-                        <span class="hidden md:inline">Admin</span>
-                    </a>
-                    <button id="btn-audit-modal"
-                            type="button"
-                            onclick="openAuditModal()"
-                            class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-purple-200 hover:text-white hover:bg-purple-600 transition cursor-pointer"
-                            title="Histórico Completo de Auditoria">
-                        <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
-                        <span class="hidden xl:inline">Auditoria</span>
-                    </button>
-                    <button id="btn-users-modal"
-                            type="button"
-                            onclick="openUsersModal()"
-                            class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-purple-200 hover:text-white hover:bg-purple-600 transition cursor-pointer"
-                            title="Gerenciar Usuários e Operadores">
-                        <i data-lucide="users" class="w-3.5 h-3.5"></i>
-                        <span class="hidden xl:inline">Usuários</span>
-                    </button>
-                </div>
-
-                <!-- Operador Ativo e Troca Rápida de PIN -->
-                <div class="inline-flex items-center gap-1.5 bg-emerald-800/80 dark:bg-emerald-950/70 text-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-600/50">
-                    <i data-lucide="user-check" class="w-3.5 h-3.5 text-emerald-300"></i>
-                    <span class="max-w-[85px] sm:max-w-[120px] truncate">Operador: <strong id="desktop-operator-name" class="text-white">{{ active_operator }}</strong></span>
-                    <button type="button" onclick="openSwitchOperatorModal()"
-                            class="ml-0.5 bg-emerald-700 hover:bg-emerald-600 px-1.5 py-0.5 rounded text-[10px] font-bold text-white transition cursor-pointer"
-                            title="Trocar operador ativo no chão de loja via PIN">
-                        PIN
-                    </button>
-                </div>
-
-                <!-- Botão de Alertas Automáticos -->
-                <button id="btn-alerts-modal"
-                        type="button"
-                        onclick="openAlertsModal()"
-                        class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-600 active:scale-95 text-white transition border border-amber-400/80 shadow-xs cursor-pointer select-none"
-                        title="Configurar Alertas Automáticos">
-                    <i data-lucide="bell" class="w-3.5 h-3.5"></i>
-                    <span class="hidden lg:inline">Alertas</span>
-                </button>
-
-                <!-- Menu Popover de Conexões de Rede (Local e Wi-Fi) -->
-                <div class="relative group/net">
-                    <button type="button"
-                            class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-indigo-800/90 hover:bg-indigo-900 border border-indigo-600/50 text-indigo-100 transition shadow-xs cursor-pointer"
-                            title="Endereços de Acesso (Local e Wi-Fi)">
-                        <i data-lucide="wifi" class="w-3.5 h-3.5 text-emerald-400"></i>
-                        <span class="hidden md:inline">Rede</span>
-                        <i data-lucide="chevron-down" class="w-3 h-3 opacity-70"></i>
-                    </button>
-                    <div class="hidden group-hover/net:block hover:block absolute right-0 top-full mt-1.5 w-64 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 p-2.5 z-50 transition-all">
-                        <div class="text-[10px] font-bold text-gray-400 dark:text-gray-400 uppercase tracking-wider px-1 mb-1.5">Endereços de Acesso</div>
-                        <a href="{{ local_url }}" target="_blank"
-                           class="flex items-center justify-between p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/70 transition text-xs group/link mb-1">
-                            <span class="flex items-center gap-1.5 font-medium"><i data-lucide="laptop" class="w-3.5 h-3.5 text-indigo-500"></i> Local</span>
-                            <span class="font-mono text-[11px] text-indigo-600 dark:text-indigo-400 group-hover/link:underline">{{ local_url }}</span>
-                        </a>
-                        <a href="{{ network_url }}" target="_blank"
-                           class="flex items-center justify-between p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/70 transition text-xs group/link">
-                            <span class="flex items-center gap-1.5 font-medium"><i data-lucide="smartphone" class="w-3.5 h-3.5 text-emerald-500"></i> Wi-Fi</span>
-                            <span class="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 group-hover/link:underline font-bold">{{ network_url }}</span>
-                        </a>
-                    </div>
-                </div>
-
-                <!-- Botão de Alternar Modo Escuro -->
-                <button id="btn-theme-toggle"
-                        type="button"
-                        onclick="toggleDarkMode()"
-                        class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-indigo-800/90 hover:bg-indigo-900 dark:bg-gray-700 dark:hover:bg-gray-600 text-indigo-100 dark:text-amber-300 transition border border-indigo-600/70 dark:border-gray-600 shadow-xs cursor-pointer select-none active:scale-95"
-                        title="Alternar entre modo claro e escuro">
-                    <span id="theme-toggle-icon"><i data-lucide="moon" class="w-3.5 h-3.5 inline-block text-amber-300"></i></span>
-                    <span id="theme-toggle-text" class="hidden md:inline">Modo Escuro</span>
-                </button>
-
-                <!-- Botão Sair (Logout) -->
-                <a href="/logout"
-                   class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-700 active:scale-95 text-white transition shadow-xs cursor-pointer"
-                   title="Encerrar sessão com segurança">
-                    <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
-                    <span class="hidden md:inline">Sair</span>
-                </a>
-            </div>
-        </div>
-    </header>
-
-    <main class="max-w-7xl mx-auto px-2 sm:px-4 py-3 sm:py-6 pb-24 sm:pb-6">
-        {% block content %}{% endblock %}
-    </main>
-
-    <!-- Footer -->
-    <footer class="mt-8 border-t border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-800/60 backdrop-blur-xs py-5 text-center text-xs text-gray-500 dark:text-gray-400 transition-colors">
-        <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2.5">
-            <div class="flex items-center gap-2 font-medium text-gray-600 dark:text-gray-300">
-                <i data-lucide="shield-check" class="w-4 h-4 text-indigo-500 dark:text-indigo-400"></i>
-                <span>DateLimit &mdash; Controle Inteligente de Validade</span>
-            </div>
-            <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-                <span>&copy; <span id="footer-year">2026</span> <strong class="font-semibold text-gray-700 dark:text-gray-200 tracking-wide">Reality</strong>. Todos os direitos reservados.</span>
-            </div>
-        </div>
-    </footer>
-    <script>
-        (function() {
-            const fy = document.getElementById('footer-year');
-            if (fy) fy.textContent = new Date().getFullYear();
-        })();
-    </script>
-
-    <!-- Modal de Configuração de Alertas Automáticos -->
-    {% include "partials/alerts_modal.html" %}
-
-    <!-- Modal de Auditoria Completa -->
-    {% include "partials/audit_modal.html" %}
-
-    <!-- Modal de Gestão de Usuários -->
-    {% include "partials/users_modal.html" %}
-
-    <!-- Modal de Troca Rápida de Operador -->
-    {% include "partials/switch_operator_modal.html" %}
-
-    <!-- Barra de Navegação Inferior Fixa para Mobile (Bottom Navigation Bar) -->
-    <nav class="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200/90 dark:border-gray-800 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] py-1.5 px-3 flex items-center justify-around safe-bottom">
-        <button type="button"
-                onclick="window.scrollTo({top: 0, behavior: 'smooth'})"
-                class="flex flex-col items-center justify-center py-1 px-2 text-indigo-600 dark:text-indigo-400 active:scale-95 transition cursor-pointer">
-            <i data-lucide="package" class="w-5 h-5"></i>
-            <span class="text-[10px] font-semibold mt-0.5">Lotes</span>
-        </button>
-        <button type="button"
-                onclick="if(typeof focusMobileSearch === 'function') focusMobileSearch(); else { document.getElementById('current-busca').focus(); }"
-                class="flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
-            <i data-lucide="search" class="w-5 h-5"></i>
-            <span class="text-[10px] font-semibold mt-0.5">Buscar</span>
-        </button>
-        <!-- Botão Central (+) Flutuante para Cadastrar Lote com Uma Mão -->
-        <button type="button"
-                onclick="if(typeof toggleMobileAddLot === 'function') toggleMobileAddLot(); else { document.getElementById('form-add-lot').classList.remove('hidden'); document.getElementById('input-add-lot-name').focus(); }"
-                class="flex flex-col items-center justify-center -mt-6 bg-emerald-600 hover:bg-emerald-700 active:scale-90 text-white w-13 h-13 rounded-full shadow-lg border-4 border-white dark:border-gray-900 transition cursor-pointer"
-                title="Cadastrar Lote Rápido">
-            <i data-lucide="plus" class="w-6 h-6 stroke-[2.5]"></i>
-        </button>
-        <button id="bottom-nav-audit"
-                type="button"
-                onclick="openAuditModal()"
-                class="{% if not is_admin %}hidden {% endif %}flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
-            <i data-lucide="shield-alert" class="w-5 h-5"></i>
-            <span class="text-[10px] font-semibold mt-0.5">Auditoria</span>
-        </button>
-        <button id="bottom-nav-switch-pin"
-                type="button"
-                onclick="openSwitchOperatorModal()"
-                class="{% if is_admin %}hidden {% endif %}flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
-            <i data-lucide="key-round" class="w-5 h-5"></i>
-            <span class="text-[10px] font-semibold mt-0.5">Trocar PIN</span>
-        </button>
-        <button type="button"
-                onclick="openMobileMenu()"
-                class="flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
-            <i data-lucide="menu" class="w-5 h-5"></i>
-            <span class="text-[10px] font-semibold mt-0.5">Mais</span>
-        </button>
-    </nav>
-
-    <!-- Gaveta de Menu Mobile -->
-    {% include "partials/mobile_drawer.html" %}
-
-    <script>
-        // Otimização de Performance e UI Otimista: Resposta Imediata aos Cliques do Usuário (0ms)
-        if (!window.myClientId) {
-            window.myClientId = 'c_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
-        }
-
-        document.addEventListener('htmx:configRequest', function(evt) {
-            if (evt && evt.detail && evt.detail.headers && window.myClientId) {
-                evt.detail.headers['X-Client-ID'] = window.myClientId;
-            }
-        });
-
-        document.addEventListener('htmx:beforeRequest', function(evt) {
-            const elt = evt.detail.elt;
-            if (elt && evt.detail.requestConfig) {
-                // Ao dar baixa/excluir lote: aplica feedback instantâneo de opacidade no elemento da linha
-                if (evt.detail.requestConfig.verb === 'delete') {
-                    const row = elt.closest('.lot-row');
-                    if (row) {
-                        row.style.transition = 'opacity 0.15s ease, filter 0.15s ease';
-                        row.style.opacity = '0.25';
-                        row.style.pointerEvents = 'none';
-                    }
-                } else if (evt.detail.requestConfig.verb === 'post') {
-                    // Ao salvar quantidade, preço ou formulário: feedback imediato no botão
-                    const btn = elt.querySelector('button[type="submit"]') || (elt.tagName === 'BUTTON' ? elt : null);
-                    if (btn) {
-                        btn.style.opacity = '0.6';
-                        btn.style.pointerEvents = 'none';
-                    }
-                }
-            }
-        });
-    </script>
-
-    <!-- Notificações Toast Dinâmicas -->
-    <div id="global-toast-container" class="fixed bottom-16 sm:bottom-6 right-3 sm:right-6 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full px-2 sm:px-0"></div>
-
-    <script>
-    // Sistema Global de Notificações Toast Não-Intrusivas
-    function showToastNotification(message, type = 'success') {
-        let container = document.getElementById('global-toast-container');
-        if (!container) {
-            container = document.createElement('div');
-            container.id = 'global-toast-container';
-            container.className = 'fixed bottom-16 sm:bottom-6 right-3 sm:right-6 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full px-2 sm:px-0';
-            document.body.appendChild(container);
-        }
-
-        const toast = document.createElement('div');
-        const isSuccess = type === 'success';
-        toast.className = `pointer-events-auto flex items-center gap-2.5 py-2.5 px-3.5 rounded-xl shadow-xl border text-xs font-semibold transform transition-all duration-300 translate-y-3 opacity-0 ${
-            isSuccess
-                ? 'bg-emerald-600 text-white border-emerald-500'
-                : 'bg-rose-600 text-white border-rose-500'
-        }`;
-        toast.innerHTML = `
-            <i data-lucide="${isSuccess ? 'check-circle-2' : 'alert-circle'}" class="w-4 h-4 shrink-0"></i>
-            <span class="flex-1">${message}</span>
-        `;
-        container.appendChild(toast);
-        if (window.lucide) window.lucide.createIcons({ root: toast });
-
-        requestAnimationFrame(() => {
-            toast.classList.remove('translate-y-3', 'opacity-0');
-            toast.classList.add('translate-y-0', 'opacity-100');
-        });
-
-        setTimeout(() => {
-            toast.classList.remove('translate-y-0', 'opacity-100');
-            toast.classList.add('translate-y-3', 'opacity-0');
-            setTimeout(() => toast.remove(), 350);
-        }, 2800);
-    }
-
-    // Atualização Instantânea de Interface de Usuário sem Recarregar (0ms reload)
-    window.updateActiveOperatorUI = function(data) {
-        if (!data || !data.success) return;
-
-        const opName = data.active_operator || data.operator_name || 'Operador';
-        const role = (data.role || 'operador').toLowerCase();
-        const isAdmin = (role === 'admin');
-        const isManagerOrAdmin = (role === 'admin' || role === 'gerente');
-
-        // 1. Atualiza nomes do operador no cabeçalho
-        const desktopOp = document.getElementById('desktop-operator-name');
-        if (desktopOp) desktopOp.textContent = opName;
-
-        const mobileOp = document.getElementById('mobile-operator-name');
-        if (mobileOp) mobileOp.textContent = opName;
-
-        // 2. Atualiza controles de administração no cabeçalho
-        const headerAdminGroup = document.getElementById('header-admin-group');
-        if (headerAdminGroup) {
-            if (isAdmin) {
-                headerAdminGroup.classList.remove('hidden');
-            } else {
-                headerAdminGroup.classList.add('hidden');
-            }
-        }
-
-        const mobileAdminLink = document.getElementById('mobile-header-admin-link');
-        if (mobileAdminLink) {
-            if (isAdmin) {
-                mobileAdminLink.classList.remove('hidden');
-            } else {
-                mobileAdminLink.classList.add('hidden');
-            }
-        }
-
-        // 3. Atualiza barra de navegação inferior mobile (Bottom Nav)
-        const bottomAudit = document.getElementById('bottom-nav-audit');
-        const bottomPin = document.getElementById('bottom-nav-switch-pin');
-        if (bottomAudit && bottomPin) {
-            if (isAdmin) {
-                bottomAudit.classList.remove('hidden');
-                bottomPin.classList.add('hidden');
-            } else {
-                bottomAudit.classList.add('hidden');
-                bottomPin.classList.remove('hidden');
-            }
-        }
-
-        // 4. Atualiza gaveta lateral (Mobile Drawer)
-        const drawerInitials = document.getElementById('drawer-user-initials');
-        if (drawerInitials) drawerInitials.textContent = opName.slice(0, 2).toUpperCase();
-
-        const drawerName = document.getElementById('drawer-user-name');
-        if (drawerName) drawerName.textContent = opName;
-
-        const drawerRole = document.getElementById('drawer-user-role');
-        if (drawerRole) drawerRole.textContent = role;
-
-        const drawerBadge = document.getElementById('drawer-role-badge');
-        if (drawerBadge) {
-            drawerBadge.textContent = role.toUpperCase();
-            if (isAdmin) {
-                drawerBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800";
-            } else if (isManagerOrAdmin) {
-                drawerBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800";
-            } else {
-                drawerBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800";
-            }
-        }
-
-        const drawerOp = document.getElementById('drawer-operator-name');
-        if (drawerOp) drawerOp.textContent = opName;
-
-        const drawerAdminLink = document.getElementById('drawer-admin-panel-link');
-        if (drawerAdminLink) {
-            if (isAdmin) drawerAdminLink.classList.remove('hidden');
-            else drawerAdminLink.classList.add('hidden');
-        }
-
-        const drawerAuditBtn = document.getElementById('drawer-audit-btn');
-        if (drawerAuditBtn) {
-            if (isAdmin) drawerAuditBtn.classList.remove('hidden');
-            else drawerAuditBtn.classList.add('hidden');
-        }
-
-        const drawerUsersBtn = document.getElementById('drawer-users-btn');
-        if (drawerUsersBtn) {
-            if (isAdmin) drawerUsersBtn.classList.remove('hidden');
-            else drawerUsersBtn.classList.add('hidden');
-        }
-
-        // 5. Atualiza card de Valor Estimado no índice
-        const totalPanel = document.getElementById('total-summary-panel');
-        let valCard = document.getElementById('summary-card-valor');
-
-        if (isManagerOrAdmin) {
-            if (valCard) {
-                valCard.classList.remove('hidden');
-            } else if (totalPanel) {
-                // Cria o card se não existia no DOM inicial de operador
-                valCard = document.createElement('div');
-                valCard.id = 'summary-card-valor';
-                valCard.className = 'bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-amber-100 dark:border-amber-950/60 shadow-xs flex items-center gap-3 animate-in fade-in duration-200';
-                valCard.innerHTML = `
-                    <div class="p-2 sm:p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 shrink-0">
-                        <i data-lucide="circle-dollar-sign" class="w-5 h-5"></i>
-                    </div>
-                    <div class="min-w-0">
-                        <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Valor Estimado</span>
-                        <span class="text-xs sm:text-sm font-semibold text-gray-500 dark:text-gray-400 mr-0.5">R$</span>
-                        <span id="summary-total-value" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">${data.total_value_formatted || '0,00'}</span>
-                    </div>
-                `;
-                totalPanel.appendChild(valCard);
-                if (window.lucide) window.lucide.createIcons({ root: valCard });
-            }
-            if (valCard && data.total_value_formatted) {
-                const totalValSpan = document.getElementById('summary-total-value');
-                if (totalValSpan) totalValSpan.textContent = data.total_value_formatted;
-            }
-            if (totalPanel) {
-                totalPanel.classList.remove('lg:grid-cols-3');
-                totalPanel.classList.add('lg:grid-cols-4');
-            }
-        } else {
-            if (valCard) {
-                valCard.classList.add('hidden');
-            }
-            if (totalPanel) {
-                totalPanel.classList.remove('lg:grid-cols-4');
-                totalPanel.classList.add('lg:grid-cols-3');
-            }
-        }
-
-        // 6. Se estiver na página /admin e mudou para operador sem permissão, redireciona suavemente para /
-        if (window.location.pathname.startsWith('/admin') && !isAdmin && !isManagerOrAdmin) {
-            window.location.href = '/';
-            return;
-        }
-
-        // 7. Notificação toast dinâmica (sem recarregar)
-        showToastNotification(`Operador alternado: ${opName} (${role.toUpperCase()})`, 'success');
-
-        // 8. Re-renderiza ícones Lucide
-        if (window.lucide) {
-            window.lucide.createIcons();
-        }
-
-        // 9. Dispara evento customizado para outros scripts
-        window.dispatchEvent(new CustomEvent('operator-switched', { detail: data }));
-    };
-    </script>
-
-</body>
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DateLimit — Controle de Validade</title>
+
+    <!-- TailwindCSS via CDN com suporte a darkMode: 'class' -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {}
+            }
+        };
+    </script>
+
+    <!-- Detecção Instantânea de Tema Salvo (Evita tela branca ao carregar) -->
+    <script>
+        (function() {
+            try {
+                const saved = localStorage.getItem('datelimit_theme');
+                const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                if (saved === 'dark' || (!saved && prefersDark)) {
+                    document.documentElement.classList.add('dark');
+                } else {
+                    document.documentElement.classList.remove('dark');
+                }
+            } catch (e) {}
+        })();
+    </script>
+
+    <!-- HTMX via CDN -->
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <!-- Lucide Icons via CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        /* Animação de fade-out ao deletar */
+        tr.htmx-swapping { opacity: 0; transform: scaleY(0.7); transition: all 0.15s ease-out; }
+
+        /* Ajuste do esquema de cores nativo (scrollbars e controles do navegador) */
+        html.dark {
+            color-scheme: dark;
+        }
+        html:not(.dark) {
+            color-scheme: light;
+        }
+        /* Oculta scrollbars nativas mas mantém rolagem e arraste por toque e mouse */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    
+        /* ============================================================ */
+        /* MODO DE EXIBIÇÃO: LISTA (TABELA) vs CARDS                   */
+        /* ============================================================ */
+
+        /* --- MODO TABELA (LISTA COMPACTA ERP) --- */
+        #lot-display-container.view-mode-table {
+            overflow-x: auto;
+            background-color: #ffffff;
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.07);
+        }
+        html.dark #lot-display-container.view-mode-table {
+            background-color: #1f2937;
+        }
+        #lot-display-container.view-mode-table table {
+            width: 100%;
+            min-width: 680px;
+            display: table;
+            border-collapse: collapse;
+        }
+        #lot-display-container.view-mode-table thead {
+            display: table-header-group !important;
+        }
+        #lot-display-container.view-mode-table thead tr {
+            display: table-row !important;
+        }
+        #lot-display-container.view-mode-table thead th {
+            display: table-cell !important;
+            padding: 0.65rem 0.75rem !important;
+            font-size: 0.74rem !important;
+            font-weight: 700 !important;
+            letter-spacing: 0.04em !important;
+            line-height: 1.15 !important;
+            position: relative;
+            background-color: #f9fafb !important;
+            border-bottom: 2px solid #e5e7eb !important;
+        }
+        html.dark #lot-display-container.view-mode-table thead th {
+            background-color: #1f2937 !important;
+            border-bottom-color: #374151 !important;
+        }
+        #lot-display-container.view-mode-table tbody {
+            display: table-row-group !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row {
+            display: table-row !important;
+            height: auto !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td {
+            display: table-cell !important;
+            padding: 0.52rem 0.75rem !important;
+            vertical-align: middle !important;
+            font-size: 0.85rem !important;
+            line-height: 1.35 !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-actions {
+            padding: 0.35rem 0.65rem !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-actions button {
+            padding: 0.32rem 0.65rem !important;
+            font-size: 0.75rem !important;
+            border-radius: 0.5rem !important;
+            line-height: 1.15 !important;
+            gap: 0.3rem !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-actions button i {
+            width: 0.85rem !important;
+            height: 0.85rem !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-product {
+            max-width: 52ch !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            padding-top: 0.45rem !important;
+            padding-bottom: 0.45rem !important;
+            font-size: 0.85rem !important;
+            font-weight: 500 !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-lot-id span {
+            padding: 0.12rem 0.42rem !important;
+            font-size: 0.74rem !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-valid span {
+            padding: 0.18rem 0.52rem !important;
+            font-size: 0.75rem !important;
+            line-height: 1.15 !important;
+        }
+        #lot-display-container.view-mode-table .card-label {
+            display: none !important;
+        }
+        #lot-display-container.view-mode-table tr.empty-row,
+        #lot-display-container.view-mode-table tr#infinite-scroll-trigger,
+        #lot-display-container.view-mode-table tr#limit-note {
+            display: table-row !important;
+        }
+        #lot-display-container.view-mode-table tr.empty-row td,
+        #lot-display-container.view-mode-table tr#infinite-scroll-trigger td,
+        #lot-display-container.view-mode-table tr#limit-note td {
+            display: table-cell !important;
+            padding: 0.4rem 0.65rem !important;
+        }
+
+        /* --- MODO CARDS --- */
+        #lot-display-container.view-mode-cards {
+            overflow: visible !important;
+            background: transparent !important;
+            box-shadow: none !important;
+        }
+        #lot-display-container.view-mode-cards table {
+            width: 100% !important;
+            min-width: 0 !important;
+            display: block !important;
+            border-collapse: separate !important;
+        }
+        #lot-display-container.view-mode-cards thead {
+            display: none !important;
+        }
+        #lot-display-container.view-mode-cards tbody {
+            display: grid !important;
+            grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)) !important;
+            gap: 0.85rem !important;
+            width: 100% !important;
+        }
+        @media (max-width: 440px) {
+            #lot-display-container.view-mode-cards tbody {
+                grid-template-columns: 1fr !important;
+            }
+        }
+        #lot-display-container.view-mode-cards tr.lot-row {
+            display: grid !important;
+            grid-template-columns: 1fr auto !important;
+            align-items: center !important;
+            gap: 0.35rem 0.5rem !important;
+            padding: 1rem !important;
+            border-radius: 1rem !important;
+            background-color: #ffffff !important;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.07), 0 1px 2px -1px rgba(0, 0, 0, 0.05) !important;
+            border: 1px solid rgba(229, 231, 235, 0.9) !important;
+            transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.08) !important;
+        }
+        html.dark #lot-display-container.view-mode-cards tr.lot-row {
+            background-color: #1f2937 !important;
+            border-color: #374151 !important;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3) !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-lot-id {
+            display: block !important;
+            grid-column: 1 !important;
+            padding: 0 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-valid {
+            display: block !important;
+            grid-column: 2 !important;
+            text-align: right !important;
+            padding: 0 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-product {
+            display: block !important;
+            grid-column: 1 / -1 !important;
+            font-weight: 700 !important;
+            font-size: 0.95rem !important;
+            line-height: 1.35 !important;
+            padding: 0.2rem 0 !important;
+            min-width: 0 !important;
+            max-width: none !important;
+            white-space: normal !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-quant {
+            display: inline-flex !important;
+            align-items: center !important;
+            grid-column: 1 !important;
+            padding: 0.15rem 0 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-price {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            grid-column: 2 !important;
+            padding: 0.15rem 0 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-location {
+            display: inline-flex !important;
+            align-items: center !important;
+            grid-column: 1 !important;
+            font-size: 0.75rem !important;
+            padding: 0.1rem 0 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-status {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            grid-column: 2 !important;
+            font-size: 0.75rem !important;
+            padding: 0.1rem 0 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-actions {
+            display: block !important;
+            grid-column: 1 / -1 !important;
+            margin-top: 0.5rem !important;
+            padding: 0.5rem 0 0 0 !important;
+            border-top: 1px solid #f3f4f6 !important;
+            text-align: center !important;
+        }
+        html.dark #lot-display-container.view-mode-cards tr.lot-row td.td-actions {
+            border-top-color: #374151 !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row td.td-actions button {
+            display: flex !important;
+            width: 100% !important;
+            justify-content: center !important;
+            padding-top: 0.55rem !important;
+            padding-bottom: 0.55rem !important;
+            font-size: 0.8125rem !important;
+            border-radius: 0.625rem !important;
+        }
+        #lot-display-container.view-mode-cards tr.lot-row .card-label {
+            display: inline-block !important;
+        }
+        #lot-display-container.view-mode-cards tr.empty-row,
+        #lot-display-container.view-mode-cards tr#infinite-scroll-trigger,
+        #lot-display-container.view-mode-cards tr#limit-note {
+            display: block !important;
+            grid-column: 1 / -1 !important;
+            width: 100% !important;
+            border-radius: 1rem !important;
+        }
+        #lot-display-container.view-mode-cards tr.empty-row td,
+        #lot-display-container.view-mode-cards tr#infinite-scroll-trigger td,
+        #lot-display-container.view-mode-cards tr#limit-note td {
+            display: block !important;
+            width: 100% !important;
+        }
+</style>
+    <script>
+                // Suporte a Lucide Icons com re-renderização de alta performance com escopo e requestAnimationFrame
+        let _iconRafPending = false;
+        window.refreshIcons = function(rootEl) {
+            if (!window.lucide || typeof window.lucide.createIcons !== 'function') return;
+            try {
+                if (rootEl && rootEl.nodeType === Node.ELEMENT_NODE) {
+                    window.lucide.createIcons({ root: rootEl });
+                } else {
+                    if (_iconRafPending) return;
+                    _iconRafPending = true;
+                    requestAnimationFrame(() => {
+                        _iconRafPending = false;
+                        try {
+                            window.lucide.createIcons();
+                        } catch (e) {}
+                    });
+                }
+            } catch (e) {
+                console.error("Erro ao renderizar Lucide icons:", e);
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', () => window.refreshIcons());
+        document.addEventListener('htmx:afterSwap', (evt) => {
+            const target = evt.detail && evt.detail.target;
+            window.refreshIcons(target || document.body);
+        });
+        document.addEventListener('htmx:afterSettle', (evt) => {
+            const target = evt.detail && evt.detail.target;
+            window.refreshIcons(target || document.body);
+        });
+        document.addEventListener('htmx:load', (evt) => {
+            const elt = evt.detail && evt.detail.elt;
+            window.refreshIcons(elt || document.body);
+        });
+
+        // Flag global de edição
+        window.isEditingLot = false;
+
+        function startEditing(lotId) {
+            window.isEditingLot = true;
+            const viewDiv = document.getElementById('view-quant-' + lotId);
+            if (viewDiv) viewDiv.style.display = 'none';
+            const editForm = document.getElementById('edit-quant-' + lotId);
+            if (editForm) {
+                editForm.style.display = 'flex';
+                const input = document.getElementById('input-quant-' + lotId);
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }
+            window.refreshIcons();
+        }
+
+        function stopEditing(lotId) {
+            window.isEditingLot = false;
+            const editForm = document.getElementById('edit-quant-' + lotId);
+            if (editForm) editForm.style.display = 'none';
+            const viewDiv = document.getElementById('view-quant-' + lotId);
+            if (viewDiv) viewDiv.style.display = 'flex';
+            window.refreshIcons();
+        }
+
+        function startEditingPrice(lotId) {
+            window.isEditingLot = true;
+            const viewDiv = document.getElementById('view-price-' + lotId);
+            if (viewDiv) viewDiv.style.display = 'none';
+            const editForm = document.getElementById('edit-price-' + lotId);
+            if (editForm) {
+                editForm.style.display = 'flex';
+                const input = document.getElementById('input-price-' + lotId);
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }
+            window.refreshIcons();
+        }
+
+        function stopEditingPrice(lotId) {
+            window.isEditingLot = false;
+            const editForm = document.getElementById('edit-price-' + lotId);
+            if (editForm) editForm.style.display = 'none';
+            const viewDiv = document.getElementById('view-price-' + lotId);
+            if (viewDiv) viewDiv.style.display = 'flex';
+            window.refreshIcons();
+        }
+
+        // Bloqueia qualquer requisição de polling (every 5s) se o usuário estiver editando ou com foco em input
+        document.addEventListener("htmx:confirm", function(evt) {
+            // Se a requisição veio do polling da tabela
+            if (evt.target && evt.target.id === "lot-table-body") {
+                if (window.isEditingLot) {
+                    evt.preventDefault();
+                    return;
+                }
+                const openEditForms = Array.from(document.querySelectorAll("form[id^='edit-quant-'], form[id^='edit-price-']"))
+                    .filter(f => f.style.display === 'flex' || (!f.classList.contains('hidden') && f.style.display !== 'none'));
+                if (openEditForms && openEditForms.length > 0) {
+                    window.isEditingLot = true;
+                    evt.preventDefault();
+                    return;
+                }
+                const active = document.activeElement;
+                if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
+                    evt.preventDefault();
+                    return;
+                }
+            }
+        });
+
+        // Alternância e persistência de Modo Escuro
+        window.updateThemeUI = function() {
+            const isDark = document.documentElement.classList.contains('dark');
+            if (document.body) {
+                if (isDark) document.body.classList.add('dark');
+                else document.body.classList.remove('dark');
+            }
+            const icon = document.getElementById('theme-toggle-icon');
+            const text = document.getElementById('theme-toggle-text');
+            const btn = document.getElementById('btn-theme-toggle');
+            if (icon) { icon.innerHTML = `<i data-lucide="${isDark ? 'sun' : 'moon'}" class="w-3.5 h-3.5 inline-block text-amber-300"></i>`; window.refreshIcons(icon); }
+            if (text) text.innerText = isDark ? 'Modo Claro' : 'Modo Escuro';
+            if (btn) btn.title = isDark ? 'Mudar para Modo Claro' : 'Mudar para Modo Escuro';
+            const mText = document.getElementById('mobile-theme-text');
+            if (mText) mText.innerText = isDark ? 'Modo Claro' : 'Modo Escuro';
+        };
+
+        window.toggleDarkMode = function() {
+            const isDark = document.documentElement.classList.toggle('dark');
+            if (document.body) {
+                if (isDark) document.body.classList.add('dark');
+                else document.body.classList.remove('dark');
+            }
+            try {
+                localStorage.setItem('datelimit_theme', isDark ? 'dark' : 'light');
+            } catch (e) {}
+            window.updateThemeUI();
+        };
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', window.updateThemeUI);
+        } else {
+            window.updateThemeUI();
+        }
+    </script>
+<script>
+        // ============================================================
+        // MODO DE EXIBIÇÃO: LISTA vs CARDS (COM PERSISTÊNCIA)
+        // ============================================================
+        window.getLotViewMode = function() {
+            try {
+                const saved = localStorage.getItem('datelimit_view_mode');
+                if (saved === 'table' || saved === 'cards') return saved;
+            } catch (e) {}
+            return (window.innerWidth < 640) ? 'cards' : 'table';
+        };
+
+        window.setLotViewMode = function(mode, save) {
+            if (mode !== 'table' && mode !== 'cards') mode = 'table';
+            if (save) {
+                try {
+                    localStorage.setItem('datelimit_view_mode', mode);
+                } catch (e) {}
+            }
+            const container = document.getElementById('lot-display-container');
+            if (container) {
+                if (mode === 'cards') {
+                    container.classList.remove('view-mode-table');
+                    container.classList.add('view-mode-cards');
+                } else {
+                    container.classList.remove('view-mode-cards');
+                    container.classList.add('view-mode-table');
+                }
+            }
+
+            // Atualiza visual dos botões do seletor
+            const btnTable = document.getElementById('btn-view-table');
+            const btnCards = document.getElementById('btn-view-cards');
+            const drawerTable = document.getElementById('drawer-view-table');
+            const drawerCards = document.getElementById('drawer-view-cards');
+
+            const activeBtn = ['bg-white', 'dark:bg-gray-700', 'text-indigo-600', 'dark:text-indigo-400', 'shadow-xs', 'font-bold'];
+            const inactiveBtn = ['text-gray-500', 'dark:text-gray-400', 'hover:text-gray-700', 'dark:hover:text-gray-200', 'font-medium'];
+
+            if (btnTable && btnCards) {
+                if (mode === 'table') {
+                    btnTable.classList.add(...activeBtn);
+                    btnTable.classList.remove(...inactiveBtn);
+                    btnCards.classList.remove(...activeBtn);
+                    btnCards.classList.add(...inactiveBtn);
+                } else {
+                    btnCards.classList.add(...activeBtn);
+                    btnCards.classList.remove(...inactiveBtn);
+                    btnTable.classList.remove(...activeBtn);
+                    btnTable.classList.add(...inactiveBtn);
+                }
+            }
+
+            if (drawerTable && drawerCards) {
+                const dActive = ['bg-indigo-600', 'text-white', 'border-indigo-600', 'shadow-xs'];
+                const dInactive = ['bg-white', 'dark:bg-gray-800', 'text-gray-600', 'dark:text-gray-300', 'border-gray-200', 'dark:border-gray-700'];
+                if (mode === 'table') {
+                    drawerTable.classList.add(...dActive);
+                    drawerTable.classList.remove(...dInactive);
+                    drawerCards.classList.remove(...dActive);
+                    drawerCards.classList.add(...dInactive);
+                } else {
+                    drawerCards.classList.add(...dActive);
+                    drawerCards.classList.remove(...dInactive);
+                    drawerTable.classList.remove(...dActive);
+                    drawerTable.classList.add(...dInactive);
+                }
+            }
+            if (window.refreshIcons) window.refreshIcons();
+        };
+
+        window.initLotViewMode = function() {
+            window.setLotViewMode(window.getLotViewMode(), false);
+        };
+
+document.addEventListener('DOMContentLoaded', window.initLotViewMode);
+document.addEventListener('htmx:afterSettle', window.initLotViewMode);
+</script>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen transition-colors duration-200">
+
+    <!-- Header Responsivo com Suporte a Mobile First -->
+    <header class="bg-indigo-700 dark:bg-gray-800 text-white shadow-lg border-b border-indigo-800 dark:border-gray-700 transition-colors duration-200 sticky top-0 z-30">
+        <div class="max-w-7xl mx-auto px-3 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between gap-2 sm:gap-3">
+            
+            <!-- Logo e Título -->
+            <div class="flex items-center gap-2">
+                <a href="/" class="text-lg sm:text-2xl font-bold tracking-tight inline-flex items-center gap-2 cursor-pointer hover:opacity-95 transition">
+                    <i data-lucide="package" class="w-5 h-5 sm:w-6 sm:h-6 text-indigo-300 dark:text-indigo-400"></i>
+                    <span>DateLimit</span>
+                </a>
+                <span class="text-indigo-200 dark:text-indigo-300 text-xs hidden sm:inline">Controle de Validade</span>
+            </div>
+
+            <!-- Controles Mobile (Visíveis apenas em celular < sm) -->
+            <div class="flex sm:hidden items-center gap-1.5">
+                <a id="mobile-header-admin-link" href="/admin"
+                   class="{% if not is_admin %}hidden {% endif %}p-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 active:scale-95 text-white transition shadow-xs cursor-pointer"
+                   title="Painel Admin">
+                    <i data-lucide="shield" class="w-4 h-4"></i>
+                </a>
+                <!-- Operador Ativo e Troca Rápida de PIN no Mobile -->
+                <button type="button"
+                        onclick="openSwitchOperatorModal()"
+                        class="inline-flex items-center gap-1 bg-emerald-800/90 text-emerald-100 px-2 py-1 rounded-full border border-emerald-600/50 text-[11px] active:scale-95 transition cursor-pointer font-medium"
+                        title="Operador ativo. Toque para alternar operador via PIN">
+                    <i data-lucide="user-check" class="w-3.5 h-3.5 text-emerald-300"></i>
+                    <span id="mobile-operator-name" class="max-w-[85px] truncate font-semibold">{{ active_operator }}</span>
+                    <span class="text-[9px] bg-emerald-600 text-white px-1 py-0.2 rounded font-bold">PIN</span>
+                </button>
+
+                <!-- Botão Menu Gaveta -->
+                <button type="button"
+                        onclick="openMobileMenu()"
+                        class="p-1.5 rounded-lg bg-indigo-800/80 hover:bg-indigo-900 active:scale-95 text-indigo-100 border border-indigo-600/60 transition cursor-pointer"
+                        title="Abrir menu de opções">
+                    <i data-lucide="menu" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <!-- Controles Desktop e Tablet (Visíveis em telas sm+) -->
+            <div class="hidden sm:flex items-center gap-1.5 lg:gap-2 text-xs">
+                <!-- Grupo Admin: Painel, Auditoria e Usuários -->
+                <div id="header-admin-group" class="{% if not is_admin %}hidden {% endif %}inline-flex items-center bg-purple-900/60 p-0.5 rounded-lg border border-purple-500/50 shadow-xs">
+                    <a href="/admin"
+                       class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-white hover:bg-purple-600 transition"
+                       title="Painel de Administração">
+                        <i data-lucide="shield" class="w-3.5 h-3.5"></i>
+                        <span class="hidden md:inline">Admin</span>
+                    </a>
+                    <button id="btn-audit-modal"
+                            type="button"
+                            onclick="openAuditModal()"
+                            class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-purple-200 hover:text-white hover:bg-purple-600 transition cursor-pointer"
+                            title="Histórico Completo de Auditoria">
+                        <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
+                        <span class="hidden xl:inline">Auditoria</span>
+                    </button>
+                    <button id="btn-users-modal"
+                            type="button"
+                            onclick="openUsersModal()"
+                            class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-purple-200 hover:text-white hover:bg-purple-600 transition cursor-pointer"
+                            title="Gerenciar Usuários e Operadores">
+                        <i data-lucide="users" class="w-3.5 h-3.5"></i>
+                        <span class="hidden xl:inline">Usuários</span>
+                    </button>
+                </div>
+
+                <!-- Operador Ativo e Troca Rápida de PIN -->
+                <div class="inline-flex items-center gap-1.5 bg-emerald-800/80 dark:bg-emerald-950/70 text-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-600/50">
+                    <i data-lucide="user-check" class="w-3.5 h-3.5 text-emerald-300"></i>
+                    <span class="max-w-[85px] sm:max-w-[120px] truncate">Operador: <strong id="desktop-operator-name" class="text-white">{{ active_operator }}</strong></span>
+                    <button type="button" onclick="openSwitchOperatorModal()"
+                            class="ml-0.5 bg-emerald-700 hover:bg-emerald-600 px-1.5 py-0.5 rounded text-[10px] font-bold text-white transition cursor-pointer"
+                            title="Trocar operador ativo no chão de loja via PIN">
+                        PIN
+                    </button>
+                </div>
+
+                <!-- Botão de Alertas Automáticos -->
+                <button id="btn-alerts-modal"
+                        type="button"
+                        onclick="openAlertsModal()"
+                        class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-600 active:scale-95 text-white transition border border-amber-400/80 shadow-xs cursor-pointer select-none"
+                        title="Configurar Alertas Automáticos">
+                    <i data-lucide="bell" class="w-3.5 h-3.5"></i>
+                    <span class="hidden lg:inline">Alertas</span>
+                </button>
+
+                <!-- Menu Popover de Conexões de Rede (Local e Wi-Fi) -->
+                <div class="relative group/net">
+                    <button type="button"
+                            class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-indigo-800/90 hover:bg-indigo-900 border border-indigo-600/50 text-indigo-100 transition shadow-xs cursor-pointer"
+                            title="Endereços de Acesso (Local e Wi-Fi)">
+                        <i data-lucide="wifi" class="w-3.5 h-3.5 text-emerald-400"></i>
+                        <span class="hidden md:inline">Rede</span>
+                        <i data-lucide="chevron-down" class="w-3 h-3 opacity-70"></i>
+                    </button>
+                    <div class="hidden group-hover/net:block hover:block absolute right-0 top-full mt-1.5 w-64 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 p-2.5 z-50 transition-all">
+                        <div class="text-[10px] font-bold text-gray-400 dark:text-gray-400 uppercase tracking-wider px-1 mb-1.5">Endereços de Acesso</div>
+                        <a href="{{ local_url }}" target="_blank"
+                           class="flex items-center justify-between p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/70 transition text-xs group/link mb-1">
+                            <span class="flex items-center gap-1.5 font-medium"><i data-lucide="laptop" class="w-3.5 h-3.5 text-indigo-500"></i> Local</span>
+                            <span class="font-mono text-[11px] text-indigo-600 dark:text-indigo-400 group-hover/link:underline">{{ local_url }}</span>
+                        </a>
+                        <a href="{{ network_url }}" target="_blank"
+                           class="flex items-center justify-between p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/70 transition text-xs group/link">
+                            <span class="flex items-center gap-1.5 font-medium"><i data-lucide="smartphone" class="w-3.5 h-3.5 text-emerald-500"></i> Wi-Fi</span>
+                            <span class="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 group-hover/link:underline font-bold">{{ network_url }}</span>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Botão de Alternar Modo Escuro -->
+                <button id="btn-theme-toggle"
+                        type="button"
+                        onclick="toggleDarkMode()"
+                        class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-indigo-800/90 hover:bg-indigo-900 dark:bg-gray-700 dark:hover:bg-gray-600 text-indigo-100 dark:text-amber-300 transition border border-indigo-600/70 dark:border-gray-600 shadow-xs cursor-pointer select-none active:scale-95"
+                        title="Alternar entre modo claro e escuro">
+                    <span id="theme-toggle-icon"><i data-lucide="moon" class="w-3.5 h-3.5 inline-block text-amber-300"></i></span>
+                    <span id="theme-toggle-text" class="hidden md:inline">Modo Escuro</span>
+                </button>
+
+                <!-- Botão Sair (Logout) -->
+                <a href="/logout"
+                   class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-700 active:scale-95 text-white transition shadow-xs cursor-pointer"
+                   title="Encerrar sessão com segurança">
+                    <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+                    <span class="hidden md:inline">Sair</span>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-2 sm:px-4 py-3 sm:py-6 pb-24 sm:pb-6">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="mt-8 border-t border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-800/60 backdrop-blur-xs py-5 text-center text-xs text-gray-500 dark:text-gray-400 transition-colors">
+        <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+            <div class="flex items-center gap-2 font-medium text-gray-600 dark:text-gray-300">
+                <i data-lucide="shield-check" class="w-4 h-4 text-indigo-500 dark:text-indigo-400"></i>
+                <span>DateLimit &mdash; Controle Inteligente de Validade</span>
+            </div>
+            <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <span>&copy; <span id="footer-year">2026</span> <strong class="font-semibold text-gray-700 dark:text-gray-200 tracking-wide">Reality</strong>. Todos os direitos reservados.</span>
+            </div>
+        </div>
+    </footer>
+    <script>
+        (function() {
+            const fy = document.getElementById('footer-year');
+            if (fy) fy.textContent = new Date().getFullYear();
+        })();
+    </script>
+
+    <!-- Modal de Configuração de Alertas Automáticos -->
+    {% include "partials/alerts_modal.html" %}
+
+    <!-- Modal de Auditoria Completa -->
+    {% include "partials/audit_modal.html" %}
+
+    <!-- Modal de Gestão de Usuários -->
+    {% include "partials/users_modal.html" %}
+
+    <!-- Modal de Troca Rápida de Operador -->
+    {% include "partials/switch_operator_modal.html" %}
+
+    <!-- Barra de Navegação Inferior Fixa para Mobile (Bottom Navigation Bar) -->
+    <nav class="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200/90 dark:border-gray-800 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] py-1.5 px-3 flex items-center justify-around safe-bottom">
+        <button type="button"
+                onclick="window.scrollTo({top: 0, behavior: 'smooth'})"
+                class="flex flex-col items-center justify-center py-1 px-2 text-indigo-600 dark:text-indigo-400 active:scale-95 transition cursor-pointer">
+            <i data-lucide="package" class="w-5 h-5"></i>
+            <span class="text-[10px] font-semibold mt-0.5">Lotes</span>
+        </button>
+        <button type="button"
+                onclick="if(typeof focusMobileSearch === 'function') focusMobileSearch(); else { document.getElementById('current-busca').focus(); }"
+                class="flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
+            <i data-lucide="search" class="w-5 h-5"></i>
+            <span class="text-[10px] font-semibold mt-0.5">Buscar</span>
+        </button>
+        <!-- Botão Central (+) Flutuante para Cadastrar Lote com Uma Mão -->
+        <button type="button"
+                onclick="if(typeof toggleMobileAddLot === 'function') toggleMobileAddLot(); else { document.getElementById('form-add-lot').classList.remove('hidden'); document.getElementById('input-add-lot-name').focus(); }"
+                class="flex flex-col items-center justify-center -mt-6 bg-emerald-600 hover:bg-emerald-700 active:scale-90 text-white w-13 h-13 rounded-full shadow-lg border-4 border-white dark:border-gray-900 transition cursor-pointer"
+                title="Cadastrar Lote Rápido">
+            <i data-lucide="plus" class="w-6 h-6 stroke-[2.5]"></i>
+        </button>
+        <button id="bottom-nav-audit"
+                type="button"
+                onclick="openAuditModal()"
+                class="{% if not is_admin %}hidden {% endif %}flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
+            <i data-lucide="shield-alert" class="w-5 h-5"></i>
+            <span class="text-[10px] font-semibold mt-0.5">Auditoria</span>
+        </button>
+        <button id="bottom-nav-switch-pin"
+                type="button"
+                onclick="openSwitchOperatorModal()"
+                class="{% if is_admin %}hidden {% endif %}flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
+            <i data-lucide="key-round" class="w-5 h-5"></i>
+            <span class="text-[10px] font-semibold mt-0.5">Trocar PIN</span>
+        </button>
+        <button type="button"
+                onclick="openMobileMenu()"
+                class="flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
+            <i data-lucide="menu" class="w-5 h-5"></i>
+            <span class="text-[10px] font-semibold mt-0.5">Mais</span>
+        </button>
+    </nav>
+
+    <!-- Gaveta de Menu Mobile -->
+    {% include "partials/mobile_drawer.html" %}
+
+    <script>
+        // Otimização de Performance e UI Otimista: Resposta Imediata aos Cliques do Usuário (0ms)
+        if (!window.myClientId) {
+            window.myClientId = 'c_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+        }
+
+        document.addEventListener('htmx:configRequest', function(evt) {
+            if (evt && evt.detail && evt.detail.headers && window.myClientId) {
+                evt.detail.headers['X-Client-ID'] = window.myClientId;
+            }
+        });
+
+        document.addEventListener('htmx:beforeRequest', function(evt) {
+            const elt = evt.detail.elt;
+            if (elt && evt.detail.requestConfig) {
+                // Ao dar baixa/excluir lote: aplica feedback instantâneo de opacidade no elemento da linha
+                if (evt.detail.requestConfig.verb === 'delete') {
+                    const row = elt.closest('.lot-row');
+                    if (row) {
+                        row.style.transition = 'opacity 0.15s ease, filter 0.15s ease';
+                        row.style.opacity = '0.25';
+                        row.style.pointerEvents = 'none';
+                    }
+                } else if (evt.detail.requestConfig.verb === 'post') {
+                    // Ao salvar quantidade, preço ou formulário: feedback imediato no botão
+                    const btn = elt.querySelector('button[type="submit"]') || (elt.tagName === 'BUTTON' ? elt : null);
+                    if (btn) {
+                        btn.style.opacity = '0.6';
+                        btn.style.pointerEvents = 'none';
+                    }
+                }
+            }
+        });
+
+        // Restaura a interatividade e estados de clique após término de qualquer requisição HTMX
+        function restoreHtmxElementInteractivity(elt, wasFailed) {
+            if (!elt) return;
+            const btn = elt.querySelector('button[type="submit"]') || (elt.tagName === 'BUTTON' ? elt : null);
+            if (btn) {
+                btn.style.opacity = '';
+                btn.style.pointerEvents = '';
+                btn.disabled = false;
+            }
+            const row = elt.closest('.lot-row');
+            if (row && wasFailed) {
+                row.style.opacity = '';
+                row.style.pointerEvents = '';
+            }
+        }
+
+        document.addEventListener('htmx:afterRequest', function(evt) {
+            const failed = evt.detail && (evt.detail.failed || !evt.detail.successful);
+            restoreHtmxElementInteractivity(evt.detail && evt.detail.elt, failed);
+        });
+
+        document.addEventListener('htmx:sendError', function(evt) {
+            restoreHtmxElementInteractivity(evt.detail && evt.detail.elt, true);
+        });
+
+        document.addEventListener('htmx:responseError', function(evt) {
+            restoreHtmxElementInteractivity(evt.detail && evt.detail.elt, true);
+        });
+    </script>
+
+    <!-- Notificações Toast Dinâmicas -->
+    <div id="global-toast-container" class="fixed bottom-16 sm:bottom-6 right-3 sm:right-6 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full px-2 sm:px-0"></div>
+
+    <script>
+    // Sistema Global de Notificações Toast Não-Intrusivas
+    function showToastNotification(message, type = 'success') {
+        let container = document.getElementById('global-toast-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'global-toast-container';
+            container.className = 'fixed bottom-16 sm:bottom-6 right-3 sm:right-6 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full px-2 sm:px-0';
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement('div');
+        const isSuccess = type === 'success';
+        toast.className = `pointer-events-auto flex items-center gap-2.5 py-2.5 px-3.5 rounded-xl shadow-xl border text-xs font-semibold transform transition-all duration-300 translate-y-3 opacity-0 ${
+            isSuccess
+                ? 'bg-emerald-600 text-white border-emerald-500'
+                : 'bg-rose-600 text-white border-rose-500'
+        }`;
+        toast.innerHTML = `
+            <i data-lucide="${isSuccess ? 'check-circle-2' : 'alert-circle'}" class="w-4 h-4 shrink-0"></i>
+            <span class="flex-1">${message}</span>
+        `;
+        container.appendChild(toast);
+        if (window.lucide) window.lucide.createIcons({ root: toast });
+
+        requestAnimationFrame(() => {
+            toast.classList.remove('translate-y-3', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+        });
+
+        setTimeout(() => {
+            toast.classList.remove('translate-y-0', 'opacity-100');
+            toast.classList.add('translate-y-3', 'opacity-0');
+            setTimeout(() => toast.remove(), 350);
+        }, 2800);
+    }
+
+    // Atualização Instantânea de Interface de Usuário sem Recarregar (0ms reload)
+    window.updateActiveOperatorUI = function(data) {
+        if (!data || !data.success) return;
+
+        const opName = data.active_operator || data.operator_name || 'Operador';
+        const role = (data.role || 'operador').toLowerCase();
+        const isAdmin = (role === 'admin');
+        const isManagerOrAdmin = (role === 'admin' || role === 'gerente');
+
+        // 1. Atualiza nomes do operador no cabeçalho
+        const desktopOp = document.getElementById('desktop-operator-name');
+        if (desktopOp) desktopOp.textContent = opName;
+
+        const mobileOp = document.getElementById('mobile-operator-name');
+        if (mobileOp) mobileOp.textContent = opName;
+
+        // 2. Atualiza controles de administração no cabeçalho
+        const headerAdminGroup = document.getElementById('header-admin-group');
+        if (headerAdminGroup) {
+            if (isAdmin) {
+                headerAdminGroup.classList.remove('hidden');
+            } else {
+                headerAdminGroup.classList.add('hidden');
+            }
+        }
+
+        const mobileAdminLink = document.getElementById('mobile-header-admin-link');
+        if (mobileAdminLink) {
+            if (isAdmin) {
+                mobileAdminLink.classList.remove('hidden');
+            } else {
+                mobileAdminLink.classList.add('hidden');
+            }
+        }
+
+        // 3. Atualiza barra de navegação inferior mobile (Bottom Nav)
+        const bottomAudit = document.getElementById('bottom-nav-audit');
+        const bottomPin = document.getElementById('bottom-nav-switch-pin');
+        if (bottomAudit && bottomPin) {
+            if (isAdmin) {
+                bottomAudit.classList.remove('hidden');
+                bottomPin.classList.add('hidden');
+            } else {
+                bottomAudit.classList.add('hidden');
+                bottomPin.classList.remove('hidden');
+            }
+        }
+
+        // 4. Atualiza gaveta lateral (Mobile Drawer)
+        const drawerInitials = document.getElementById('drawer-user-initials');
+        if (drawerInitials) drawerInitials.textContent = opName.slice(0, 2).toUpperCase();
+
+        const drawerName = document.getElementById('drawer-user-name');
+        if (drawerName) drawerName.textContent = opName;
+
+        const drawerRole = document.getElementById('drawer-user-role');
+        if (drawerRole) drawerRole.textContent = role;
+
+        const drawerBadge = document.getElementById('drawer-role-badge');
+        if (drawerBadge) {
+            drawerBadge.textContent = role.toUpperCase();
+            if (isAdmin) {
+                drawerBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800";
+            } else if (isManagerOrAdmin) {
+                drawerBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800";
+            } else {
+                drawerBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800";
+            }
+        }
+
+        const drawerOp = document.getElementById('drawer-operator-name');
+        if (drawerOp) drawerOp.textContent = opName;
+
+        const drawerAdminLink = document.getElementById('drawer-admin-panel-link');
+        if (drawerAdminLink) {
+            if (isAdmin) drawerAdminLink.classList.remove('hidden');
+            else drawerAdminLink.classList.add('hidden');
+        }
+
+        const drawerAuditBtn = document.getElementById('drawer-audit-btn');
+        if (drawerAuditBtn) {
+            if (isAdmin) drawerAuditBtn.classList.remove('hidden');
+            else drawerAuditBtn.classList.add('hidden');
+        }
+
+        const drawerUsersBtn = document.getElementById('drawer-users-btn');
+        if (drawerUsersBtn) {
+            if (isAdmin) drawerUsersBtn.classList.remove('hidden');
+            else drawerUsersBtn.classList.add('hidden');
+        }
+
+        // 5. Atualiza card de Valor Estimado no índice
+        const totalPanel = document.getElementById('total-summary-panel');
+        let valCard = document.getElementById('summary-card-valor');
+
+        if (isManagerOrAdmin) {
+            if (valCard) {
+                valCard.classList.remove('hidden');
+            } else if (totalPanel) {
+                // Cria o card se não existia no DOM inicial de operador
+                valCard = document.createElement('div');
+                valCard.id = 'summary-card-valor';
+                valCard.className = 'bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-amber-100 dark:border-amber-950/60 shadow-xs flex items-center gap-3 animate-in fade-in duration-200';
+                valCard.innerHTML = `
+                    <div class="p-2 sm:p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 shrink-0">
+                        <i data-lucide="circle-dollar-sign" class="w-5 h-5"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Valor Estimado</span>
+                        <span class="text-xs sm:text-sm font-semibold text-gray-500 dark:text-gray-400 mr-0.5">R$</span>
+                        <span id="summary-total-value" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">${data.total_value_formatted || '0,00'}</span>
+                    </div>
+                `;
+                totalPanel.appendChild(valCard);
+                if (window.lucide) window.lucide.createIcons({ root: valCard });
+            }
+            if (valCard && data.total_value_formatted) {
+                const totalValSpan = document.getElementById('summary-total-value');
+                if (totalValSpan) totalValSpan.textContent = data.total_value_formatted;
+            }
+            if (totalPanel) {
+                totalPanel.classList.remove('lg:grid-cols-3');
+                totalPanel.classList.add('lg:grid-cols-4');
+            }
+        } else {
+            if (valCard) {
+                valCard.classList.add('hidden');
+            }
+            if (totalPanel) {
+                totalPanel.classList.remove('lg:grid-cols-4');
+                totalPanel.classList.add('lg:grid-cols-3');
+            }
+        }
+
+        // 6. Se estiver na página /admin e mudou para operador sem permissão, redireciona suavemente para /
+        if (window.location.pathname.startsWith('/admin') && !isAdmin && !isManagerOrAdmin) {
+            window.location.href = '/';
+            return;
+        }
+
+        // 7. Notificação toast dinâmica (sem recarregar)
+        showToastNotification(`Operador alternado: ${opName} (${role.toUpperCase()})`, 'success');
+
+        // 8. Re-renderiza ícones Lucide
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+
+        // 9. Dispara evento customizado para outros scripts
+        window.dispatchEvent(new CustomEvent('operator-switched', { detail: data }));
+    };
+    </script>
+
+</body>
 </html>

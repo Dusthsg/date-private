@@ -1,1887 +1,1912 @@
-{% extends "base.html" %}
-
-{% block content %}
-
-<!-- Central de Operações & Filtros Unificada (Desktop, Tablet e Mobile) -->
-<div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xs border border-gray-200/80 dark:border-gray-700/80 p-3 sm:p-4 mb-4 transition-colors">
-
-    <!-- Inputs globais de estado mantidos sincronizados -->
-    <input type="hidden" id="current-filtro" name="filtro" value="{{ filtro }}">
-
-    <!-- Linha 1: Barra de Busca + Botões de Ação Principais -->
-    <div class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 pb-3 border-b border-gray-100 dark:border-gray-700/60">
-        
-        <!-- Busca Instantânea -->
-        <form class="flex-1 min-w-0"
-              id="search-form"
-              hx-get="/"
-              hx-target="#lot-table-body"
-              hx-push-url="true"
-              hx-include="#current-filtro, #current-busca"
-              onsubmit="event.preventDefault(); submitSearch();">
-            <div class="relative flex items-center">
-                <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-gray-400 dark:text-gray-400">
-                    <i data-lucide="search" class="w-4 h-4"></i>
-                </span>
-                <input type="text"
-                       id="current-busca"
-                       name="busca"
-                       value="{{ busca }}"
-                       autocomplete="off"
-                       oninput="onSearchInput(this.value)"
-                       placeholder="Buscar produto pelo nome (busca instantânea via LIKE)..."
-                       class="w-full pl-10 pr-24 border border-gray-300 dark:border-gray-600 rounded-xl py-2 text-sm dark:bg-gray-700/70 dark:text-white dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner">
-                
-                <div class="absolute inset-y-0 right-0 flex items-center pr-2 gap-1.5">
-                    <button type="button"
-                            id="clear-search-btn"
-                            onclick="clearSearch()"
-                            class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 {% if not busca %}hidden{% endif %} text-xs px-2 py-1 rounded font-bold cursor-pointer"
-                            title="Limpar busca">
-                        <i data-lucide="x" class="w-4 h-4"></i>
-                    </button>
-                    <button type="submit"
-                            class="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white px-3 py-1 rounded-lg text-xs font-semibold transition shadow-xs cursor-pointer">
-                        Buscar
-                    </button>
-                </div>
-            </div>
-        </form>
-
-        <!-- Barra de Ações Rápidas do Workspace -->
-        <div class="flex items-center justify-between md:justify-end gap-2 shrink-0">
-            <!-- Botão Cadastrar Lote (Abre/Fecha formulário inline) -->
-            <button type="button"
-                    id="btn-toggle-add-lot"
-                    onclick="toggleAddLotForm()"
-                    class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-xs transition cursor-pointer"
-                    title="Cadastrar novo lote de produto">
-                <i data-lucide="plus-circle" id="icon-add-toggle" class="w-4 h-4 transition-transform duration-200"></i>
-                <span>Novo Lote</span>
-            </button>
-
-            <!-- Botão Importar Planilha -->
-            <button type="button"
-                    onclick="document.getElementById('panel-import-planilha').classList.toggle('hidden');"
-                    class="inline-flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 text-xs font-semibold px-3 py-2 rounded-xl transition cursor-pointer"
-                    title="Conciliar estoque com planilha Excel da retaguarda">
-                <i data-lucide="file-spreadsheet" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i>
-                <span class="hidden sm:inline">Importar</span> Planilha
-            </button>
-
-            <!-- Seletor Segmentado: Lista vs Cards -->
-            <div class="inline-flex items-center bg-gray-100 dark:bg-gray-700/80 p-0.5 rounded-xl border border-gray-200 dark:border-gray-600 text-xs shadow-inner select-none" role="group" aria-label="Visualização de lotes">
-                <button type="button"
-                        id="btn-view-table"
-                        onclick="setLotViewMode('table', true)"
-                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer"
-                        title="Modo Lista (Tabela)">
-                    <i data-lucide="table" class="w-3.5 h-3.5"></i>
-                    <span class="font-bold text-xs">Lista</span>
-                </button>
-                <button type="button"
-                        id="btn-view-cards"
-                        onclick="setLotViewMode('cards', true)"
-                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer"
-                        title="Modo Cards">
-                    <i data-lucide="layout-grid" class="w-3.5 h-3.5"></i>
-                    <span class="font-bold text-xs">Cards</span>
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Formulário inline expansível de Cadastro de Lote -->
-    <form id="form-add-lot"
-          hx-post="/lote"
-          hx-target="#lot-table-body"
-          hx-include="#current-filtro, #current-busca"
-          hx-on::before-request="onAddLotBeforeRequest(event)"
-          hx-on::after-request="onAddLotAfterRequest(event)"
-          class="hidden my-3 p-3.5 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/60 transition-all">
-        
-        <div class="flex items-center justify-between mb-2.5">
-            <div class="flex items-center gap-2">
-                <span class="text-xs font-bold text-emerald-900 dark:text-emerald-200 uppercase tracking-wide inline-flex items-center gap-1">
-                    <i data-lucide="sparkles" class="w-3.5 h-3.5 text-emerald-600"></i> Cadastro Rápido de Lote
-                </span>
-                <span id="badge-catalog-selected" class="hidden text-[10px] bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 px-1.5 py-0.5 rounded font-medium">
-                    <span class="inline-flex items-center gap-0.5"><i data-lucide="check" class="w-3 h-3"></i> Catálogo</span>
-                </span>
-            </div>
-            <button type="button" onclick="toggleAddLotForm(false)" class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer">
-                <i data-lucide="x" class="w-3.5 h-3.5"></i>
-            </button>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
-            <div class="md:col-span-2 relative">
-                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Nome do Produto *</label>
-                <div class="relative">
-                    <input type="text"
-                           id="input-add-lot-name"
-                           name="name"
-                           required
-                           autocomplete="off"
-                           placeholder="Digite para buscar ou cadastrar..."
-                           oninput="onAddLotInput(this)"
-                           onblur="onAddLotBlur(this)"
-                           class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm uppercase dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 focus:ring-2 focus:ring-emerald-400 focus:outline-none">
-                </div>
-                <div id="dropdown-add-lot-results"
-                     class="hidden absolute left-0 right-0 z-50 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl max-h-56 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 text-left">
-                </div>
-            </div>
-
-            <div>
-                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Quantidade *</label>
-                <input type="number" id="input-add-lot-quant" name="quant" value="0" min="0" required
-                       class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-emerald-400 focus:outline-none">
-            </div>
-
-            <div>
-                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Preço (R$)</label>
-                <input type="number" step="0.01" id="input-add-lot-price" name="price" value="0.00" min="0"
-                       class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-emerald-400 focus:outline-none">
-            </div>
-
-            <div>
-                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Validade *</label>
-                <input type="date" id="input-add-lot-date" name="date_valid" required
-                       class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-emerald-400 focus:outline-none">
-            </div>
-        </div>
-
-        <div class="flex items-center justify-between mt-3">
-            <div id="form-add-msg"></div>
-            <button type="submit"
-                    class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs sm:text-sm font-semibold px-4 py-1.5 rounded-lg shadow-sm transition cursor-pointer">
-                <span class="inline-flex items-center gap-1.5"><i data-lucide="check" class="w-4 h-4"></i> Salvar Lote</span>
-            </button>
-        </div>
-    </form>
-
-    <!-- Linha 2: Carrossel de Categorias / Filtros -->
-    <div class="relative group/filters w-full pt-3">
-        <button type="button"
-                id="btn-scroll-left"
-                onclick="scrollFilters('left')"
-                class="hidden sm:flex absolute left-0 top-1/2 -translate-y-1/2 -ml-2.5 z-10 w-7 h-7 items-center justify-center rounded-full bg-white dark:bg-gray-700 shadow-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:scale-110 active:scale-95 transition opacity-0 group-hover/filters:opacity-90 hover:opacity-100 cursor-pointer !hidden"
-                title="Rolar para a esquerda"
-                aria-label="Rolar filtros para a esquerda">
-            <i data-lucide="chevron-left" class="w-4 h-4"></i>
-        </button>
-
-        {% include "partials/filter_buttons.html" %}
-
-        <button type="button"
-                id="btn-scroll-right"
-                onclick="scrollFilters('right')"
-                class="hidden sm:flex absolute right-0 top-1/2 -translate-y-1/2 -mr-2.5 z-10 w-7 h-7 items-center justify-center rounded-full bg-white dark:bg-gray-700 shadow-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:scale-110 active:scale-95 transition opacity-0 group-hover/filters:opacity-90 hover:opacity-100 cursor-pointer !hidden"
-                title="Rolar para a direita"
-                aria-label="Rolar filtros para a direita">
-            <i data-lucide="chevron-right" class="w-4 h-4"></i>
-        </button>
-    </div>
-
-    <!-- Linha 3: Barra de Status Integrada e Contador -->
-    <div class="flex flex-wrap items-center justify-between gap-2.5 pt-3 mt-3 border-t border-gray-100 dark:border-gray-700/60 text-xs">
-        <div class="flex flex-wrap items-center gap-2">
-            <span class="text-gray-600 dark:text-gray-300 font-medium">
-                <span id="lots-count" class="font-bold text-gray-800 dark:text-gray-100">{{ total }}</span> lote(s) encontrado(s)
-            </span>
-            <span class="text-gray-300 dark:text-gray-600">&bull;</span>
-            <span id="db-badge" class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold {% if is_postgres %}bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-800{% else %}bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-800{% endif %}"
-                  title="Banco de dados em uso">
-                <i data-lucide="database" class="w-3 h-3 inline-block mr-1"></i> <span id="db-label">{{ db_name }}</span>
-            </span>
-            <span id="ws-badge" onclick="initWebSocket(true)" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border dark:border-amber-800 cursor-pointer select-none" title="Status da conexão WebSocket (clique para testar/reconectar)">
-                <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                WebSocket Conectando...
-            </span>
-            <button type="button"
-                    id="btn-pull-db"
-                    onclick="triggerPullConnection()"
-                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 transition border border-gray-200 dark:border-gray-600 shadow-2xs cursor-pointer"
-                    title="Puxar dados do PostgreSQL para o SQLite local e testar ligação">
-                <i data-lucide="loader-2" id="pull-spinner" class="hidden w-3 h-3 animate-spin"></i>
-                <i data-lucide="refresh-cw" id="pull-icon" class="w-3 h-3"></i>
-                <span id="pull-text">Puxar Conexão</span>
-            </button>
-        </div>
-
-        <div id="btn-purge-deleted-wrapper" class="{% if filtro != 'deletados' %}hidden{% endif %}">
-            <button type="button"
-                    onclick="purgeAllDeleted()"
-                    class="inline-flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-semibold px-2.5 py-1 rounded-lg shadow-xs transition cursor-pointer"
-                    title="Excluir permanentemente todos os registros de auditoria">
-                <i data-lucide="trash-2" class="w-3 h-3"></i> <span>Limpar Todos os Deletados</span>
-            </button>
-        </div>
-    </div>
-</div>
-
-<!-- Painel Colapsável de Importação de Planilha com Auditoria Linha por Linha -->
-<div id="panel-import-planilha" class="hidden mb-4 bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-800 rounded-xl shadow-sm p-4 transition-colors">
-    <div class="flex items-center justify-between pb-2 mb-3 border-b border-gray-100 dark:border-gray-700">
-        <div class="flex items-center gap-2">
-            <span class="text-sm font-bold text-gray-800 dark:text-gray-100 inline-flex items-center gap-1.5"><i data-lucide="file-spreadsheet" class="w-4 h-4 text-emerald-600"></i> Conciliação e Importação de Planilha</span>
-            <span class="text-[11px] bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 px-2.5 py-0.5 rounded-full font-semibold border dark:border-emerald-800">Auditor Linha por Linha</span>
-        </div>
-        <button type="button" onclick="document.getElementById('panel-import-planilha').classList.add('hidden');" class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 font-bold p-1 cursor-pointer">
-            <span class="inline-flex items-center gap-1"><i data-lucide="x" class="w-3.5 h-3.5"></i> Fechar</span>
-        </button>
-    </div>
-
-    <div class="text-xs text-gray-600 dark:text-gray-300 mb-3 space-y-1 bg-gray-50 dark:bg-gray-700/60 p-2.5 rounded-lg border border-gray-200 dark:border-gray-600">
-        <div class="font-semibold text-gray-700 dark:text-gray-200 mb-1">Regras automáticas aplicadas ao importar:</div>
-        <div><i data-lucide="shield-alert" class="w-3.5 h-3.5 inline-block text-emerald-600 dark:text-emerald-400 mr-1"></i> <b>1. Filtro de Lápide:</b> se o lote já foi baixado no chão da loja hoje, a linha é descartada (evita o item zumbi).</div>
-        <div><i data-lucide="package-plus" class="w-3.5 h-3.5 inline-block text-emerald-600 dark:text-emerald-400 mr-1"></i> <b>2. Remessa Nova:</b> se o lote não existe no banco, é criado direto no <b>GALPÃO</b> (deixando os mais velhos intocados na LOJA).</div>
-        <div><i data-lucide="scale" class="w-3.5 h-3.5 inline-block text-emerald-600 dark:text-emerald-400 mr-1"></i> <b>3. Divergência Delta:</b> se a planilha tiver excedente em relação à loja, lança apenas a diferença como reforço no <b>GALPÃO</b>.</div>
-    </div>
-
-    <form id="form-import-planilha"
-          onsubmit="event.preventDefault(); submitImportPlanilha(event); return false;"
-          action="javascript:void(0);"
-          class="flex flex-col sm:flex-row items-center gap-3">
-        
-        <input type="file"
-               id="input-spreadsheet-file"
-               name="file"
-               accept=".xlsx,.xls,.csv,.xml,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/xml,*/*"
-               required
-               onchange="if (this.files && this.files.length) currentSpreadsheetFile = this.files[0];"
-               class="text-xs text-gray-700 dark:text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer">
-        
-        <div class="flex items-center gap-2">
-            <button type="button"
-                    onclick="submitImportPlanilha(event)"
-                    id="btn-import-submit"
-                    class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition inline-flex items-center gap-2 cursor-pointer">
-                <span class="inline-flex items-center gap-1.5"><i data-lucide="play" class="w-3.5 h-3.5"></i> Processar e Conciliar</span>
-            </button>
-            <span id="import-loading" class="hidden text-xs text-emerald-600 dark:text-emerald-400 font-semibold animate-pulse">
-                <span class="inline-flex items-center gap-1.5"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Enviando e auditando linhas...</span>
-            </span>
-        </div>
-    </form>
-
-    <!-- Container do Resultado da Auditoria -->
-    <div id="import-result-container"></div>
-
-    <!-- Seção de Histórico e Backup de Planilhas Salvas -->
-    <div class="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700">
-        <div class="flex items-center justify-between">
-            <button type="button"
-                    onclick="toggleSpreadsheetHistory()"
-                    class="text-xs font-bold text-gray-700 dark:text-gray-300 hover:text-emerald-700 dark:hover:text-emerald-400 inline-flex items-center gap-1.5 transition cursor-pointer">
-                <span class="inline-flex items-center gap-1.5"><i data-lucide="folder" class="w-3.5 h-3.5 text-emerald-600"></i> Planilhas Salvas & Cópias de Segurança</span>
-                <span id="history-toggle-icon" class="text-[10px]">▼</span>
-            </button>
-            <span class="text-[11px] text-gray-400 dark:text-gray-400 hidden sm:inline">Guarda cópia automática de todo arquivo enviado para recuperação</span>
-        </div>
-        <div id="spreadsheet-history-wrapper" class="hidden mt-2"></div>
-    </div>
-</div>
-
-<!-- Painel de Métricas / Resumo Consolidado do Estoque (Aba Total) -->
-<div id="total-summary-panel" class="{% if filtro not in ('todos', 'total') %}hidden{% endif %} mb-4 grid grid-cols-2 {% if is_admin or current_user_role in ('admin', 'gerente') %}lg:grid-cols-4{% else %}lg:grid-cols-3{% endif %} gap-2.5 sm:gap-3 transition-all duration-200">
-    <div class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-indigo-100 dark:border-indigo-950/60 shadow-xs flex items-center gap-3">
-        <div class="p-2 sm:p-2.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 shrink-0">
-            <i data-lucide="boxes" class="w-5 h-5"></i>
-        </div>
-        <div class="min-w-0">
-            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Total de Lotes</span>
-            <span id="summary-total-lots" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_lots_count or total or 0 }}</span>
-        </div>
-    </div>
-
-    <div class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-emerald-100 dark:border-emerald-950/60 shadow-xs flex items-center gap-3">
-        <div class="p-2 sm:p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 shrink-0">
-            <i data-lucide="package-check" class="w-5 h-5"></i>
-        </div>
-        <div class="min-w-0">
-            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Unidades em Estoque</span>
-            <span id="summary-total-units" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_units_count or 0 }}</span>
-        </div>
-    </div>
-
-    <div class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-blue-100 dark:border-blue-950/60 shadow-xs flex items-center gap-3">
-        <div class="p-2 sm:p-2.5 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 shrink-0">
-            <i data-lucide="layers" class="w-5 h-5"></i>
-        </div>
-        <div class="min-w-0">
-            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Produtos Distintos</span>
-            <span id="summary-total-products" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_products_count or 0 }}</span>
-        </div>
-    </div>
-
-    {% if is_admin or current_user_role in ('admin', 'gerente') %}
-    <div id="summary-card-valor" class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-amber-100 dark:border-amber-950/60 shadow-xs flex items-center gap-3">
-        <div class="p-2 sm:p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 shrink-0">
-            <i data-lucide="circle-dollar-sign" class="w-5 h-5"></i>
-        </div>
-        <div class="min-w-0">
-            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Valor Estimado</span>
-            <span class="text-xs sm:text-sm font-semibold text-gray-500 dark:text-gray-400 mr-0.5">R$</span>
-            <span id="summary-total-value" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_value_formatted or '0,00' }}</span>
-        </div>
-    </div>
-    {% endif %}
-</div>
-
-<!-- Container de Exibição de Lotes (Lista ou Cards conforme preferência do usuário) -->
-<div id="lot-display-container" class="view-mode-table transition-all duration-200">
-    <table class="w-full text-left text-sm">
-        <thead class="bg-gray-50 dark:bg-gray-700/80 text-gray-600 dark:text-gray-300 uppercase text-xs tracking-wider border-b border-gray-200 dark:border-gray-700">
-            <tr>
-                <th class="px-3 py-3">Lote</th>
-                <th class="px-3 py-3">Produto</th>
-                <th class="px-3 py-3">Qtd</th>
-                <th class="px-3 py-3">Preço</th>
-                <th class="px-3 py-3">Validade</th>
-                <th class="px-3 py-3">Local</th>
-                <th class="px-3 py-3">Status</th>
-                <th class="px-3 py-3 text-center">Ação</th>
-            </tr>
-        </thead>
-        <tbody id="lot-table-body">
-            {% include "partials/lot_rows.html" %}
-        </tbody>
-    </table>
-</div>
-
-<!-- Lógica Client-side de WebSocket e Busca Ultrarrápida -->
-<script>
-window.myClientId = 'c_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
-
-window.toggleAddLotForm = function(forceOpen) {
-    const form = document.getElementById('form-add-lot');
-    const icon = document.getElementById('icon-add-toggle');
-    if (!form) return;
-    const isHidden = form.classList.contains('hidden');
-    const shouldOpen = (forceOpen !== undefined) ? forceOpen : isHidden;
-    if (shouldOpen) {
-        form.classList.remove('hidden');
-        if (icon) icon.classList.add('rotate-180');
-        const inputName = document.getElementById('input-add-lot-name');
-        if (inputName) {
-            inputName.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            setTimeout(() => inputName.focus(), 200);
-        }
-    } else {
-        form.classList.add('hidden');
-        if (icon) icon.classList.remove('rotate-180');
-    }
-    if (window.refreshIcons) window.refreshIcons(form);
-};
-window.toggleMobileAddLot = window.toggleAddLotForm;
-
-window.focusMobileSearch = function() {
-    const searchInput = document.getElementById('current-busca');
-    if (searchInput) {
-        searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        setTimeout(() => searchInput.focus(), 300);
-    }
-};
-
-// Anexa o identificador do cliente a todas as requisições HTMX para evitar recarregamento redundante da própria tela
-document.addEventListener('htmx:configRequest', function(evt) {
-    if (evt && evt.detail && evt.detail.headers) {
-        evt.detail.headers['X-Client-ID'] = window.myClientId;
-    }
-});
-
-// Atualiza o contador de lotes instantaneamente ao deletar uma linha no DOM
-document.addEventListener('htmx:afterRequest', function(evt) {
-    if (evt.detail && evt.detail.successful && evt.detail.requestConfig && evt.detail.requestConfig.verb === 'delete') {
-        const countEl = document.getElementById('lots-count');
-        if (countEl) {
-            const current = parseInt(countEl.innerText);
-            if (!isNaN(current) && current > 0) {
-                countEl.innerText = current - 1;
-            }
-        }
-    }
-});
-
-let socket = null;
-let searchDebounceTimer = null;
-let reloadDebounceTimer = null;
-let currentSearchSeq = 0;
-const clientCache = new Map();
-
-let wsReconnectAttempts = 0;
-let wsReconnectTimer = null;
-let wsHeartbeatTimer = null;
-let wsLastPongTime = Date.now();
-let wsConnectStartTime = 0;
-
-// Sincronização instantânea (< 1ms) entre abas do mesmo navegador via BroadcastChannel
-let syncChannel = null;
-try {
-    syncChannel = new BroadcastChannel('datelimit_channel');
-    syncChannel.onmessage = (event) => {
-        const msg = event.data;
-        if (!msg) return;
-        if (msg.type === 'mutation') {
-            clientCache.clear();
-            if (!window.isEditingLot) {
-                performSearch(true);
-            }
-        }
-    };
-} catch (_) {}
-
-function notifyCrossTabMutation(action, details = {}) {
-    clientCache.clear();
-    if (syncChannel) {
-        try {
-            syncChannel.postMessage({ type: 'mutation', action: action, sender: window.myClientId, ...details });
-        } catch (_) {}
-    }
-}
-
-document.addEventListener('htmx:afterRequest', (evt) => {
-    if (evt.detail && evt.detail.successful) {
-        const verb = (evt.detail.requestConfig?.verb || '').toUpperCase();
-        if (['DELETE', 'POST', 'PUT', 'PATCH'].includes(verb)) {
-            notifyCrossTabMutation('htmx_mutation');
-        }
-    }
-});
-
-function updateWsBadge(status) {
-    const badge = document.getElementById('ws-badge');
-    if (!badge) return;
-    if (status === 'connected') {
-        badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border dark:border-emerald-800 cursor-pointer select-none";
-        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span> <i data-lucide="zap" class="w-3.5 h-3.5 text-emerald-600"></i> <span>WebSocket Ativo</span>'; if (window.refreshIcons) window.refreshIcons(badge);
-        badge.title = 'Conectado em tempo real. Clique para testar ou forçar reconexão.';
-    } else if (status === 'connecting') {
-        badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border dark:border-amber-800 cursor-pointer select-none";
-        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span> <i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin text-amber-600"></i> <span>Reconectando...</span>'; if (window.refreshIcons) window.refreshIcons(badge);
-        badge.title = 'Reconectando ao servidor em segundo plano...';
-    } else {
-        badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border dark:border-rose-800 cursor-pointer select-none";
-        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-500"></span> <i data-lucide="wifi-off" class="w-3.5 h-3.5 text-rose-600"></i> <span>Desconectado</span>'; if (window.refreshIcons) window.refreshIcons(badge);
-        badge.title = 'Clique para reconectar agora.';
-    }
-}
-
-function initWebSocket(force = false) {
-    // Se já estiver conectado e não for forçado, não faz nada
-    if (!force && socket && socket.readyState === WebSocket.OPEN) {
-        return;
-    }
-    // Se já estiver conectando, não abre conexões concorrentes
-    if (!force && socket && socket.readyState === WebSocket.CONNECTING) {
-        return;
-    }
-    // Se for forçado mas já está conectando há menos de 1500ms, preserva a conexão em andamento
-    if (force && socket && socket.readyState === WebSocket.CONNECTING && (Date.now() - wsConnectStartTime < 1500)) {
-        return;
-    }
-
-    // Cancela timers pendentes
-    if (wsReconnectTimer) {
-        clearTimeout(wsReconnectTimer);
-        wsReconnectTimer = null;
-    }
-
-    // Fecha socket anterior de forma limpa para eliminar vazamento ou reconexões em cascata
-    if (socket) {
-        socket.onopen = null;
-        socket.onclose = null;
-        socket.onerror = null;
-        socket.onmessage = null;
-        try { socket.close(); } catch (_) {}
-        socket = null;
-    }
-
-    updateWsBadge('connecting');
-    wsConnectStartTime = Date.now();
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-
-    try {
-        socket = new WebSocket(wsUrl);
-    } catch (e) {
-        scheduleWsReconnect();
-        return;
-    }
-
-    wsLastPongTime = Date.now();
-
-    socket.onopen = function() {
-        wsReconnectAttempts = 0;
-        wsLastPongTime = Date.now();
-        updateWsBadge('connected');
-
-        try {
-            socket.send(JSON.stringify({ action: "register", clientId: window.myClientId }));
-        } catch (_) {}
-
-        // Inicia Watchdog + Heartbeat agressivo de 6s para evitar timeout de roteador/4G
-        startWsWatchdog();
-
-        // Pré-aquece abas no cache
-        prewarmClientFilters();
-    };
-
-    socket.onclose = function() {
-        stopWsWatchdog();
-        scheduleWsReconnect();
-    };
-
-    socket.onerror = function() {
-        try { if (socket) socket.close(); } catch (_) {}
-    };
-
-    socket.onmessage = function(event) {
-        try {
-            const data = JSON.parse(event.data);
-
-            if (data.type === 'pong') {
-                wsLastPongTime = Date.now();
-                return;
-            }
-
-            if (data.type === 'invalidate_cache') {
-                clientCache.clear();
-                return;
-            }
-
-            if (data.type === 'lots_update') {
-                const cacheKey = `${data.filtro || 'todos'}|${(data.busca || '').trim().toUpperCase()}`;
-                clientCache.set(cacheKey, { html: data.html, total: data.total });
-
-                if (data.prewarm) return;
-                if (data.seq !== undefined && data.seq < currentSearchSeq) return;
-                if (window.isEditingLot) return;
-
-                if (data.summary) {
-                    updateSummaryUI(data.summary);
-                }
-                renderLotsData(data.html, data.total);
-
-            } else if (data.type === 'reload') {
-                clientCache.clear();
-                if (data.sender && data.sender === window.myClientId) {
-                    return;
-                }
-                clearTimeout(reloadDebounceTimer);
-                reloadDebounceTimer = setTimeout(() => {
-                    if (!window.isEditingLot) {
-                        performSearch(true);
-                    }
-                    fetch('/api/inventory/summary').then(r => r.json()).then(updateSummaryUI).catch(() => {});
-                    fetch('/api/connection/status').then(r => r.json()).then(st => {
-                        const dbBadge = document.getElementById('db-badge');
-                        const dbLabel = document.getElementById('db-label');
-                        if (dbBadge && dbLabel) {
-                            if (st.postgres_online) {
-                                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-800";
-                                dbLabel.innerText = "PostgreSQL";
-                            } else {
-                                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-800";
-                                dbLabel.innerText = "SQLite (Cópia Local)";
-                            }
-                        }
-                    }).catch(() => {});
-                }, 120);
-            }
-        } catch (e) {
-            console.error("Erro no processamento do WebSocket:", e);
-        }
-    };
-}
-
-function startWsWatchdog() {
-    stopWsWatchdog();
-    wsHeartbeatTimer = setInterval(() => {
-        if (!socket || socket.readyState !== WebSocket.OPEN) {
-            scheduleWsReconnect();
-            return;
-        }
-
-        // Se passaram mais de 16s sem nenhum pong do servidor, detecta conexão zumbi/congelada pelo SO
-        if (Date.now() - wsLastPongTime > 16000) {
-            console.warn("WebSocket watchdog: sem pong há mais de 16s. Reconectando instantaneamente...");
-            initWebSocket(true);
-            return;
-        }
-
-        try {
-            socket.send(JSON.stringify({ action: "ping" }));
-        } catch (_) {
-            initWebSocket(true);
-        }
-    }, 6000); // 6 segundos de intervalo (mantém NAT de celular e Wi-Fi permanentemente vivos)
-}
-
-function stopWsWatchdog() {
-    if (wsHeartbeatTimer) {
-        clearInterval(wsHeartbeatTimer);
-        wsHeartbeatTimer = null;
-    }
-}
-
-function scheduleWsReconnect() {
-    updateWsBadge('connecting');
-    if (wsReconnectTimer) return;
-
-    wsReconnectAttempts++;
-    // Reconexão ultra ágil: 200ms na primeira tentativa até max 2.5s
-    const delay = Math.min(200 * Math.pow(1.3, Math.min(wsReconnectAttempts, 6)), 2500) + (Math.random() * 80);
-
-    wsReconnectTimer = setTimeout(() => {
-        wsReconnectTimer = null;
-        initWebSocket(true);
-    }, delay);
-}
-
-// ── Recuperação Instantânea ao Desbloquear Celular / Trocar de Aba / Reatar Conexão ──
-document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-        // Ao retornar para a aba ou desbloquear a tela do celular, limpa cache e revalida imediatamente
-        clientCache.clear();
-        if (!socket || socket.readyState !== WebSocket.OPEN) {
-            initWebSocket(true);
-        } else {
-            wsLastPongTime = Date.now();
-            try {
-                socket.send(JSON.stringify({ action: "ping" }));
-            } catch (_) {
-                initWebSocket(true);
-            }
-        }
-        if (!window.isEditingLot) {
-            performSearch(true);
-        }
-    }
-});
-
-window.addEventListener('online', () => {
-    initWebSocket(true);
-});
-
-window.addEventListener('focus', () => {
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-        initWebSocket(true);
-    }
-});
-
-
-function updateSummaryUI(summary) {
-    if (!summary) return;
-    const badgeTotal = document.getElementById('badge-total-lots');
-    if (badgeTotal && summary.total_lots !== undefined) {
-        badgeTotal.innerText = summary.total_lots;
-    }
-    const sumLots = document.getElementById('summary-total-lots');
-    if (sumLots && summary.total_lots !== undefined) {
-        sumLots.innerText = summary.total_lots;
-    }
-    const sumUnits = document.getElementById('summary-total-units');
-    if (sumUnits && summary.total_units !== undefined) {
-        sumUnits.innerText = summary.total_units;
-    }
-    const sumProducts = document.getElementById('summary-total-products');
-    if (sumProducts && summary.total_products !== undefined) {
-        sumProducts.innerText = summary.total_products;
-    }
-    const sumValue = document.getElementById('summary-total-value');
-    if (sumValue && summary.total_value !== undefined) {
-        const val = Number(summary.total_value) || 0;
-        sumValue.innerText = val.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    }
-}
-
-function renderLotsData(html, total) {
-    const tbody = document.getElementById('lot-table-body');
-    if (tbody) {
-        tbody.innerHTML = html;
-        htmx.process(tbody);
-        if (window.refreshIcons) window.refreshIcons(tbody);
-    }
-    const countEl = document.getElementById('lots-count');
-    if (countEl && total !== undefined) {
-        countEl.innerText = total;
-    }
-}
-
-function performSearch(forceServer = false) {
-    const busca = document.getElementById('current-busca').value;
-    const filtro = document.getElementById('current-filtro').value;
-    const cacheKey = `${filtro}|${busca.trim().toUpperCase()}`;
-
-    // 1. Resposta instantânea se estiver no cache local (0ms!)
-    if (!forceServer && clientCache.has(cacheKey)) {
-        const cached = clientCache.get(cacheKey);
-        renderLotsData(cached.html, cached.total);
-        return;
-    }
-
-    const seq = ++currentSearchSeq;
-
-    // 2. Consulta pelo WebSocket (sub-10ms) ou Fallback HTMX transparente
-    if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({
-            action: "search",
-            busca: busca,
-            filtro: filtro,
-            seq: seq
-        }));
-    } else {
-        // Se desconectou, a busca responde instantaneamente via HTMX sem que o usuário perceba, e reconecta em background
-        htmx.ajax('GET', `/?busca=${encodeURIComponent(busca)}&filtro=${encodeURIComponent(filtro)}`, {
-            target: '#lot-table-body',
-            swap: 'innerHTML'
-        });
-        initWebSocket();
-    }
-}
-
-function onSearchInput(val) {
-    const clearBtn = document.getElementById('clear-search-btn');
-    if (clearBtn) {
-        clearBtn.classList.toggle('hidden', !val);
-    }
-
-    // Feedback visual instantâneo (0ms) nas linhas já carregadas na tela sem reflow
-    const q = val.trim().toUpperCase();
-    const rows = document.querySelectorAll('#lot-table-body tr');
-    if (rows.length > 0 && q) {
-        rows.forEach(tr => {
-            if (tr.id === 'infinite-scroll-trigger') {
-                tr.style.display = 'none';
-                return;
-            }
-            const titleCell = tr.cells && tr.cells[1];
-            const text = titleCell ? titleCell.textContent.toUpperCase() : tr.textContent.toUpperCase();
-            tr.style.display = text.includes(q) ? '' : 'none';
-        });
-    } else if (!q) {
-        rows.forEach(tr => {
-            if (tr.id !== 'infinite-scroll-trigger') tr.style.display = '';
-        });
-    }
-
-    clearTimeout(searchDebounceTimer);
-    // Debounce otimizado (200ms) para resposta instantânea e fluida
-    searchDebounceTimer = setTimeout(() => performSearch(false), 200);
-}
-
-function submitSearch() {
-    clearTimeout(searchDebounceTimer);
-    performSearch(true);
-}
-
-function clearSearch() {
-    const input = document.getElementById('current-busca');
-    input.value = '';
-    onSearchInput('');
-    input.focus();
-}
-
-function prewarmClientFilters() {
-    // Pré-aquece apenas abas de consulta frequente com intervalo seguro
-    const filters = ['vencidos', 'critico', 'atencao', 'alerta', 'recentes'];
-    filters.forEach((f, idx) => {
-        setTimeout(() => {
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({
-                    action: "search",
-                    busca: "",
-                    filtro: f,
-                    prewarm: true
-                }));
-            }
-        }, 200 + (idx * 100));
-    });
-}
-
-let isFilterDragging = false;
-
-function updateFilterScrollButtons() {
-    const container = document.getElementById('filtros');
-    const leftBtn = document.getElementById('btn-scroll-left');
-    const rightBtn = document.getElementById('btn-scroll-right');
-    if (!container || !leftBtn || !rightBtn) return;
-
-    // Se o conteúdo cabe perfeitamente na largura da tela sem transbordar: esconde ambos os botões
-    const hasOverflow = (container.scrollWidth - container.clientWidth) > 4;
-    if (!hasOverflow) {
-        leftBtn.classList.add('!hidden');
-        rightBtn.classList.add('!hidden');
-        return;
-    }
-
-    // Se há transbordamento, mostra as setas de acordo com o deslocamento atual do scroll
-    const atStart = container.scrollLeft <= 4;
-    const atEnd = (container.scrollLeft + container.clientWidth) >= (container.scrollWidth - 6);
-
-    if (atStart) {
-        leftBtn.classList.add('!hidden');
-    } else {
-        leftBtn.classList.remove('!hidden');
-    }
-
-    if (atEnd) {
-        rightBtn.classList.add('!hidden');
-    } else {
-        rightBtn.classList.remove('!hidden');
-    }
-}
-
-function scrollFilters(direction) {
-    const container = document.getElementById('filtros');
-    if (!container) return;
-    const amount = direction === 'left' ? -240 : 240;
-    container.scrollBy({ left: amount, behavior: 'smooth' });
-    setTimeout(updateFilterScrollButtons, 320);
-}
-
-function initFilterDragScroll() {
-    const container = document.getElementById('filtros');
-    if (!container) return;
-    updateFilterScrollButtons();
-
-    if (container.dataset.dragInit === 'true') return;
-    container.dataset.dragInit = 'true';
-
-    container.addEventListener('scroll', updateFilterScrollButtons, { passive: true });
-    window.addEventListener('resize', updateFilterScrollButtons, { passive: true });
-
-    if (window.ResizeObserver) {
-        try {
-            new ResizeObserver(() => updateFilterScrollButtons()).observe(container);
-        } catch (_) {}
-    }
-
-    let isDown = false;
-    let startX = 0;
-    let scrollLeft = 0;
-    let hasMoved = false;
-
-    container.addEventListener('mousedown', (e) => {
-        if (e.button !== 0) return;
-        isDown = true;
-        hasMoved = false;
-        isFilterDragging = false;
-        startX = e.pageX - container.offsetLeft;
-        scrollLeft = container.scrollLeft;
-    });
-
-    window.addEventListener('mousemove', (e) => {
-        if (!isDown) return;
-        const x = e.pageX - container.offsetLeft;
-        const walk = x - startX;
-        if (Math.abs(walk) > 5) {
-            hasMoved = true;
-            isFilterDragging = true;
-        }
-        if (hasMoved) {
-            container.scrollLeft = scrollLeft - walk;
-        }
-    });
-
-    window.addEventListener('mouseup', () => {
-        if (!isDown) return;
-        isDown = false;
-        if (hasMoved) {
-            setTimeout(() => {
-                isFilterDragging = false;
-            }, 60);
-        } else {
-            isFilterDragging = false;
-        }
-    });
-
-    container.addEventListener('click', (e) => {
-        if (isFilterDragging) {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-        }
-    }, true);
-}
-
-function setFiltro(key, evt) {
-    if (isFilterDragging) {
-        if (evt) {
-            if (typeof evt.preventDefault === 'function') evt.preventDefault();
-            if (typeof evt.stopPropagation === 'function') evt.stopPropagation();
-        }
-        return;
-    }
-    if (evt) {
-        if (typeof evt.preventDefault === 'function') evt.preventDefault();
-        if (typeof evt.stopPropagation === 'function') evt.stopPropagation();
-    }
-    document.getElementById('current-filtro').value = key;
-
-    // Atualiza URL no navegador sem recarregar a página
-    try {
-        const busca = document.getElementById('current-busca').value;
-        const url = new URL(window.location);
-        url.searchParams.set('filtro', key);
-        if (busca) url.searchParams.set('busca', busca);
-        else url.searchParams.delete('busca');
-        window.history.replaceState({}, '', url);
-    } catch (_) {}
-
-    // Alterna a exibição do resumo consolidado para a aba Total
-    const summaryPanel = document.getElementById('total-summary-panel');
-    if (summaryPanel) {
-        if (key === 'todos' || key === 'total') {
-            summaryPanel.classList.remove('hidden');
-        } else {
-            summaryPanel.classList.add('hidden');
-        }
-    }
-
-    // Alterna a exibição do botão "Limpar Todos os Deletados"
-    const purgeWrapper = document.getElementById('btn-purge-deleted-wrapper');
-    if (purgeWrapper) {
-        if (key === 'deletados') {
-            purgeWrapper.classList.remove('hidden');
-        } else {
-            purgeWrapper.classList.add('hidden');
-        }
-    }
-    
-    // Atualiza visual dos botões mantendo classes de carrossel
-    document.querySelectorAll('.filter-btn').forEach(btn => {
-        const isCurrent = (btn.getAttribute('data-filtro') === key);
-        const iconEl = btn.querySelector('i[data-lucide]');
-        if (isCurrent) {
-            if (key === 'deletados') {
-                btn.className = "filter-btn shrink-0 flex-shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-rose-600 dark:bg-rose-500 text-white shadow-sm font-semibold cursor-pointer select-none";
-            } else {
-                btn.className = "filter-btn shrink-0 flex-shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm font-semibold cursor-pointer select-none";
-            }
-            if (iconEl) iconEl.className = "w-3.5 h-3.5 text-white";
-            const badgeEl = btn.querySelector('#badge-total-lots');
-            if (badgeEl) {
-                badgeEl.className = "ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold tracking-tight bg-indigo-800/60 text-white";
-            }
-        } else {
-            btn.className = "filter-btn shrink-0 flex-shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 cursor-pointer select-none";
-            const badgeEl = btn.querySelector('#badge-total-lots');
-            if (badgeEl) {
-                badgeEl.className = "ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold tracking-tight bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200";
-            }
-        }
-    });
-
-    // Centraliza o botão ativo no carrossel suavemente
-    const activeBtn = document.querySelector(`.filter-btn[data-filtro="${key}"]`);
-    if (activeBtn) {
-        activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-    }
-
-    if (window.renderLucideIcons) window.renderLucideIcons();
-
-    // Stale-While-Revalidate: Se houver cache prévio, exibe imediatamente (0ms)
-    const busca = (document.getElementById('current-busca')?.value || '').trim().toUpperCase();
-    const cacheKey = `${key}|${busca}`;
-    if (key !== 'deletados' && clientCache.has(cacheKey)) {
-        const cached = clientCache.get(cacheKey);
-        renderLotsData(cached.html, cached.total);
-    }
-
-    // Sempre busca a versão mais recente no servidor/WebSocket (sub-5ms) para sincronismo total
-    performSearch(true);
-}
-
-async function purgeAllDeleted() {
-    if (!confirm("Tem certeza que deseja excluir permanentemente TODOS os registros do histórico de deletados? Esta ação não pode ser desfeita.")) {
-        return;
-    }
-    try {
-        const resp = await fetch('/lote/deletados/limpar', {
-            method: 'POST',
-            headers: { 'X-Client-ID': window.myClientId }
-        });
-        if (resp.ok) {
-            clientCache.clear();
-            performSearch(true);
-        }
-    } catch (e) {
-        console.error("Erro ao limpar deletados:", e);
-    }
-}
-
-async function triggerPullConnection() {
-    const btn = document.getElementById('btn-pull-db');
-    const spinner = document.getElementById('pull-spinner');
-    const icon = document.getElementById('pull-icon');
-    const text = document.getElementById('pull-text');
-    const dbBadge = document.getElementById('db-badge');
-    const dbLabel = document.getElementById('db-label');
-
-    if (spinner) spinner.classList.remove('hidden');
-    if (icon) icon.classList.add('hidden');
-    if (text) text.innerText = 'Puxando...';
-    if (btn) btn.disabled = true;
-
-    try {
-        const resp = await fetch('/api/connection/pull', { method: 'POST' });
-        const data = await resp.json();
-        if (data.success) {
-            if (text) text.innerText = 'Cópia Puxada!';
-            if (dbBadge && dbLabel) {
-                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
-                dbLabel.innerText = "PostgreSQL";
-            }
-            clientCache.clear();
-            performSearch(true);
-            setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
-        } else {
-            // Se falhou ao puxar, tenta reconectar
-            const reconResp = await fetch('/api/connection/reconnect', { method: 'POST' });
-            const reconData = await reconResp.json();
-            if (reconData.postgres_online) {
-                if (text) text.innerText = 'Reconectado!';
-                if (dbBadge && dbLabel) {
-                    dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
-                    dbLabel.innerText = "PostgreSQL";
-                }
-                clientCache.clear();
-                performSearch(true);
-                setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
-            } else {
-                if (text) text.innerText = 'Modo Local (SQLite)';
-                if (dbBadge && dbLabel) {
-                    dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200";
-                    dbLabel.innerText = "SQLite (Cópia Local)";
-                }
-                setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3500);
-            }
-        }
-    } catch (err) {
-        if (text) text.innerText = 'Erro ao puxar';
-        setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
-    } finally {
-        if (spinner) spinner.classList.add('hidden');
-        if (icon) icon.classList.remove('hidden');
-        if (btn) btn.disabled = false;
-    }
-}
-
-let currentSpreadsheetFile = null;
-let currentSavedFileId = null;
-
-function renderColumnMappingInterface(data, file) {
-    const resultContainer = document.getElementById('import-result-container');
-    if (!resultContainer) return;
-
-    if (data.file_id) {
-        currentSavedFileId = data.file_id;
-    }
-
-    const cols = data.columns || [];
-    const suggestions = data.suggestions || {};
-    const preview = data.preview || [];
-    const fileName = file.name || data.filename || 'planilha.xls';
-
-    // Helper para gerar as options de um select
-    const generateOptions = (selectedVal, isRequired = false) => {
-        let html = isRequired ? '' : '<option value="">(Nenhuma / Opcional)</option>';
-        cols.forEach(c => {
-            const isSel = (c === selectedVal);
-            html += `<option value="${c}" ${isSel ? 'selected' : ''}>${c}</option>`;
-        });
-        return html;
-    };
-
-    let previewHeaders = cols.map(c => `<th class="px-2.5 py-1.5 font-bold text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600 whitespace-nowrap text-xs">${c}</th>`).join('');
-    let previewBody = '';
-    preview.forEach(row => {
-        let cells = cols.map(c => `<td class="px-2.5 py-1 border-b border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-300 truncate max-w-[150px] text-[11px]">${row[c] || ''}</td>`).join('');
-        previewBody += `<tr>${cells}</tr>`;
-    });
-
-    const downloadBadge = data.file_id ? `
-        <a href="/download-planilha/${data.file_id}" download class="inline-flex items-center gap-1 text-[11px] text-amber-900 dark:text-amber-200 bg-amber-200/80 dark:bg-amber-900/60 hover:bg-amber-300 dark:hover:bg-amber-800 px-2.5 py-1 rounded-md font-semibold transition shadow-xs">
-            <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar cópia original salva</span>
-        </a>
-    ` : '';
-
-    setTimeout(() => { if (window.refreshIcons) window.refreshIcons(resultContainer); }, 50);
-    resultContainer.innerHTML = `
-        <div id="import-mapping-card" class="mt-4 p-4 bg-amber-50/70 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/80 rounded-xl space-y-4 shadow-sm animate-fade-in">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div class="flex items-start gap-2.5">
-                    <i data-lucide="table" class="w-5 h-5 text-indigo-600 dark:text-indigo-400"></i>
-                    <div class="space-y-0.5">
-                        <h4 class="text-sm font-bold text-amber-900 dark:text-amber-300">Confirmação de Colunas da Planilha</h4>
-                        <p class="text-xs text-amber-800 dark:text-amber-400">
-                            O arquivo <b>${fileName}</b> foi salvo com segurança em nosso servidor! Confirme abaixo quais colunas contêm o <b>Produto</b> e a <b>Validade</b>:
-                        </p>
-                    </div>
-                </div>
-                ${downloadBadge}
-            </div>
-
-            <!-- Seletores de Mapeamento -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white dark:bg-gray-800 p-3.5 rounded-lg border border-amber-200 dark:border-gray-700">
-                <div>
-                    <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-                        <i data-lucide="package" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> Coluna do Produto <span class="text-red-500">*</span>
-                    </label>
-                    <select id="map-col-prod" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
-                        ${generateOptions(suggestions.col_prod, true)}
-                    </select>
-                </div>
-
-                <div>
-                    <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-                        <i data-lucide="calendar" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> Coluna da Validade <span class="text-red-500">*</span>
-                    </label>
-                    <select id="map-col-valid" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
-                        ${generateOptions(suggestions.col_valid, true)}
-                    </select>
-                </div>
-
-                <div>
-                    <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-                        <i data-lucide="barcode" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> Código de Barras (Opcional)
-                    </label>
-                    <select id="map-col-code" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
-                        ${generateOptions(suggestions.col_code, false)}
-                    </select>
-                </div>
-
-                <div>
-                    <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-                        <i data-lucide="hash" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> Quantidade (Opcional)
-                    </label>
-                    <select id="map-col-quant" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
-                        ${generateOptions(suggestions.col_quant, false)}
-                    </select>
-                </div>
-            </div>
-
-            <!-- Pré-visualização das Primeiras Linhas da Planilha -->
-            <div class="space-y-1.5">
-                <span class="text-[11px] font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Amostra dos Dados da Planilha (5 primeiras linhas):</span>
-                <div class="overflow-x-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg max-h-48 shadow-inner">
-                    <table class="w-full text-left border-collapse">
-                        <thead><tr>${previewHeaders}</tr></thead>
-                        <tbody>${previewBody}</tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Botões de Ação do Mapeamento -->
-            <div class="flex items-center justify-between pt-1">
-                <button type="button"
-                        onclick="document.getElementById('import-result-container').innerHTML = '';"
-                        class="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 font-medium px-3 py-1.5 cursor-pointer">
-                    Cancelar
-                </button>
-                <button type="button"
-                        onclick="confirmColumnMappingAndSubmit()"
-                        class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition inline-flex items-center gap-1.5 cursor-pointer">
-                    <span class="inline-flex items-center gap-1.5"><i data-lucide="check-circle" class="w-3.5 h-3.5"></i> Confirmar Colunas e Importar</span>
-                </button>
-            </div>
-        </div>
-    `;
-}
-
-function confirmColumnMappingAndSubmit() {
-    const colProd = document.getElementById('map-col-prod')?.value || '';
-    const colValid = document.getElementById('map-col-valid')?.value || '';
-    const colCode = document.getElementById('map-col-code')?.value || '';
-    const colQuant = document.getElementById('map-col-quant')?.value || '';
-
-    if (!colProd || !colValid) {
-        alert('Por favor, selecione as colunas de Produto e Validade.');
-        return;
-    }
-
-    const mapping = {
-        col_prod: colProd,
-        col_valid: colValid,
-        col_code: colCode,
-        col_quant: colQuant
-    };
-
-    if (currentSavedFileId) {
-        reprocessSavedSpreadsheet(currentSavedFileId, currentSpreadsheetFile?.name || 'planilha.xls', mapping);
-    } else {
-        submitImportPlanilha(null, mapping);
-    }
-}
-
-function submitImportPlanilha(event, customMapping = null) {
-    if (event) {
-        event.preventDefault();
-        event.stopPropagation();
-    }
-
-    const fileInput = document.getElementById('input-spreadsheet-file');
-    const resultContainer = document.getElementById('import-result-container');
-    const loading = document.getElementById('import-loading');
-    const btn = document.getElementById('btn-import-submit');
-
-    // Recupera o arquivo selecionado ou o salvo anteriormente
-    if (fileInput && fileInput.files && fileInput.files.length > 0) {
-        currentSpreadsheetFile = fileInput.files[0];
-    }
-
-    if (!currentSpreadsheetFile) {
-        resultContainer.innerHTML = '<div class="text-amber-700 dark:text-amber-300 text-xs p-3 bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 rounded-lg mt-3 font-medium"><i data-lucide="alert-triangle" class="w-4 h-4 inline-block mr-1.5 text-amber-600"></i> Por favor, selecione um arquivo de planilha (.xlsx, .xls ou .csv) antes de processar.</div>';
-        return;
-    }
-
-    const file = currentSpreadsheetFile;
-    const formData = new FormData();
-    formData.append('file', file);
-
-    if (customMapping) {
-        if (customMapping.col_prod) formData.append('col_prod', customMapping.col_prod);
-        if (customMapping.col_valid) formData.append('col_valid', customMapping.col_valid);
-        if (customMapping.col_code) formData.append('col_code', customMapping.col_code);
-        if (customMapping.col_quant) formData.append('col_quant', customMapping.col_quant);
-    }
-
-    if (loading) loading.classList.remove('hidden');
-    if (btn) {
-        btn.disabled = true;
-        btn.classList.add('opacity-60', 'cursor-not-allowed');
-    }
-
-    // Estrutura visual da barra de progresso com animação instantânea
-    resultContainer.innerHTML = `
-        <div id="import-progress-card" class="mt-4 p-4 bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-3 shadow-sm transition-all duration-300">
-            <div class="flex items-center justify-between text-xs font-semibold">
-                <span class="text-gray-700 dark:text-gray-300 flex items-center gap-2 truncate max-w-[75%]">
-                    <i data-lucide="loader-2" id="import-progress-spinner" class="w-4 h-4 animate-spin text-emerald-600 dark:text-emerald-400 inline-block"></i>
-                    <span id="import-progress-stage" class="text-gray-800 dark:text-gray-200">Enviando e salvando cópia de segurança de ${file.name} (${(file.size / 1024).toFixed(1)} KB)...</span>
-                </span>
-                <span id="import-progress-percent" class="text-emerald-700 dark:text-emerald-400 font-extrabold font-mono text-base tracking-tight">
-                    15%
-                </span>
-            </div>
-
-            <!-- Trilho e Barra de Progresso com Transição Fluida e Gradiente -->
-            <div class="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3.5 overflow-hidden shadow-inner p-0.5 border border-gray-200 dark:border-gray-600">
-                <div id="import-progress-bar"
-                     class="bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 h-full rounded-full transition-all duration-150 ease-out shadow-sm"
-                     style="width: 15%;">
-                </div>
-            </div>
-
-            <div class="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400 pt-0.5">
-                <span id="import-progress-count" class="font-medium text-gray-600 dark:text-gray-300">Reconciliando linhas e estoque no banco de dados...</span>
-                <span id="import-progress-mini-stats" class="font-bold text-emerald-700 dark:text-emerald-400"><span class="inline-flex items-center gap-1"><i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-600"></i> Backup Ativo</span></span>
-            </div>
-        </div>
-        <div id="import-summary-wrapper" class="mt-2"></div>
-    `;
-
-    const progressBar = document.getElementById('import-progress-bar');
-    const percentEl = document.getElementById('import-progress-percent');
-    const stageEl = document.getElementById('import-progress-stage');
-    const countEl = document.getElementById('import-progress-count');
-    const summaryWrapper = document.getElementById('import-summary-wrapper');
-    const spinner = document.getElementById('import-progress-spinner');
-
-    let processingTimer = null;
-
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/import-planilha', true);
-    xhr.setRequestHeader('X-Client-ID', window.myClientId || '');
-
-    // 1. Progresso real de envio dos bytes do arquivo (0% até 45%)
-    xhr.upload.onprogress = function(evt) {
-        if (evt.lengthComputable) {
-            const uploadPct = Math.min(45, Math.round((evt.loaded / evt.total) * 45));
-            if (progressBar) progressBar.style.width = uploadPct + '%';
-            if (percentEl) percentEl.innerText = uploadPct + '%';
-            if (stageEl) stageEl.innerText = `Enviando e gravando backup: ${(evt.loaded / 1024).toFixed(0)} KB de ${(evt.total / 1024).toFixed(0)} KB...`;
-        }
-    };
-
-    // 2. Quando o upload conclui, inicia a animação do processamento no servidor (45% até 90%)
-    xhr.upload.onload = function() {
-        if (progressBar) progressBar.style.width = '50%';
-        if (percentEl) percentEl.innerText = '50%';
-        if (stageEl) stageEl.innerText = 'Backup gravado! Auditando linhas e conciliando com o estoque...';
-
-        let currentSimPct = 50;
-        processingTimer = setInterval(() => {
-            if (currentSimPct < 90) {
-                currentSimPct += 10;
-                if (progressBar) progressBar.style.width = currentSimPct + '%';
-                if (percentEl) percentEl.innerText = currentSimPct + '%';
-            }
-        }, 120);
-    };
-
-    // 3. Resposta recebida do servidor
-    xhr.onload = function() {
-        if (processingTimer) clearInterval(processingTimer);
-
-        if (loading) loading.classList.add('hidden');
-        if (btn) {
-            btn.disabled = false;
-            btn.classList.remove('opacity-60', 'cursor-not-allowed');
-        }
-
-        let data = null;
-        try {
-            data = JSON.parse(xhr.responseText);
-        } catch (e) {
-            // Em caso de retorno não-JSON
-            resultContainer.innerHTML = `
-                <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-2">
-                    <div class="font-bold flex items-center gap-1.5">
-                        <i data-lucide="x-circle" class="w-5 h-5 text-rose-600"></i>
-                        <span>Falha no servidor ao processar planilha (Status ${xhr.status}):</span>
-                    </div>
-                    <div class="text-xs bg-white dark:bg-gray-800 p-2.5 rounded border border-red-200 dark:border-red-900/60 text-gray-800 dark:text-gray-200">
-                        O servidor retornou uma resposta inesperada. Verifique se o formato do arquivo (.xlsx, .xls ou .csv) está íntegro.
-                    </div>
-                    <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
-                        Tentar Novamente
-                    </button>
-                </div>
-            `;
-            return;
-        }
-
-        // Se o servidor pedir confirmação / mapeamento manual de colunas
-        if (data && data.needs_mapping) {
-            renderColumnMappingInterface(data, file);
-            loadSpreadsheetHistory();
-            return;
-        }
-
-        // Se houve erro retornado em JSON
-        if (xhr.status !== 200 || !data || !data.success) {
-            const errorMsg = (data && data.error) ? data.error : `Erro HTTP ${xhr.status}`;
-            const downloadBtn = data && data.file_id ? `
-                <a href="/download-planilha/${data.file_id}" download class="text-xs bg-amber-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-amber-700 transition inline-flex items-center gap-1">
-                    <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar cópia salva do arquivo</span>
-                </a>
-            ` : '';
-
-            resultContainer.innerHTML = `
-                <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-3">
-                    <div class="font-bold flex items-center gap-1.5">
-                        <i data-lucide="x-circle" class="w-5 h-5 text-rose-600"></i>
-                        <span>Falha na importação da planilha:</span>
-                    </div>
-                    <div class="text-xs font-mono bg-white dark:bg-gray-800 p-2.5 rounded border border-red-200 dark:border-red-900/60 text-gray-800 dark:text-gray-200">${errorMsg}</div>
-                    <div class="text-xs text-gray-600 dark:text-gray-300 bg-amber-50 dark:bg-amber-950/40 p-2 rounded border border-amber-200 dark:border-amber-800">
-                        <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600 inline-block mr-1"></i> <b>Fique tranquilo:</b> sua planilha foi guardada com segurança em nosso servidor de backups. Você pode baixá-la ou tentar novamente a qualquer momento.
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2 pt-1">
-                        <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
-                            Tentar Novamente
-                        </button>
-                        ${downloadBtn}
-                    </div>
-                </div>
-            `;
-            loadSpreadsheetHistory();
-            return;
-        }
-
-        // Conclusão com sucesso total
-        const novosLotes = (data.stats && data.stats.novos_lotes !== undefined) ? data.stats.novos_lotes : 0;
-        const totalLinhas = (data.stats && data.stats.total_linhas !== undefined) ? data.stats.total_linhas : 0;
-        const inalterados = (data.stats && data.stats.inalterados !== undefined) ? data.stats.inalterados : 0;
-        const bloqueados = (data.stats && data.stats.bloqueados_zumbi !== undefined) ? data.stats.bloqueados_zumbi : 0;
-
-        if (progressBar) progressBar.style.width = '100%';
-        if (percentEl) percentEl.innerText = '100%';
-        if (spinner) { spinner.outerHTML = '<i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600 inline-block"></i>'; if (window.refreshIcons) window.refreshIcons(); }
-        if (stageEl) {
-            stageEl.innerHTML = `Auditoria concluída! <b class="text-emerald-700 dark:text-emerald-400">${novosLotes} novas remessas cadastradas</b> no Galpão (${totalLinhas} linhas processadas)`;
-        }
-        if (countEl) {
-            countEl.innerHTML = `<i data-lucide="package-plus" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> <b class="text-emerald-800 dark:text-emerald-300">${novosLotes} novas remessas adicionadas</b> • ${inalterados} inalteradas • ${bloqueados} zumbis bloqueados`;
-        }
-        const miniStats = document.getElementById('import-progress-mini-stats');
-        if (miniStats) {
-            miniStats.innerHTML = `<span class="inline-flex items-center gap-1 bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-extrabold"><i data-lucide="sparkles" class="w-3 h-3"></i> +${novosLotes} Novas Remessas</span>`; if (window.refreshIcons) window.refreshIcons(miniStats);
-        }
-
-        let backupLinkHtml = '';
-        if (data.file_id) {
-            backupLinkHtml = `
-                <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-lg shadow-2xs">
-                    <span class="flex items-center gap-1.5">
-                        <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i>
-                        <span>Cópia de segurança salva em disco: <b>${file.name}</b></span>
-                    </span>
-                    <a href="/download-planilha/${data.file_id}" download class="inline-flex items-center gap-1 font-bold underline hover:text-emerald-950 dark:hover:text-emerald-100">
-                        <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar Cópia Original</span>
-                    </a>
-                </div>
-            `;
-        }
-
-        if (summaryWrapper && data.html) {
-            summaryWrapper.innerHTML = data.html + backupLinkHtml;
-            if (window.htmx) htmx.process(summaryWrapper);
-        }
-
-        clientCache.clear();
-        performSearch(true);
-        if (fileInput) fileInput.value = '';
-        loadSpreadsheetHistory();
-    };
-
-    // 4. Erros de rede ou conexão
-    xhr.onerror = function() {
-        if (processingTimer) clearInterval(processingTimer);
-        if (loading) loading.classList.add('hidden');
-        if (btn) {
-            btn.disabled = false;
-            btn.classList.remove('opacity-60', 'cursor-not-allowed');
-        }
-        resultContainer.innerHTML = `
-            <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-2">
-                <div class="font-bold flex items-center gap-1.5">
-                    <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-600"></i>
-                    <span>Erro de conexão de rede durante o envio.</span>
-                </div>
-                <div class="text-xs text-red-600 dark:text-red-300">
-                    Não foi possível completar o envio para o servidor. Verifique sua conexão e tente novamente.
-                </div>
-                <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
-                    Tentar Novamente
-                </button>
-            </div>
-        `;
-    };
-
-    xhr.send(formData);
-}
-
-// ── Re-processamento de Planilha a partir da Cópia Salva no Servidor ─────────
-async function reprocessSavedSpreadsheet(fileId, filename, customMapping = null) {
-    const resultContainer = document.getElementById('import-result-container');
-    const loading = document.getElementById('import-loading');
-    const btn = document.getElementById('btn-import-submit');
-
-    currentSavedFileId = fileId;
-
-    if (loading) loading.classList.remove('hidden');
-    if (btn) {
-        btn.disabled = true;
-        btn.classList.add('opacity-60', 'cursor-not-allowed');
-    }
-
-    resultContainer.innerHTML = `
-        <div id="import-progress-card" class="mt-4 p-4 bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-3 shadow-sm transition-all duration-300">
-            <div class="flex items-center justify-between text-xs font-semibold">
-                <span class="text-gray-700 dark:text-gray-300 flex items-center gap-2 truncate max-w-[75%]">
-                    <i data-lucide="loader-2" id="import-progress-spinner" class="w-4 h-4 animate-spin text-emerald-600 dark:text-emerald-400 inline-block"></i>
-                    <span id="import-progress-stage" class="text-gray-800 dark:text-gray-200">Recuperando cópia salva e auditando ${filename}...</span>
-                </span>
-                <span id="import-progress-percent" class="text-emerald-700 dark:text-emerald-400 font-extrabold font-mono text-base tracking-tight">
-                    35%
-                </span>
-            </div>
-
-            <div class="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3.5 overflow-hidden shadow-inner p-0.5 border border-gray-200 dark:border-gray-600">
-                <div id="import-progress-bar"
-                     class="bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 h-full rounded-full transition-all duration-150 ease-out shadow-sm"
-                     style="width: 35%;">
-                </div>
-            </div>
-
-            <div class="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400 pt-0.5">
-                <span id="import-progress-count" class="font-medium text-gray-600 dark:text-gray-300">Reconciliando linhas a partir do backup em disco...</span>
-                <span id="import-progress-mini-stats" class="font-bold text-emerald-700 dark:text-emerald-400"><span class="inline-flex items-center gap-1"><i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-600"></i> Cópia Salva</span></span>
-            </div>
-        </div>
-        <div id="import-summary-wrapper" class="mt-2"></div>
-    `;
-
-    const progressBar = document.getElementById('import-progress-bar');
-    const percentEl = document.getElementById('import-progress-percent');
-    const stageEl = document.getElementById('import-progress-stage');
-    const countEl = document.getElementById('import-progress-count');
-    const summaryWrapper = document.getElementById('import-summary-wrapper');
-    const spinner = document.getElementById('import-progress-spinner');
-
-    const formData = new FormData();
-    if (customMapping) {
-        if (customMapping.col_prod) formData.append('col_prod', customMapping.col_prod);
-        if (customMapping.col_valid) formData.append('col_valid', customMapping.col_valid);
-        if (customMapping.col_code) formData.append('col_code', customMapping.col_code);
-        if (customMapping.col_quant) formData.append('col_quant', customMapping.col_quant);
-    }
-
-    try {
-        const resp = await fetch(`/reprocess-planilha/${fileId}`, {
-            method: 'POST',
-            body: formData,
-            headers: {
-                'X-Client-ID': window.myClientId || ''
-            }
-        });
-
-        const data = await resp.json();
-
-        if (loading) loading.classList.add('hidden');
-        if (btn) {
-            btn.disabled = false;
-            btn.classList.remove('opacity-60', 'cursor-not-allowed');
-        }
-
-        if (data.needs_mapping) {
-            renderColumnMappingInterface(data, { name: filename, fileId: fileId });
-            loadSpreadsheetHistory();
-            return;
-        }
-
-        if (!resp.ok || !data.success) {
-            throw new Error(data.error || `Erro HTTP ${resp.status}`);
-        }
-
-        const novosLotes = (data.stats && data.stats.novos_lotes !== undefined) ? data.stats.novos_lotes : 0;
-        const totalLinhas = (data.stats && data.stats.total_linhas !== undefined) ? data.stats.total_linhas : 0;
-        const inalterados = (data.stats && data.stats.inalterados !== undefined) ? data.stats.inalterados : 0;
-        const bloqueados = (data.stats && data.stats.bloqueados_zumbi !== undefined) ? data.stats.bloqueados_zumbi : 0;
-
-        if (progressBar) progressBar.style.width = '100%';
-        if (percentEl) percentEl.innerText = '100%';
-        if (spinner) { spinner.outerHTML = '<i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600 inline-block"></i>'; if (window.refreshIcons) window.refreshIcons(); }
-        if (stageEl) {
-            stageEl.innerHTML = `Re-processamento concluído! <b class="text-emerald-700 dark:text-emerald-400">${novosLotes} novas remessas cadastradas</b> no Galpão (${totalLinhas} linhas conciliadas)`;
-        }
-        if (countEl) {
-            countEl.innerHTML = `<i data-lucide="package-plus" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> <b class="text-emerald-800 dark:text-emerald-300">${novosLotes} novas remessas adicionadas</b> • ${inalterados} inalteradas • ${bloqueados} zumbis bloqueados`;
-        }
-        const miniStatsReproc = document.getElementById('import-progress-mini-stats');
-        if (miniStatsReproc) {
-            miniStatsReproc.innerHTML = `<span class="inline-flex items-center gap-1 bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-extrabold"><i data-lucide="sparkles" class="w-3 h-3"></i> +${novosLotes} Novas Remessas</span>`; if (window.refreshIcons) window.refreshIcons(miniStatsReproc);
-        }
-
-        const backupLinkHtml = `
-            <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-lg shadow-2xs">
-                <span class="flex items-center gap-1.5">
-                    <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i>
-                    <span>Origem da importação: Cópia de segurança <b>${filename}</b></span>
-                </span>
-                <a href="/download-planilha/${fileId}" download class="inline-flex items-center gap-1 font-bold underline hover:text-emerald-950 dark:hover:text-emerald-100">
-                    <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar Arquivo Original</span>
-                </a>
-            </div>
-        `;
-
-        if (summaryWrapper && data.html) {
-            summaryWrapper.innerHTML = data.html + backupLinkHtml;
-            if (window.htmx) htmx.process(summaryWrapper);
-        }
-
-        clientCache.clear();
-        performSearch(true);
-        loadSpreadsheetHistory();
-
-    } catch (err) {
-        if (loading) loading.classList.add('hidden');
-        if (btn) {
-            btn.disabled = false;
-            btn.classList.remove('opacity-60', 'cursor-not-allowed');
-        }
-
-        resultContainer.innerHTML = `
-            <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-3">
-                <div class="font-bold flex items-center gap-1.5">
-                    <i data-lucide="x-circle" class="w-5 h-5 text-rose-600"></i>
-                    <span>Falha ao re-processar cópia salva:</span>
-                </div>
-                <div class="text-xs font-mono bg-white dark:bg-gray-800 p-2.5 rounded border border-red-200 dark:border-red-900/60 text-gray-800 dark:text-gray-200">${err.message}</div>
-                <div class="flex items-center gap-2 pt-1">
-                    <button type="button" onclick="reprocessSavedSpreadsheet('${fileId}', '${filename}')" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
-                        Tentar Novamente
-                    </button>
-                    <a href="/download-planilha/${fileId}" download class="text-xs bg-amber-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-amber-700 transition">
-                        <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar Cópia</span>
-                    </a>
-                </div>
-            </div>
-        `;
-        loadSpreadsheetHistory();
-    }
-}
-
-// ── Gestão do Histórico de Planilhas Salvas ─────────────────────────────────
-async function toggleSpreadsheetHistory() {
-    const wrapper = document.getElementById('spreadsheet-history-wrapper');
-    const icon = document.getElementById('history-toggle-icon');
-    if (!wrapper) return;
-
-    if (wrapper.classList.contains('hidden')) {
-        wrapper.classList.remove('hidden');
-        if (icon) icon.innerText = '▲';
-        loadSpreadsheetHistory();
-    } else {
-        wrapper.classList.add('hidden');
-        if (icon) icon.innerText = '▼';
-    }
-}
-
-async function loadSpreadsheetHistory() {
-    const wrapper = document.getElementById('spreadsheet-history-wrapper');
-    if (!wrapper || wrapper.classList.contains('hidden')) return;
-
-    try {
-        const resp = await fetch('/planilhas-salvas?html=1');
-        if (resp.ok) {
-            wrapper.innerHTML = await resp.text();
-            if (window.htmx) htmx.process(wrapper);
-        }
-    } catch (e) {
-        console.error('Erro ao carregar histórico de planilhas:', e);
-    }
-}
-
-async function deleteSavedSpreadsheet(fileId) {
-    if (!confirm('Deseja excluir esta cópia de segurança salva do histórico?')) return;
-    const wrapper = document.getElementById('spreadsheet-history-wrapper');
-
-    try {
-        const resp = await fetch(`/planilhas-salvas/${fileId}/delete`, { method: 'POST' });
-        if (resp.ok && wrapper) {
-            wrapper.innerHTML = await resp.text();
-            if (window.htmx) htmx.process(wrapper);
-        }
-    } catch (e) {
-        console.error('Erro ao excluir planilha salva:', e);
-    }
-}
-
-// ── Autocomplete e Seleção do Catálogo no Cadastro de Lotes ──────────────────
-let addLotDebounceTimer = null;
-
-function onAddLotInput(el) {
-    if (!el) return;
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    el.value = el.value.toUpperCase();
-    if (start !== null && end !== null) {
-        try { el.setSelectionRange(start, end); } catch(e) {}
-    }
-    onAddLotSearch(el.value);
-}
-
-function onAddLotSearch(val) {
-    const q = val.trim().toUpperCase();
-    const dropdown = document.getElementById('dropdown-add-lot-results');
-    const badge = document.getElementById('badge-catalog-selected');
-    if (badge) badge.classList.add('hidden');
-
-    if (!q || q.length < 2) {
-        if (dropdown) dropdown.classList.add('hidden');
-        return;
-    }
-
-    clearTimeout(addLotDebounceTimer);
-    addLotDebounceTimer = setTimeout(async () => {
-        try {
-            const resp = await fetch(`/api/products/search?q=${encodeURIComponent(q)}`);
-            const items = await resp.json();
-            renderAddLotDropdown(items, q);
-
-            // Se for correspondência exata de código de barras ou nome, já auto-preenche o preço
-            const exact = items.find(it => (it.name && it.name.toUpperCase() === q.toUpperCase()) || (it.bar_code && it.bar_code === q));
-            if (exact && exact.price > 0) {
-                const priceInput = document.getElementById('input-add-lot-price');
-                if (priceInput && (!priceInput.value || parseFloat(priceInput.value) === 0)) {
-                    priceInput.value = parseFloat(exact.price).toFixed(2);
-                    const badge = document.getElementById('badge-catalog-selected');
-                    if (badge) badge.classList.remove('hidden');
-                }
-            }
-        } catch (e) {
-            console.error("Erro na busca de produtos:", e);
-        }
-    }, 100);
-}
-
-async function onAddLotBlur(input) {
-    setTimeout(async () => {
-        const q = (input.value || '').trim();
-        if (!q) return;
-        try {
-            const resp = await fetch(`/api/products/search?q=${encodeURIComponent(q)}`);
-            const items = await resp.json();
-            if (!items || items.length === 0) return;
-            const match = items.find(it => (it.name && it.name.toUpperCase() === q.toUpperCase()) || (it.bar_code && it.bar_code === q));
-            if (match) {
-                selectProductToAdd(match.name, match.price);
-            }
-        } catch (e) {
-            console.error("Erro ao puxar preço no blur:", e);
-        }
-    }, 200);
-}
-
-function renderAddLotDropdown(items, query) {
-    const dropdown = document.getElementById('dropdown-add-lot-results');
-    if (!dropdown) return;
-
-    if (!items || items.length === 0) {
-        dropdown.innerHTML = `
-            <div class="p-3 text-xs text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800">
-                Nenhum produto correspondente no catálogo.
-                <div class="mt-1 font-semibold text-emerald-700 dark:text-emerald-400">"<b>${query.toUpperCase()}</b>" será cadastrado como um produto novo.</div>
-            </div>
-        `;
-        dropdown.classList.remove('hidden');
-        return;
-    }
-
-    let html = `
-        <div class="p-2 bg-gray-50 dark:bg-gray-700/80 text-[11px] font-semibold text-gray-500 dark:text-gray-300 uppercase tracking-wider flex items-center justify-between border-b border-gray-100 dark:border-gray-700">
-            <span>Produtos no Catálogo (${items.length})</span>
-            <span class="text-emerald-700 dark:text-emerald-400">Clique para selecionar</span>
-        </div>
-    `;
-
-    items.forEach((item) => {
-        const codeText = item.bar_code ? `Cód: ${item.bar_code}` : `#${item.id}`;
-        const priceText = item.price > 0 ? `R$ ${parseFloat(item.price).toFixed(2)}` : '';
-        const escapedName = (item.name || '').replace(/'/g, "\\'");
-        html += `
-            <button type="button"
-                    onclick="selectProductToAdd('${escapedName}', ${item.price || 0})"
-                    class="w-full text-left px-3.5 py-2 hover:bg-emerald-50 dark:hover:bg-gray-700 active:bg-emerald-100 dark:active:bg-gray-600 transition flex items-center justify-between gap-2 border-b border-gray-100 dark:border-gray-700 last:border-b-0 cursor-pointer bg-white dark:bg-gray-800">
-                <span class="font-semibold text-xs sm:text-sm text-gray-800 dark:text-gray-100 uppercase truncate">${item.name}</span>
-                <div class="flex items-center gap-2 shrink-0">
-                    ${priceText ? `<span class="text-xs font-semibold text-emerald-600 dark:text-emerald-400">${priceText}</span>` : ''}
-                    <span class="text-[11px] font-mono text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded">${codeText}</span>
-                </div>
-            </button>
-        `;
-    });
-
-    dropdown.innerHTML = html;
-    dropdown.classList.remove('hidden');
-}
-
-function selectProductToAdd(name, price) {
-    const input = document.getElementById('input-add-lot-name');
-    const dropdown = document.getElementById('dropdown-add-lot-results');
-    const badge = document.getElementById('badge-catalog-selected');
-    const quantInput = document.getElementById('input-add-lot-quant');
-    const priceInput = document.getElementById('input-add-lot-price') || document.querySelector('input[name="price"]');
-
-    if (input) input.value = (name || '').toUpperCase();
-    if (dropdown) dropdown.classList.add('hidden');
-    if (badge) badge.classList.remove('hidden');
-
-    if (priceInput) {
-        priceInput.value = (price !== undefined && price !== null && parseFloat(price) > 0)
-            ? parseFloat(price).toFixed(2)
-            : '0.00';
-    }
-
-    if (quantInput) {
-        quantInput.focus();
-        quantInput.select();
-    }
-}
-
-function clearAddLotSelection() {
-    const dropdown = document.getElementById('dropdown-add-lot-results');
-    const badge = document.getElementById('badge-catalog-selected');
-    if (dropdown) dropdown.classList.add('hidden');
-    if (badge) badge.classList.add('hidden');
-}
-
-function onAddLotBeforeRequest(evt) {
-    const ni = document.getElementById('input-add-lot-name');
-    if (ni) ni.value = ni.value.trim().toUpperCase();
-}
-
-function onAddLotAfterRequest(evt) {
-    const msgDiv = document.getElementById('form-add-msg');
-    if (evt.detail && evt.detail.successful) {
-        // 1. Limpa todos os inputs do formulário
-        const form = document.getElementById('form-add-lot');
-        if (form) form.reset();
-        clearAddLotSelection();
-
-        const nameInput = document.getElementById('input-add-lot-name');
-        if (nameInput) {
-            nameInput.value = '';
-            nameInput.focus();
-        }
-        const quantInput = document.getElementById('input-add-lot-quant');
-        if (quantInput) quantInput.value = '0';
-        const priceInput = document.getElementById('input-add-lot-price');
-        if (priceInput) priceInput.value = '0.00';
-        const dateInput = document.getElementById('input-add-lot-date');
-        if (dateInput) dateInput.value = '';
-
-        // 2. Exibe confirmação visual de sucesso destacada
-        if (msgDiv) {
-            msgDiv.innerHTML = '<span class="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300 text-xs sm:text-sm font-semibold bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-700 px-3 py-1.5 rounded-lg shadow-xs"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i> Lote cadastrado com sucesso!</span>';
-            if (window.refreshIcons) window.refreshIcons();
-            setTimeout(() => {
-                if (msgDiv) msgDiv.innerHTML = '';
-            }, 5000);
-        }
-    } else {
-        const errorText = (evt.detail && evt.detail.xhr && evt.detail.xhr.responseText) ? evt.detail.xhr.responseText : 'Erro ao cadastrar lote.';
-        if (msgDiv) {
-            msgDiv.innerHTML = `<span class="inline-flex items-center gap-1.5 text-rose-700 dark:text-rose-300 text-xs sm:text-sm font-semibold bg-rose-50 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-700 px-3 py-1.5 rounded-lg shadow-xs"><i data-lucide="alert-circle" class="w-4 h-4 text-rose-500"></i> ${errorText}</span>`;
-            if (window.refreshIcons) window.refreshIcons();
-            setTimeout(() => {
-                if (msgDiv) msgDiv.innerHTML = '';
-            }, 6000);
-        }
-    }
-}
-
-// Fecha o dropdown se clicar fora
-document.addEventListener('click', function(e) {
-    const dropdown = document.getElementById('dropdown-add-lot-results');
-    const input = document.getElementById('input-add-lot-name');
-    if (dropdown && !dropdown.contains(e.target) && e.target !== input) {
-        dropdown.classList.add('hidden');
-    }
-});
-
-// Inicializa WebSocket e Carrossel de Filtros
-function bootstrapApp() {
-    initWebSocket();
-    initFilterDragScroll();
-    setTimeout(() => {
-        const currentFiltro = document.getElementById('current-filtro')?.value || 'todos';
-        const activeBtn = document.querySelector(`.filter-btn[data-filtro="${currentFiltro}"]`);
-        if (activeBtn) {
-            activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-        }
-        updateFilterScrollButtons();
-    }, 120);
-}
-
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bootstrapApp);
-} else {
-    bootstrapApp();
-}
-
-document.addEventListener('htmx:afterSwap', function() {
-    initFilterDragScroll();
-    updateFilterScrollButtons();
-});
-</script>
-
-{% endblock %}
+{% extends "base.html" %}
+
+{% block content %}
+
+<!-- Central de Operações & Filtros Unificada (Desktop, Tablet e Mobile) -->
+<div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xs border border-gray-200/80 dark:border-gray-700/80 p-3 sm:p-4 mb-4 transition-colors">
+
+    <!-- Inputs globais de estado mantidos sincronizados -->
+    <input type="hidden" id="current-filtro" name="filtro" value="{{ filtro }}">
+
+    <!-- Linha 1: Barra de Busca + Botões de Ação Principais -->
+    <div class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 pb-3 border-b border-gray-100 dark:border-gray-700/60">
+        
+        <!-- Busca Instantânea -->
+        <form class="flex-1 min-w-0"
+              id="search-form"
+              hx-get="/"
+              hx-target="#lot-table-body"
+              hx-push-url="true"
+              hx-include="#current-filtro, #current-busca"
+              onsubmit="event.preventDefault(); submitSearch();">
+            <div class="relative flex items-center">
+                <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-gray-400 dark:text-gray-400">
+                    <i data-lucide="search" class="w-4 h-4"></i>
+                </span>
+                <input type="text"
+                       id="current-busca"
+                       name="busca"
+                       value="{{ busca }}"
+                       autocomplete="off"
+                       oninput="onSearchInput(this.value)"
+                       placeholder="Buscar produto pelo nome (busca instantânea via LIKE)..."
+                       class="w-full pl-10 pr-24 border border-gray-300 dark:border-gray-600 rounded-xl py-2 text-sm dark:bg-gray-700/70 dark:text-white dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner">
+                
+                <div class="absolute inset-y-0 right-0 flex items-center pr-2 gap-1.5">
+                    <button type="button"
+                            id="clear-search-btn"
+                            onclick="clearSearch()"
+                            class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 {% if not busca %}hidden{% endif %} text-xs px-2 py-1 rounded font-bold cursor-pointer"
+                            title="Limpar busca">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                    <button type="submit"
+                            class="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white px-3 py-1 rounded-lg text-xs font-semibold transition shadow-xs cursor-pointer">
+                        Buscar
+                    </button>
+                </div>
+            </div>
+        </form>
+
+        <!-- Barra de Ações Rápidas do Workspace -->
+        <div class="flex items-center justify-between md:justify-end gap-2 shrink-0">
+            <!-- Botão Cadastrar Lote (Abre/Fecha formulário inline) -->
+            <button type="button"
+                    id="btn-toggle-add-lot"
+                    onclick="toggleAddLotForm()"
+                    class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-xs transition cursor-pointer"
+                    title="Cadastrar novo lote de produto">
+                <i data-lucide="plus-circle" id="icon-add-toggle" class="w-4 h-4 transition-transform duration-200"></i>
+                <span>Novo Lote</span>
+            </button>
+
+            <!-- Botão Importar Planilha -->
+            <button type="button"
+                    onclick="document.getElementById('panel-import-planilha').classList.toggle('hidden');"
+                    class="inline-flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 text-xs font-semibold px-3 py-2 rounded-xl transition cursor-pointer"
+                    title="Conciliar estoque com planilha Excel da retaguarda">
+                <i data-lucide="file-spreadsheet" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i>
+                <span class="hidden sm:inline">Importar</span> Planilha
+            </button>
+
+            <!-- Seletor Segmentado: Lista vs Cards -->
+            <div class="inline-flex items-center bg-gray-100 dark:bg-gray-700/80 p-0.5 rounded-xl border border-gray-200 dark:border-gray-600 text-xs shadow-inner select-none" role="group" aria-label="Visualização de lotes">
+                <button type="button"
+                        id="btn-view-table"
+                        onclick="setLotViewMode('table', true)"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer"
+                        title="Modo Lista (Tabela)">
+                    <i data-lucide="table" class="w-3.5 h-3.5"></i>
+                    <span class="font-bold text-xs">Lista</span>
+                </button>
+                <button type="button"
+                        id="btn-view-cards"
+                        onclick="setLotViewMode('cards', true)"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer"
+                        title="Modo Cards">
+                    <i data-lucide="layout-grid" class="w-3.5 h-3.5"></i>
+                    <span class="font-bold text-xs">Cards</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Formulário inline expansível de Cadastro de Lote -->
+    <form id="form-add-lot"
+          hx-post="/lote"
+          hx-target="#lot-table-body"
+          hx-include="#current-filtro, #current-busca"
+          hx-on::before-request="onAddLotBeforeRequest(event)"
+          hx-on::after-request="onAddLotAfterRequest(event)"
+          class="hidden my-3 p-3.5 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/60 transition-all">
+        
+        <div class="flex items-center justify-between mb-2.5">
+            <div class="flex items-center gap-2">
+                <span class="text-xs font-bold text-emerald-900 dark:text-emerald-200 uppercase tracking-wide inline-flex items-center gap-1">
+                    <i data-lucide="sparkles" class="w-3.5 h-3.5 text-emerald-600"></i> Cadastro Rápido de Lote
+                </span>
+                <span id="badge-catalog-selected" class="hidden text-[10px] bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 px-1.5 py-0.5 rounded font-medium">
+                    <span class="inline-flex items-center gap-0.5"><i data-lucide="check" class="w-3 h-3"></i> Catálogo</span>
+                </span>
+            </div>
+            <button type="button" onclick="toggleAddLotForm(false)" class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer">
+                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+            </button>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+            <div class="md:col-span-2 relative">
+                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Nome do Produto *</label>
+                <div class="relative">
+                    <input type="text"
+                           id="input-add-lot-name"
+                           name="name"
+                           required
+                           autocomplete="off"
+                           placeholder="Digite para buscar ou cadastrar..."
+                           oninput="onAddLotInput(this)"
+                           onblur="onAddLotBlur(this)"
+                           class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm uppercase dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+                </div>
+                <div id="dropdown-add-lot-results"
+                     class="hidden absolute left-0 right-0 z-50 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl max-h-56 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 text-left">
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Quantidade *</label>
+                <input type="number" id="input-add-lot-quant" name="quant" value="0" min="0" required
+                       class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Preço (R$)</label>
+                <input type="number" step="0.01" id="input-add-lot-price" name="price" value="0.00" min="0"
+                       class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Validade *</label>
+                <input type="date" id="input-add-lot-date" name="date_valid" required
+                       class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-emerald-400 focus:outline-none">
+            </div>
+        </div>
+
+        <div class="flex items-center justify-between mt-3">
+            <div id="form-add-msg"></div>
+            <button type="submit"
+                    id="btn-save-lot"
+                    class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs sm:text-sm font-semibold px-4 py-1.5 rounded-lg shadow-sm transition cursor-pointer">
+                <span class="inline-flex items-center gap-1.5"><i data-lucide="check" class="w-4 h-4"></i> Salvar Lote</span>
+            </button>
+        </div>
+    </form>
+
+    <!-- Linha 2: Carrossel de Categorias / Filtros -->
+    <div class="relative group/filters w-full pt-3">
+        <button type="button"
+                id="btn-scroll-left"
+                onclick="scrollFilters('left')"
+                class="hidden sm:flex absolute left-0 top-1/2 -translate-y-1/2 -ml-2.5 z-10 w-7 h-7 items-center justify-center rounded-full bg-white dark:bg-gray-700 shadow-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:scale-110 active:scale-95 transition opacity-0 group-hover/filters:opacity-90 hover:opacity-100 cursor-pointer !hidden"
+                title="Rolar para a esquerda"
+                aria-label="Rolar filtros para a esquerda">
+            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+        </button>
+
+        {% include "partials/filter_buttons.html" %}
+
+        <button type="button"
+                id="btn-scroll-right"
+                onclick="scrollFilters('right')"
+                class="hidden sm:flex absolute right-0 top-1/2 -translate-y-1/2 -mr-2.5 z-10 w-7 h-7 items-center justify-center rounded-full bg-white dark:bg-gray-700 shadow-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:scale-110 active:scale-95 transition opacity-0 group-hover/filters:opacity-90 hover:opacity-100 cursor-pointer !hidden"
+                title="Rolar para a direita"
+                aria-label="Rolar filtros para a direita">
+            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+        </button>
+    </div>
+
+    <!-- Linha 3: Barra de Status Integrada e Contador -->
+    <div class="flex flex-wrap items-center justify-between gap-2.5 pt-3 mt-3 border-t border-gray-100 dark:border-gray-700/60 text-xs">
+        <div class="flex flex-wrap items-center gap-2">
+            <span class="text-gray-600 dark:text-gray-300 font-medium">
+                <span id="lots-count" class="font-bold text-gray-800 dark:text-gray-100">{{ total }}</span> lote(s) encontrado(s)
+            </span>
+            <span class="text-gray-300 dark:text-gray-600">&bull;</span>
+            <span id="db-badge" class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold {% if is_postgres %}bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-800{% else %}bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-800{% endif %}"
+                  title="Banco de dados em uso">
+                <i data-lucide="database" class="w-3 h-3 inline-block mr-1"></i> <span id="db-label">{{ db_name }}</span>
+            </span>
+            <span id="ws-badge" onclick="initWebSocket(true)" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border dark:border-amber-800 cursor-pointer select-none" title="Status da conexão WebSocket (clique para testar/reconectar)">
+                <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                WebSocket Conectando...
+            </span>
+            <button type="button"
+                    id="btn-pull-db"
+                    onclick="triggerPullConnection()"
+                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 transition border border-gray-200 dark:border-gray-600 shadow-2xs cursor-pointer"
+                    title="Puxar dados do PostgreSQL para o SQLite local e testar ligação">
+                <i data-lucide="loader-2" id="pull-spinner" class="hidden w-3 h-3 animate-spin"></i>
+                <i data-lucide="refresh-cw" id="pull-icon" class="w-3 h-3"></i>
+                <span id="pull-text">Puxar Conexão</span>
+            </button>
+        </div>
+
+        <div id="btn-purge-deleted-wrapper" class="{% if filtro != 'deletados' %}hidden{% endif %}">
+            <button type="button"
+                    onclick="purgeAllDeleted()"
+                    class="inline-flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-semibold px-2.5 py-1 rounded-lg shadow-xs transition cursor-pointer"
+                    title="Excluir permanentemente todos os registros de auditoria">
+                <i data-lucide="trash-2" class="w-3 h-3"></i> <span>Limpar Todos os Deletados</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Painel Colapsável de Importação de Planilha com Auditoria Linha por Linha -->
+<div id="panel-import-planilha" class="hidden mb-4 bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-800 rounded-xl shadow-sm p-4 transition-colors">
+    <div class="flex items-center justify-between pb-2 mb-3 border-b border-gray-100 dark:border-gray-700">
+        <div class="flex items-center gap-2">
+            <span class="text-sm font-bold text-gray-800 dark:text-gray-100 inline-flex items-center gap-1.5"><i data-lucide="file-spreadsheet" class="w-4 h-4 text-emerald-600"></i> Conciliação e Importação de Planilha</span>
+            <span class="text-[11px] bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 px-2.5 py-0.5 rounded-full font-semibold border dark:border-emerald-800">Auditor Linha por Linha</span>
+        </div>
+        <button type="button" onclick="document.getElementById('panel-import-planilha').classList.add('hidden');" class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 font-bold p-1 cursor-pointer">
+            <span class="inline-flex items-center gap-1"><i data-lucide="x" class="w-3.5 h-3.5"></i> Fechar</span>
+        </button>
+    </div>
+
+    <div class="text-xs text-gray-600 dark:text-gray-300 mb-3 space-y-1 bg-gray-50 dark:bg-gray-700/60 p-2.5 rounded-lg border border-gray-200 dark:border-gray-600">
+        <div class="font-semibold text-gray-700 dark:text-gray-200 mb-1">Regras automáticas aplicadas ao importar:</div>
+        <div><i data-lucide="shield-alert" class="w-3.5 h-3.5 inline-block text-emerald-600 dark:text-emerald-400 mr-1"></i> <b>1. Filtro de Lápide:</b> se o lote já foi baixado no chão da loja hoje, a linha é descartada (evita o item zumbi).</div>
+        <div><i data-lucide="package-plus" class="w-3.5 h-3.5 inline-block text-emerald-600 dark:text-emerald-400 mr-1"></i> <b>2. Remessa Nova:</b> se o lote não existe no banco, é criado direto no <b>GALPÃO</b> (deixando os mais velhos intocados na LOJA).</div>
+        <div><i data-lucide="scale" class="w-3.5 h-3.5 inline-block text-emerald-600 dark:text-emerald-400 mr-1"></i> <b>3. Divergência Delta:</b> se a planilha tiver excedente em relação à loja, lança apenas a diferença como reforço no <b>GALPÃO</b>.</div>
+    </div>
+
+    <form id="form-import-planilha"
+          onsubmit="event.preventDefault(); submitImportPlanilha(event); return false;"
+          action="javascript:void(0);"
+          class="flex flex-col sm:flex-row items-center gap-3">
+        
+        <input type="file"
+               id="input-spreadsheet-file"
+               name="file"
+               accept=".xlsx,.xls,.csv,.xml,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/xml,*/*"
+               required
+               onchange="if (this.files && this.files.length) currentSpreadsheetFile = this.files[0];"
+               class="text-xs text-gray-700 dark:text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer">
+        
+        <div class="flex items-center gap-2">
+            <button type="button"
+                    onclick="submitImportPlanilha(event)"
+                    id="btn-import-submit"
+                    class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition inline-flex items-center gap-2 cursor-pointer">
+                <span class="inline-flex items-center gap-1.5"><i data-lucide="play" class="w-3.5 h-3.5"></i> Processar e Conciliar</span>
+            </button>
+            <span id="import-loading" class="hidden text-xs text-emerald-600 dark:text-emerald-400 font-semibold animate-pulse">
+                <span class="inline-flex items-center gap-1.5"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Enviando e auditando linhas...</span>
+            </span>
+        </div>
+    </form>
+
+    <!-- Container do Resultado da Auditoria -->
+    <div id="import-result-container"></div>
+
+    <!-- Seção de Histórico e Backup de Planilhas Salvas -->
+    <div class="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700">
+        <div class="flex items-center justify-between">
+            <button type="button"
+                    onclick="toggleSpreadsheetHistory()"
+                    class="text-xs font-bold text-gray-700 dark:text-gray-300 hover:text-emerald-700 dark:hover:text-emerald-400 inline-flex items-center gap-1.5 transition cursor-pointer">
+                <span class="inline-flex items-center gap-1.5"><i data-lucide="folder" class="w-3.5 h-3.5 text-emerald-600"></i> Planilhas Salvas & Cópias de Segurança</span>
+                <span id="history-toggle-icon" class="text-[10px]">▼</span>
+            </button>
+            <span class="text-[11px] text-gray-400 dark:text-gray-400 hidden sm:inline">Guarda cópia automática de todo arquivo enviado para recuperação</span>
+        </div>
+        <div id="spreadsheet-history-wrapper" class="hidden mt-2"></div>
+    </div>
+</div>
+
+<!-- Painel de Métricas / Resumo Consolidado do Estoque (Aba Total) -->
+<div id="total-summary-panel" class="{% if filtro not in ('todos', 'total') %}hidden{% endif %} mb-4 grid grid-cols-2 {% if is_admin or current_user_role in ('admin', 'gerente') %}lg:grid-cols-4{% else %}lg:grid-cols-3{% endif %} gap-2.5 sm:gap-3 transition-all duration-200">
+    <div class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-indigo-100 dark:border-indigo-950/60 shadow-xs flex items-center gap-3">
+        <div class="p-2 sm:p-2.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 shrink-0">
+            <i data-lucide="boxes" class="w-5 h-5"></i>
+        </div>
+        <div class="min-w-0">
+            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Total de Lotes</span>
+            <span id="summary-total-lots" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_lots_count or total or 0 }}</span>
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-emerald-100 dark:border-emerald-950/60 shadow-xs flex items-center gap-3">
+        <div class="p-2 sm:p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 shrink-0">
+            <i data-lucide="package-check" class="w-5 h-5"></i>
+        </div>
+        <div class="min-w-0">
+            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Unidades em Estoque</span>
+            <span id="summary-total-units" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_units_count or 0 }}</span>
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-blue-100 dark:border-blue-950/60 shadow-xs flex items-center gap-3">
+        <div class="p-2 sm:p-2.5 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 shrink-0">
+            <i data-lucide="layers" class="w-5 h-5"></i>
+        </div>
+        <div class="min-w-0">
+            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Produtos Distintos</span>
+            <span id="summary-total-products" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_products_count or 0 }}</span>
+        </div>
+    </div>
+
+    {% if is_admin or current_user_role in ('admin', 'gerente') %}
+    <div id="summary-card-valor" class="bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-amber-100 dark:border-amber-950/60 shadow-xs flex items-center gap-3">
+        <div class="p-2 sm:p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 shrink-0">
+            <i data-lucide="circle-dollar-sign" class="w-5 h-5"></i>
+        </div>
+        <div class="min-w-0">
+            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Valor Estimado</span>
+            <span class="text-xs sm:text-sm font-semibold text-gray-500 dark:text-gray-400 mr-0.5">R$</span>
+            <span id="summary-total-value" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">{{ total_value_formatted or '0,00' }}</span>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Container de Exibição de Lotes (Lista ou Cards conforme preferência do usuário) -->
+<div id="lot-display-container" class="view-mode-table transition-all duration-200">
+    <table class="w-full text-left text-sm">
+        <thead class="bg-gray-50 dark:bg-gray-700/80 text-gray-600 dark:text-gray-300 uppercase text-xs tracking-wider border-b border-gray-200 dark:border-gray-700">
+            <tr>
+                <th class="px-3 py-3">Lote</th>
+                <th class="px-3 py-3">Produto</th>
+                <th class="px-3 py-3">Qtd</th>
+                <th class="px-3 py-3">Preço</th>
+                <th class="px-3 py-3">Validade</th>
+                <th class="px-3 py-3">Local</th>
+                <th class="px-3 py-3">Status</th>
+                <th class="px-3 py-3 text-center">Ação</th>
+            </tr>
+        </thead>
+        <tbody id="lot-table-body">
+            {% include "partials/lot_rows.html" %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Lógica Client-side de WebSocket e Busca Ultrarrápida -->
+<script>
+window.myClientId = 'c_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+
+window.toggleAddLotForm = function(forceOpen) {
+    const form = document.getElementById('form-add-lot');
+    const icon = document.getElementById('icon-add-toggle');
+    if (!form) return;
+    const isHidden = form.classList.contains('hidden');
+    const shouldOpen = (forceOpen !== undefined) ? forceOpen : isHidden;
+    if (shouldOpen) {
+        form.classList.remove('hidden');
+        if (icon) icon.classList.add('rotate-180');
+        const inputName = document.getElementById('input-add-lot-name');
+        if (inputName) {
+            inputName.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            setTimeout(() => inputName.focus(), 200);
+        }
+    } else {
+        form.classList.add('hidden');
+        if (icon) icon.classList.remove('rotate-180');
+    }
+    if (window.refreshIcons) window.refreshIcons(form);
+};
+window.toggleMobileAddLot = window.toggleAddLotForm;
+
+window.focusMobileSearch = function() {
+    const searchInput = document.getElementById('current-busca');
+    if (searchInput) {
+        searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => searchInput.focus(), 300);
+    }
+};
+
+// Anexa o identificador do cliente a todas as requisições HTMX para evitar recarregamento redundante da própria tela
+document.addEventListener('htmx:configRequest', function(evt) {
+    if (evt && evt.detail && evt.detail.headers) {
+        evt.detail.headers['X-Client-ID'] = window.myClientId;
+    }
+});
+
+// Atualiza o contador de lotes instantaneamente ao deletar uma linha no DOM
+document.addEventListener('htmx:afterRequest', function(evt) {
+    if (evt.detail && evt.detail.successful && evt.detail.requestConfig && evt.detail.requestConfig.verb === 'delete') {
+        const countEl = document.getElementById('lots-count');
+        if (countEl) {
+            const current = parseInt(countEl.innerText);
+            if (!isNaN(current) && current > 0) {
+                countEl.innerText = current - 1;
+            }
+        }
+    }
+});
+
+let socket = null;
+let searchDebounceTimer = null;
+let reloadDebounceTimer = null;
+let currentSearchSeq = 0;
+const clientCache = new Map();
+
+let wsReconnectAttempts = 0;
+let wsReconnectTimer = null;
+let wsHeartbeatTimer = null;
+let wsLastPongTime = Date.now();
+let wsConnectStartTime = 0;
+
+// Sincronização instantânea (< 1ms) entre abas do mesmo navegador via BroadcastChannel
+let syncChannel = null;
+try {
+    syncChannel = new BroadcastChannel('datelimit_channel');
+    syncChannel.onmessage = (event) => {
+        const msg = event.data;
+        if (!msg) return;
+        if (msg.type === 'mutation') {
+            clientCache.clear();
+            if (!window.isEditingLot) {
+                performSearch(true);
+            }
+        }
+    };
+} catch (_) {}
+
+function notifyCrossTabMutation(action, details = {}) {
+    clientCache.clear();
+    if (syncChannel) {
+        try {
+            syncChannel.postMessage({ type: 'mutation', action: action, sender: window.myClientId, ...details });
+        } catch (_) {}
+    }
+}
+
+document.addEventListener('htmx:afterRequest', (evt) => {
+    if (evt.detail && evt.detail.successful) {
+        const verb = (evt.detail.requestConfig?.verb || '').toUpperCase();
+        if (['DELETE', 'POST', 'PUT', 'PATCH'].includes(verb)) {
+            notifyCrossTabMutation('htmx_mutation');
+        }
+    }
+});
+
+function updateWsBadge(status) {
+    const badge = document.getElementById('ws-badge');
+    if (!badge) return;
+    if (status === 'connected') {
+        badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border dark:border-emerald-800 cursor-pointer select-none";
+        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span> <i data-lucide="zap" class="w-3.5 h-3.5 text-emerald-600"></i> <span>WebSocket Ativo</span>'; if (window.refreshIcons) window.refreshIcons(badge);
+        badge.title = 'Conectado em tempo real. Clique para testar ou forçar reconexão.';
+    } else if (status === 'connecting') {
+        badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border dark:border-amber-800 cursor-pointer select-none";
+        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span> <i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin text-amber-600"></i> <span>Reconectando...</span>'; if (window.refreshIcons) window.refreshIcons(badge);
+        badge.title = 'Reconectando ao servidor em segundo plano...';
+    } else {
+        badge.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border dark:border-rose-800 cursor-pointer select-none";
+        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-500"></span> <i data-lucide="wifi-off" class="w-3.5 h-3.5 text-rose-600"></i> <span>Desconectado</span>'; if (window.refreshIcons) window.refreshIcons(badge);
+        badge.title = 'Clique para reconectar agora.';
+    }
+}
+
+function initWebSocket(force = false) {
+    // Se já estiver conectado e não for forçado, não faz nada
+    if (!force && socket && socket.readyState === WebSocket.OPEN) {
+        return;
+    }
+    // Se já estiver conectando, não abre conexões concorrentes
+    if (!force && socket && socket.readyState === WebSocket.CONNECTING) {
+        return;
+    }
+    // Se for forçado mas já está conectando há menos de 1500ms, preserva a conexão em andamento
+    if (force && socket && socket.readyState === WebSocket.CONNECTING && (Date.now() - wsConnectStartTime < 1500)) {
+        return;
+    }
+
+    // Cancela timers pendentes
+    if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = null;
+    }
+
+    // Fecha socket anterior de forma limpa para eliminar vazamento ou reconexões em cascata
+    if (socket) {
+        socket.onopen = null;
+        socket.onclose = null;
+        socket.onerror = null;
+        socket.onmessage = null;
+        try { socket.close(); } catch (_) {}
+        socket = null;
+    }
+
+    updateWsBadge('connecting');
+    wsConnectStartTime = Date.now();
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+    try {
+        socket = new WebSocket(wsUrl);
+    } catch (e) {
+        scheduleWsReconnect();
+        return;
+    }
+
+    wsLastPongTime = Date.now();
+
+    socket.onopen = function() {
+        wsReconnectAttempts = 0;
+        wsLastPongTime = Date.now();
+        updateWsBadge('connected');
+
+        try {
+            socket.send(JSON.stringify({ action: "register", clientId: window.myClientId }));
+        } catch (_) {}
+
+        // Inicia Watchdog + Heartbeat agressivo de 6s para evitar timeout de roteador/4G
+        startWsWatchdog();
+
+        // Pré-aquece abas no cache
+        prewarmClientFilters();
+    };
+
+    socket.onclose = function() {
+        stopWsWatchdog();
+        scheduleWsReconnect();
+    };
+
+    socket.onerror = function() {
+        try { if (socket) socket.close(); } catch (_) {}
+    };
+
+    socket.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'pong') {
+                wsLastPongTime = Date.now();
+                return;
+            }
+
+            if (data.type === 'invalidate_cache') {
+                clientCache.clear();
+                return;
+            }
+
+            if (data.type === 'lots_update') {
+                const cacheKey = `${data.filtro || 'todos'}|${(data.busca || '').trim().toUpperCase()}`;
+                clientCache.set(cacheKey, { html: data.html, total: data.total });
+
+                if (data.prewarm) return;
+                if (data.seq !== undefined && data.seq < currentSearchSeq) return;
+                if (window.isEditingLot) return;
+
+                if (data.summary) {
+                    updateSummaryUI(data.summary);
+                }
+                renderLotsData(data.html, data.total);
+
+            } else if (data.type === 'reload') {
+                clientCache.clear();
+                if (data.sender && data.sender === window.myClientId) {
+                    return;
+                }
+                clearTimeout(reloadDebounceTimer);
+                reloadDebounceTimer = setTimeout(() => {
+                    if (!window.isEditingLot) {
+                        performSearch(true);
+                    }
+                    fetch('/api/inventory/summary').then(r => r.json()).then(updateSummaryUI).catch(() => {});
+                    fetch('/api/connection/status').then(r => r.json()).then(st => {
+                        const dbBadge = document.getElementById('db-badge');
+                        const dbLabel = document.getElementById('db-label');
+                        if (dbBadge && dbLabel) {
+                            if (st.postgres_online) {
+                                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-800";
+                                dbLabel.innerText = "PostgreSQL";
+                            } else {
+                                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-800";
+                                dbLabel.innerText = "SQLite (Cópia Local)";
+                            }
+                        }
+                    }).catch(() => {});
+                }, 120);
+            }
+        } catch (e) {
+            console.error("Erro no processamento do WebSocket:", e);
+        }
+    };
+}
+
+function startWsWatchdog() {
+    stopWsWatchdog();
+    wsHeartbeatTimer = setInterval(() => {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+            scheduleWsReconnect();
+            return;
+        }
+
+        // Se passaram mais de 16s sem nenhum pong do servidor, detecta conexão zumbi/congelada pelo SO
+        if (Date.now() - wsLastPongTime > 16000) {
+            console.warn("WebSocket watchdog: sem pong há mais de 16s. Reconectando instantaneamente...");
+            initWebSocket(true);
+            return;
+        }
+
+        try {
+            socket.send(JSON.stringify({ action: "ping" }));
+        } catch (_) {
+            initWebSocket(true);
+        }
+    }, 6000); // 6 segundos de intervalo (mantém NAT de celular e Wi-Fi permanentemente vivos)
+}
+
+function stopWsWatchdog() {
+    if (wsHeartbeatTimer) {
+        clearInterval(wsHeartbeatTimer);
+        wsHeartbeatTimer = null;
+    }
+}
+
+function scheduleWsReconnect() {
+    updateWsBadge('connecting');
+    if (wsReconnectTimer) return;
+
+    wsReconnectAttempts++;
+    // Reconexão ultra ágil: 200ms na primeira tentativa até max 2.5s
+    const delay = Math.min(200 * Math.pow(1.3, Math.min(wsReconnectAttempts, 6)), 2500) + (Math.random() * 80);
+
+    wsReconnectTimer = setTimeout(() => {
+        wsReconnectTimer = null;
+        initWebSocket(true);
+    }, delay);
+}
+
+// ── Recuperação Instantânea ao Desbloquear Celular / Trocar de Aba / Reatar Conexão ──
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        // Ao retornar para a aba ou desbloquear a tela do celular, limpa cache e revalida imediatamente
+        clientCache.clear();
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+            initWebSocket(true);
+        } else {
+            wsLastPongTime = Date.now();
+            try {
+                socket.send(JSON.stringify({ action: "ping" }));
+            } catch (_) {
+                initWebSocket(true);
+            }
+        }
+        if (!window.isEditingLot) {
+            performSearch(true);
+        }
+    }
+});
+
+window.addEventListener('online', () => {
+    initWebSocket(true);
+});
+
+window.addEventListener('focus', () => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        initWebSocket(true);
+    }
+});
+
+
+function updateSummaryUI(summary) {
+    if (!summary) return;
+    const badgeTotal = document.getElementById('badge-total-lots');
+    if (badgeTotal && summary.total_lots !== undefined) {
+        badgeTotal.innerText = summary.total_lots;
+    }
+    const sumLots = document.getElementById('summary-total-lots');
+    if (sumLots && summary.total_lots !== undefined) {
+        sumLots.innerText = summary.total_lots;
+    }
+    const sumUnits = document.getElementById('summary-total-units');
+    if (sumUnits && summary.total_units !== undefined) {
+        sumUnits.innerText = summary.total_units;
+    }
+    const sumProducts = document.getElementById('summary-total-products');
+    if (sumProducts && summary.total_products !== undefined) {
+        sumProducts.innerText = summary.total_products;
+    }
+    const sumValue = document.getElementById('summary-total-value');
+    if (sumValue && summary.total_value !== undefined) {
+        const val = Number(summary.total_value) || 0;
+        sumValue.innerText = val.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+}
+
+function renderLotsData(html, total) {
+    const tbody = document.getElementById('lot-table-body');
+    if (tbody) {
+        tbody.innerHTML = html;
+        htmx.process(tbody);
+        if (window.refreshIcons) window.refreshIcons(tbody);
+    }
+    const countEl = document.getElementById('lots-count');
+    if (countEl && total !== undefined) {
+        countEl.innerText = total;
+    }
+}
+
+function performSearch(forceServer = false) {
+    const busca = document.getElementById('current-busca').value;
+    const filtro = document.getElementById('current-filtro').value;
+    const cacheKey = `${filtro}|${busca.trim().toUpperCase()}`;
+
+    // 1. Resposta instantânea se estiver no cache local (0ms!)
+    if (!forceServer && clientCache.has(cacheKey)) {
+        const cached = clientCache.get(cacheKey);
+        renderLotsData(cached.html, cached.total);
+        return;
+    }
+
+    const seq = ++currentSearchSeq;
+
+    // 2. Consulta pelo WebSocket (sub-10ms) ou Fallback HTMX transparente
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({
+            action: "search",
+            busca: busca,
+            filtro: filtro,
+            seq: seq
+        }));
+    } else {
+        // Se desconectou, a busca responde instantaneamente via HTMX sem que o usuário perceba, e reconecta em background
+        htmx.ajax('GET', `/?busca=${encodeURIComponent(busca)}&filtro=${encodeURIComponent(filtro)}`, {
+            target: '#lot-table-body',
+            swap: 'innerHTML'
+        });
+        initWebSocket();
+    }
+}
+
+function onSearchInput(val) {
+    const clearBtn = document.getElementById('clear-search-btn');
+    if (clearBtn) {
+        clearBtn.classList.toggle('hidden', !val);
+    }
+
+    // Feedback visual instantâneo (0ms) nas linhas já carregadas na tela sem reflow
+    const q = val.trim().toUpperCase();
+    const rows = document.querySelectorAll('#lot-table-body tr');
+    if (rows.length > 0 && q) {
+        rows.forEach(tr => {
+            if (tr.id === 'infinite-scroll-trigger') {
+                tr.style.display = 'none';
+                return;
+            }
+            const titleCell = tr.cells && tr.cells[1];
+            const text = titleCell ? titleCell.textContent.toUpperCase() : tr.textContent.toUpperCase();
+            tr.style.display = text.includes(q) ? '' : 'none';
+        });
+    } else if (!q) {
+        rows.forEach(tr => {
+            if (tr.id !== 'infinite-scroll-trigger') tr.style.display = '';
+        });
+    }
+
+    clearTimeout(searchDebounceTimer);
+    // Debounce otimizado (200ms) para resposta instantânea e fluida
+    searchDebounceTimer = setTimeout(() => performSearch(false), 200);
+}
+
+function submitSearch() {
+    clearTimeout(searchDebounceTimer);
+    performSearch(true);
+}
+
+function clearSearch() {
+    const input = document.getElementById('current-busca');
+    input.value = '';
+    onSearchInput('');
+    input.focus();
+}
+
+function prewarmClientFilters() {
+    // Pré-aquece apenas abas de consulta frequente com intervalo seguro
+    const filters = ['vencidos', 'critico', 'atencao', 'alerta', 'recentes'];
+    filters.forEach((f, idx) => {
+        setTimeout(() => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({
+                    action: "search",
+                    busca: "",
+                    filtro: f,
+                    prewarm: true
+                }));
+            }
+        }, 200 + (idx * 100));
+    });
+}
+
+let isFilterDragging = false;
+
+function updateFilterScrollButtons() {
+    const container = document.getElementById('filtros');
+    const leftBtn = document.getElementById('btn-scroll-left');
+    const rightBtn = document.getElementById('btn-scroll-right');
+    if (!container || !leftBtn || !rightBtn) return;
+
+    // Se o conteúdo cabe perfeitamente na largura da tela sem transbordar: esconde ambos os botões
+    const hasOverflow = (container.scrollWidth - container.clientWidth) > 4;
+    if (!hasOverflow) {
+        leftBtn.classList.add('!hidden');
+        rightBtn.classList.add('!hidden');
+        return;
+    }
+
+    // Se há transbordamento, mostra as setas de acordo com o deslocamento atual do scroll
+    const atStart = container.scrollLeft <= 4;
+    const atEnd = (container.scrollLeft + container.clientWidth) >= (container.scrollWidth - 6);
+
+    if (atStart) {
+        leftBtn.classList.add('!hidden');
+    } else {
+        leftBtn.classList.remove('!hidden');
+    }
+
+    if (atEnd) {
+        rightBtn.classList.add('!hidden');
+    } else {
+        rightBtn.classList.remove('!hidden');
+    }
+}
+
+function scrollFilters(direction) {
+    const container = document.getElementById('filtros');
+    if (!container) return;
+    const amount = direction === 'left' ? -240 : 240;
+    container.scrollBy({ left: amount, behavior: 'smooth' });
+    setTimeout(updateFilterScrollButtons, 320);
+}
+
+function initFilterDragScroll() {
+    const container = document.getElementById('filtros');
+    if (!container) return;
+    updateFilterScrollButtons();
+
+    if (container.dataset.dragInit === 'true') return;
+    container.dataset.dragInit = 'true';
+
+    container.addEventListener('scroll', updateFilterScrollButtons, { passive: true });
+    window.addEventListener('resize', updateFilterScrollButtons, { passive: true });
+
+    if (window.ResizeObserver) {
+        try {
+            new ResizeObserver(() => updateFilterScrollButtons()).observe(container);
+        } catch (_) {}
+    }
+
+    let isDown = false;
+    let startX = 0;
+    let scrollLeft = 0;
+    let hasMoved = false;
+
+    container.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        isDown = true;
+        hasMoved = false;
+        isFilterDragging = false;
+        startX = e.pageX - container.offsetLeft;
+        scrollLeft = container.scrollLeft;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isDown) return;
+        const x = e.pageX - container.offsetLeft;
+        const walk = x - startX;
+        if (Math.abs(walk) > 5) {
+            hasMoved = true;
+            isFilterDragging = true;
+        }
+        if (hasMoved) {
+            container.scrollLeft = scrollLeft - walk;
+        }
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (!isDown) return;
+        isDown = false;
+        if (hasMoved) {
+            setTimeout(() => {
+                isFilterDragging = false;
+            }, 60);
+        } else {
+            isFilterDragging = false;
+        }
+    });
+
+    container.addEventListener('click', (e) => {
+        if (isFilterDragging) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+        }
+    }, true);
+}
+
+function setFiltro(key, evt) {
+    if (isFilterDragging) {
+        if (evt) {
+            if (typeof evt.preventDefault === 'function') evt.preventDefault();
+            if (typeof evt.stopPropagation === 'function') evt.stopPropagation();
+        }
+        return;
+    }
+    if (evt) {
+        if (typeof evt.preventDefault === 'function') evt.preventDefault();
+        if (typeof evt.stopPropagation === 'function') evt.stopPropagation();
+    }
+    document.getElementById('current-filtro').value = key;
+
+    // Atualiza URL no navegador sem recarregar a página
+    try {
+        const busca = document.getElementById('current-busca').value;
+        const url = new URL(window.location);
+        url.searchParams.set('filtro', key);
+        if (busca) url.searchParams.set('busca', busca);
+        else url.searchParams.delete('busca');
+        window.history.replaceState({}, '', url);
+    } catch (_) {}
+
+    // Alterna a exibição do resumo consolidado para a aba Total
+    const summaryPanel = document.getElementById('total-summary-panel');
+    if (summaryPanel) {
+        if (key === 'todos' || key === 'total') {
+            summaryPanel.classList.remove('hidden');
+        } else {
+            summaryPanel.classList.add('hidden');
+        }
+    }
+
+    // Alterna a exibição do botão "Limpar Todos os Deletados"
+    const purgeWrapper = document.getElementById('btn-purge-deleted-wrapper');
+    if (purgeWrapper) {
+        if (key === 'deletados') {
+            purgeWrapper.classList.remove('hidden');
+        } else {
+            purgeWrapper.classList.add('hidden');
+        }
+    }
+    
+    // Atualiza visual dos botões mantendo classes de carrossel
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        const isCurrent = (btn.getAttribute('data-filtro') === key);
+        const iconEl = btn.querySelector('i[data-lucide]');
+        if (isCurrent) {
+            if (key === 'deletados') {
+                btn.className = "filter-btn shrink-0 flex-shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-rose-600 dark:bg-rose-500 text-white shadow-sm font-semibold cursor-pointer select-none";
+            } else {
+                btn.className = "filter-btn shrink-0 flex-shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm font-semibold cursor-pointer select-none";
+            }
+            if (iconEl) iconEl.className = "w-3.5 h-3.5 text-white";
+            const badgeEl = btn.querySelector('#badge-total-lots');
+            if (badgeEl) {
+                badgeEl.className = "ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold tracking-tight bg-indigo-800/60 text-white";
+            }
+        } else {
+            btn.className = "filter-btn shrink-0 flex-shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 cursor-pointer select-none";
+            const badgeEl = btn.querySelector('#badge-total-lots');
+            if (badgeEl) {
+                badgeEl.className = "ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold tracking-tight bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200";
+            }
+        }
+    });
+
+    // Centraliza o botão ativo no carrossel suavemente
+    const activeBtn = document.querySelector(`.filter-btn[data-filtro="${key}"]`);
+    if (activeBtn) {
+        activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+
+    if (window.renderLucideIcons) window.renderLucideIcons();
+
+    // Stale-While-Revalidate: Se houver cache prévio, exibe imediatamente (0ms)
+    const busca = (document.getElementById('current-busca')?.value || '').trim().toUpperCase();
+    const cacheKey = `${key}|${busca}`;
+    if (key !== 'deletados' && clientCache.has(cacheKey)) {
+        const cached = clientCache.get(cacheKey);
+        renderLotsData(cached.html, cached.total);
+    }
+
+    // Sempre busca a versão mais recente no servidor/WebSocket (sub-5ms) para sincronismo total
+    performSearch(true);
+}
+
+async function purgeAllDeleted() {
+    if (!confirm("Tem certeza que deseja excluir permanentemente TODOS os registros do histórico de deletados? Esta ação não pode ser desfeita.")) {
+        return;
+    }
+    try {
+        const resp = await fetch('/lote/deletados/limpar', {
+            method: 'POST',
+            headers: { 'X-Client-ID': window.myClientId }
+        });
+        if (resp.ok) {
+            clientCache.clear();
+            performSearch(true);
+        }
+    } catch (e) {
+        console.error("Erro ao limpar deletados:", e);
+    }
+}
+
+async function triggerPullConnection() {
+    const btn = document.getElementById('btn-pull-db');
+    const spinner = document.getElementById('pull-spinner');
+    const icon = document.getElementById('pull-icon');
+    const text = document.getElementById('pull-text');
+    const dbBadge = document.getElementById('db-badge');
+    const dbLabel = document.getElementById('db-label');
+
+    if (spinner) spinner.classList.remove('hidden');
+    if (icon) icon.classList.add('hidden');
+    if (text) text.innerText = 'Puxando...';
+    if (btn) btn.disabled = true;
+
+    try {
+        const resp = await fetch('/api/connection/pull', { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+            if (text) text.innerText = 'Cópia Puxada!';
+            if (dbBadge && dbLabel) {
+                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
+                dbLabel.innerText = "PostgreSQL";
+            }
+            clientCache.clear();
+            performSearch(true);
+            setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
+        } else {
+            // Se falhou ao puxar, tenta reconectar
+            const reconResp = await fetch('/api/connection/reconnect', { method: 'POST' });
+            const reconData = await reconResp.json();
+            if (reconData.postgres_online) {
+                if (text) text.innerText = 'Reconectado!';
+                if (dbBadge && dbLabel) {
+                    dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
+                    dbLabel.innerText = "PostgreSQL";
+                }
+                clientCache.clear();
+                performSearch(true);
+                setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
+            } else {
+                if (text) text.innerText = 'Modo Local (SQLite)';
+                if (dbBadge && dbLabel) {
+                    dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200";
+                    dbLabel.innerText = "SQLite (Cópia Local)";
+                }
+                setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3500);
+            }
+        }
+    } catch (err) {
+        if (text) text.innerText = 'Erro ao puxar';
+        setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
+    } finally {
+        if (spinner) spinner.classList.add('hidden');
+        if (icon) icon.classList.remove('hidden');
+        if (btn) btn.disabled = false;
+    }
+}
+
+let currentSpreadsheetFile = null;
+let currentSavedFileId = null;
+
+function renderColumnMappingInterface(data, file) {
+    const resultContainer = document.getElementById('import-result-container');
+    if (!resultContainer) return;
+
+    if (data.file_id) {
+        currentSavedFileId = data.file_id;
+    }
+
+    const cols = data.columns || [];
+    const suggestions = data.suggestions || {};
+    const preview = data.preview || [];
+    const fileName = file.name || data.filename || 'planilha.xls';
+
+    // Helper para gerar as options de um select
+    const generateOptions = (selectedVal, isRequired = false) => {
+        let html = isRequired ? '' : '<option value="">(Nenhuma / Opcional)</option>';
+        cols.forEach(c => {
+            const isSel = (c === selectedVal);
+            html += `<option value="${c}" ${isSel ? 'selected' : ''}>${c}</option>`;
+        });
+        return html;
+    };
+
+    let previewHeaders = cols.map(c => `<th class="px-2.5 py-1.5 font-bold text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600 whitespace-nowrap text-xs">${c}</th>`).join('');
+    let previewBody = '';
+    preview.forEach(row => {
+        let cells = cols.map(c => `<td class="px-2.5 py-1 border-b border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-300 truncate max-w-[150px] text-[11px]">${row[c] || ''}</td>`).join('');
+        previewBody += `<tr>${cells}</tr>`;
+    });
+
+    const downloadBadge = data.file_id ? `
+        <a href="/download-planilha/${data.file_id}" download class="inline-flex items-center gap-1 text-[11px] text-amber-900 dark:text-amber-200 bg-amber-200/80 dark:bg-amber-900/60 hover:bg-amber-300 dark:hover:bg-amber-800 px-2.5 py-1 rounded-md font-semibold transition shadow-xs">
+            <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar cópia original salva</span>
+        </a>
+    ` : '';
+
+    setTimeout(() => { if (window.refreshIcons) window.refreshIcons(resultContainer); }, 50);
+    resultContainer.innerHTML = `
+        <div id="import-mapping-card" class="mt-4 p-4 bg-amber-50/70 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/80 rounded-xl space-y-4 shadow-sm animate-fade-in">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div class="flex items-start gap-2.5">
+                    <i data-lucide="table" class="w-5 h-5 text-indigo-600 dark:text-indigo-400"></i>
+                    <div class="space-y-0.5">
+                        <h4 class="text-sm font-bold text-amber-900 dark:text-amber-300">Confirmação de Colunas da Planilha</h4>
+                        <p class="text-xs text-amber-800 dark:text-amber-400">
+                            O arquivo <b>${fileName}</b> foi salvo com segurança em nosso servidor! Confirme abaixo quais colunas contêm o <b>Produto</b> e a <b>Validade</b>:
+                        </p>
+                    </div>
+                </div>
+                ${downloadBadge}
+            </div>
+
+            <!-- Seletores de Mapeamento -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white dark:bg-gray-800 p-3.5 rounded-lg border border-amber-200 dark:border-gray-700">
+                <div>
+                    <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                        <i data-lucide="package" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> Coluna do Produto <span class="text-red-500">*</span>
+                    </label>
+                    <select id="map-col-prod" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
+                        ${generateOptions(suggestions.col_prod, true)}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                        <i data-lucide="calendar" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> Coluna da Validade <span class="text-red-500">*</span>
+                    </label>
+                    <select id="map-col-valid" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
+                        ${generateOptions(suggestions.col_valid, true)}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                        <i data-lucide="barcode" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> Código de Barras (Opcional)
+                    </label>
+                    <select id="map-col-code" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
+                        ${generateOptions(suggestions.col_code, false)}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                        <i data-lucide="hash" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> Quantidade (Opcional)
+                    </label>
+                    <select id="map-col-quant" class="w-full text-xs bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 rounded-md p-1.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 font-medium">
+                        ${generateOptions(suggestions.col_quant, false)}
+                    </select>
+                </div>
+            </div>
+
+            <!-- Pré-visualização das Primeiras Linhas da Planilha -->
+            <div class="space-y-1.5">
+                <span class="text-[11px] font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Amostra dos Dados da Planilha (5 primeiras linhas):</span>
+                <div class="overflow-x-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg max-h-48 shadow-inner">
+                    <table class="w-full text-left border-collapse">
+                        <thead><tr>${previewHeaders}</tr></thead>
+                        <tbody>${previewBody}</tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Botões de Ação do Mapeamento -->
+            <div class="flex items-center justify-between pt-1">
+                <button type="button"
+                        onclick="document.getElementById('import-result-container').innerHTML = '';"
+                        class="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 font-medium px-3 py-1.5 cursor-pointer">
+                    Cancelar
+                </button>
+                <button type="button"
+                        onclick="confirmColumnMappingAndSubmit()"
+                        class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition inline-flex items-center gap-1.5 cursor-pointer">
+                    <span class="inline-flex items-center gap-1.5"><i data-lucide="check-circle" class="w-3.5 h-3.5"></i> Confirmar Colunas e Importar</span>
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function confirmColumnMappingAndSubmit() {
+    const colProd = document.getElementById('map-col-prod')?.value || '';
+    const colValid = document.getElementById('map-col-valid')?.value || '';
+    const colCode = document.getElementById('map-col-code')?.value || '';
+    const colQuant = document.getElementById('map-col-quant')?.value || '';
+
+    if (!colProd || !colValid) {
+        alert('Por favor, selecione as colunas de Produto e Validade.');
+        return;
+    }
+
+    const mapping = {
+        col_prod: colProd,
+        col_valid: colValid,
+        col_code: colCode,
+        col_quant: colQuant
+    };
+
+    if (currentSavedFileId) {
+        reprocessSavedSpreadsheet(currentSavedFileId, currentSpreadsheetFile?.name || 'planilha.xls', mapping);
+    } else {
+        submitImportPlanilha(null, mapping);
+    }
+}
+
+function submitImportPlanilha(event, customMapping = null) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    const fileInput = document.getElementById('input-spreadsheet-file');
+    const resultContainer = document.getElementById('import-result-container');
+    const loading = document.getElementById('import-loading');
+    const btn = document.getElementById('btn-import-submit');
+
+    // Recupera o arquivo selecionado ou o salvo anteriormente
+    if (fileInput && fileInput.files && fileInput.files.length > 0) {
+        currentSpreadsheetFile = fileInput.files[0];
+    }
+
+    if (!currentSpreadsheetFile) {
+        resultContainer.innerHTML = '<div class="text-amber-700 dark:text-amber-300 text-xs p-3 bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 rounded-lg mt-3 font-medium"><i data-lucide="alert-triangle" class="w-4 h-4 inline-block mr-1.5 text-amber-600"></i> Por favor, selecione um arquivo de planilha (.xlsx, .xls ou .csv) antes de processar.</div>';
+        return;
+    }
+
+    const file = currentSpreadsheetFile;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    if (customMapping) {
+        if (customMapping.col_prod) formData.append('col_prod', customMapping.col_prod);
+        if (customMapping.col_valid) formData.append('col_valid', customMapping.col_valid);
+        if (customMapping.col_code) formData.append('col_code', customMapping.col_code);
+        if (customMapping.col_quant) formData.append('col_quant', customMapping.col_quant);
+    }
+
+    if (loading) loading.classList.remove('hidden');
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-60', 'cursor-not-allowed');
+    }
+
+    // Estrutura visual da barra de progresso com animação instantânea
+    resultContainer.innerHTML = `
+        <div id="import-progress-card" class="mt-4 p-4 bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-3 shadow-sm transition-all duration-300">
+            <div class="flex items-center justify-between text-xs font-semibold">
+                <span class="text-gray-700 dark:text-gray-300 flex items-center gap-2 truncate max-w-[75%]">
+                    <i data-lucide="loader-2" id="import-progress-spinner" class="w-4 h-4 animate-spin text-emerald-600 dark:text-emerald-400 inline-block"></i>
+                    <span id="import-progress-stage" class="text-gray-800 dark:text-gray-200">Enviando e salvando cópia de segurança de ${file.name} (${(file.size / 1024).toFixed(1)} KB)...</span>
+                </span>
+                <span id="import-progress-percent" class="text-emerald-700 dark:text-emerald-400 font-extrabold font-mono text-base tracking-tight">
+                    15%
+                </span>
+            </div>
+
+            <!-- Trilho e Barra de Progresso com Transição Fluida e Gradiente -->
+            <div class="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3.5 overflow-hidden shadow-inner p-0.5 border border-gray-200 dark:border-gray-600">
+                <div id="import-progress-bar"
+                     class="bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 h-full rounded-full transition-all duration-150 ease-out shadow-sm"
+                     style="width: 15%;">
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400 pt-0.5">
+                <span id="import-progress-count" class="font-medium text-gray-600 dark:text-gray-300">Reconciliando linhas e estoque no banco de dados...</span>
+                <span id="import-progress-mini-stats" class="font-bold text-emerald-700 dark:text-emerald-400"><span class="inline-flex items-center gap-1"><i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-600"></i> Backup Ativo</span></span>
+            </div>
+        </div>
+        <div id="import-summary-wrapper" class="mt-2"></div>
+    `;
+
+    const progressBar = document.getElementById('import-progress-bar');
+    const percentEl = document.getElementById('import-progress-percent');
+    const stageEl = document.getElementById('import-progress-stage');
+    const countEl = document.getElementById('import-progress-count');
+    const summaryWrapper = document.getElementById('import-summary-wrapper');
+    const spinner = document.getElementById('import-progress-spinner');
+
+    let processingTimer = null;
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/import-planilha', true);
+    xhr.setRequestHeader('X-Client-ID', window.myClientId || '');
+
+    // 1. Progresso real de envio dos bytes do arquivo (0% até 45%)
+    xhr.upload.onprogress = function(evt) {
+        if (evt.lengthComputable) {
+            const uploadPct = Math.min(45, Math.round((evt.loaded / evt.total) * 45));
+            if (progressBar) progressBar.style.width = uploadPct + '%';
+            if (percentEl) percentEl.innerText = uploadPct + '%';
+            if (stageEl) stageEl.innerText = `Enviando e gravando backup: ${(evt.loaded / 1024).toFixed(0)} KB de ${(evt.total / 1024).toFixed(0)} KB...`;
+        }
+    };
+
+    // 2. Quando o upload conclui, inicia a animação do processamento no servidor (45% até 90%)
+    xhr.upload.onload = function() {
+        if (progressBar) progressBar.style.width = '50%';
+        if (percentEl) percentEl.innerText = '50%';
+        if (stageEl) stageEl.innerText = 'Backup gravado! Auditando linhas e conciliando com o estoque...';
+
+        let currentSimPct = 50;
+        processingTimer = setInterval(() => {
+            if (currentSimPct < 90) {
+                currentSimPct += 10;
+                if (progressBar) progressBar.style.width = currentSimPct + '%';
+                if (percentEl) percentEl.innerText = currentSimPct + '%';
+            }
+        }, 120);
+    };
+
+    // 3. Resposta recebida do servidor
+    xhr.onload = function() {
+        if (processingTimer) clearInterval(processingTimer);
+
+        if (loading) loading.classList.add('hidden');
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
+
+        let data = null;
+        try {
+            data = JSON.parse(xhr.responseText);
+        } catch (e) {
+            // Em caso de retorno não-JSON
+            resultContainer.innerHTML = `
+                <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-2">
+                    <div class="font-bold flex items-center gap-1.5">
+                        <i data-lucide="x-circle" class="w-5 h-5 text-rose-600"></i>
+                        <span>Falha no servidor ao processar planilha (Status ${xhr.status}):</span>
+                    </div>
+                    <div class="text-xs bg-white dark:bg-gray-800 p-2.5 rounded border border-red-200 dark:border-red-900/60 text-gray-800 dark:text-gray-200">
+                        O servidor retornou uma resposta inesperada. Verifique se o formato do arquivo (.xlsx, .xls ou .csv) está íntegro.
+                    </div>
+                    <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
+                        Tentar Novamente
+                    </button>
+                </div>
+            `;
+            return;
+        }
+
+        // Se o servidor pedir confirmação / mapeamento manual de colunas
+        if (data && data.needs_mapping) {
+            renderColumnMappingInterface(data, file);
+            loadSpreadsheetHistory();
+            return;
+        }
+
+        // Se houve erro retornado em JSON
+        if (xhr.status !== 200 || !data || !data.success) {
+            const errorMsg = (data && data.error) ? data.error : `Erro HTTP ${xhr.status}`;
+            const downloadBtn = data && data.file_id ? `
+                <a href="/download-planilha/${data.file_id}" download class="text-xs bg-amber-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-amber-700 transition inline-flex items-center gap-1">
+                    <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar cópia salva do arquivo</span>
+                </a>
+            ` : '';
+
+            resultContainer.innerHTML = `
+                <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-3">
+                    <div class="font-bold flex items-center gap-1.5">
+                        <i data-lucide="x-circle" class="w-5 h-5 text-rose-600"></i>
+                        <span>Falha na importação da planilha:</span>
+                    </div>
+                    <div class="text-xs font-mono bg-white dark:bg-gray-800 p-2.5 rounded border border-red-200 dark:border-red-900/60 text-gray-800 dark:text-gray-200">${errorMsg}</div>
+                    <div class="text-xs text-gray-600 dark:text-gray-300 bg-amber-50 dark:bg-amber-950/40 p-2 rounded border border-amber-200 dark:border-amber-800">
+                        <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600 inline-block mr-1"></i> <b>Fique tranquilo:</b> sua planilha foi guardada com segurança em nosso servidor de backups. Você pode baixá-la ou tentar novamente a qualquer momento.
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 pt-1">
+                        <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
+                            Tentar Novamente
+                        </button>
+                        ${downloadBtn}
+                    </div>
+                </div>
+            `;
+            loadSpreadsheetHistory();
+            return;
+        }
+
+        // Conclusão com sucesso total
+        const novosLotes = (data.stats && data.stats.novos_lotes !== undefined) ? data.stats.novos_lotes : 0;
+        const totalLinhas = (data.stats && data.stats.total_linhas !== undefined) ? data.stats.total_linhas : 0;
+        const inalterados = (data.stats && data.stats.inalterados !== undefined) ? data.stats.inalterados : 0;
+        const bloqueados = (data.stats && data.stats.bloqueados_zumbi !== undefined) ? data.stats.bloqueados_zumbi : 0;
+
+        if (progressBar) progressBar.style.width = '100%';
+        if (percentEl) percentEl.innerText = '100%';
+        if (spinner) { spinner.outerHTML = '<i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600 inline-block"></i>'; if (window.refreshIcons) window.refreshIcons(); }
+        if (stageEl) {
+            stageEl.innerHTML = `Auditoria concluída! <b class="text-emerald-700 dark:text-emerald-400">${novosLotes} novas remessas cadastradas</b> no Galpão (${totalLinhas} linhas processadas)`;
+        }
+        if (countEl) {
+            countEl.innerHTML = `<i data-lucide="package-plus" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> <b class="text-emerald-800 dark:text-emerald-300">${novosLotes} novas remessas adicionadas</b> • ${inalterados} inalteradas • ${bloqueados} zumbis bloqueados`;
+        }
+        const miniStats = document.getElementById('import-progress-mini-stats');
+        if (miniStats) {
+            miniStats.innerHTML = `<span class="inline-flex items-center gap-1 bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-extrabold"><i data-lucide="sparkles" class="w-3 h-3"></i> +${novosLotes} Novas Remessas</span>`; if (window.refreshIcons) window.refreshIcons(miniStats);
+        }
+
+        let backupLinkHtml = '';
+        if (data.file_id) {
+            backupLinkHtml = `
+                <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-lg shadow-2xs">
+                    <span class="flex items-center gap-1.5">
+                        <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i>
+                        <span>Cópia de segurança salva em disco: <b>${file.name}</b></span>
+                    </span>
+                    <a href="/download-planilha/${data.file_id}" download class="inline-flex items-center gap-1 font-bold underline hover:text-emerald-950 dark:hover:text-emerald-100">
+                        <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar Cópia Original</span>
+                    </a>
+                </div>
+            `;
+        }
+
+        if (summaryWrapper && data.html) {
+            summaryWrapper.innerHTML = data.html + backupLinkHtml;
+            if (window.htmx) htmx.process(summaryWrapper);
+        }
+
+        clientCache.clear();
+        performSearch(true);
+        if (fileInput) fileInput.value = '';
+        loadSpreadsheetHistory();
+    };
+
+    // 4. Erros de rede ou conexão
+    xhr.onerror = function() {
+        if (processingTimer) clearInterval(processingTimer);
+        if (loading) loading.classList.add('hidden');
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
+        resultContainer.innerHTML = `
+            <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-2">
+                <div class="font-bold flex items-center gap-1.5">
+                    <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-600"></i>
+                    <span>Erro de conexão de rede durante o envio.</span>
+                </div>
+                <div class="text-xs text-red-600 dark:text-red-300">
+                    Não foi possível completar o envio para o servidor. Verifique sua conexão e tente novamente.
+                </div>
+                <button type="button" onclick="submitImportPlanilha(null)" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
+                    Tentar Novamente
+                </button>
+            </div>
+        `;
+    };
+
+    xhr.send(formData);
+}
+
+// ── Re-processamento de Planilha a partir da Cópia Salva no Servidor ─────────
+async function reprocessSavedSpreadsheet(fileId, filename, customMapping = null) {
+    const resultContainer = document.getElementById('import-result-container');
+    const loading = document.getElementById('import-loading');
+    const btn = document.getElementById('btn-import-submit');
+
+    currentSavedFileId = fileId;
+
+    if (loading) loading.classList.remove('hidden');
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-60', 'cursor-not-allowed');
+    }
+
+    resultContainer.innerHTML = `
+        <div id="import-progress-card" class="mt-4 p-4 bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-3 shadow-sm transition-all duration-300">
+            <div class="flex items-center justify-between text-xs font-semibold">
+                <span class="text-gray-700 dark:text-gray-300 flex items-center gap-2 truncate max-w-[75%]">
+                    <i data-lucide="loader-2" id="import-progress-spinner" class="w-4 h-4 animate-spin text-emerald-600 dark:text-emerald-400 inline-block"></i>
+                    <span id="import-progress-stage" class="text-gray-800 dark:text-gray-200">Recuperando cópia salva e auditando ${filename}...</span>
+                </span>
+                <span id="import-progress-percent" class="text-emerald-700 dark:text-emerald-400 font-extrabold font-mono text-base tracking-tight">
+                    35%
+                </span>
+            </div>
+
+            <div class="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3.5 overflow-hidden shadow-inner p-0.5 border border-gray-200 dark:border-gray-600">
+                <div id="import-progress-bar"
+                     class="bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 h-full rounded-full transition-all duration-150 ease-out shadow-sm"
+                     style="width: 35%;">
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400 pt-0.5">
+                <span id="import-progress-count" class="font-medium text-gray-600 dark:text-gray-300">Reconciliando linhas a partir do backup em disco...</span>
+                <span id="import-progress-mini-stats" class="font-bold text-emerald-700 dark:text-emerald-400"><span class="inline-flex items-center gap-1"><i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-600"></i> Cópia Salva</span></span>
+            </div>
+        </div>
+        <div id="import-summary-wrapper" class="mt-2"></div>
+    `;
+
+    const progressBar = document.getElementById('import-progress-bar');
+    const percentEl = document.getElementById('import-progress-percent');
+    const stageEl = document.getElementById('import-progress-stage');
+    const countEl = document.getElementById('import-progress-count');
+    const summaryWrapper = document.getElementById('import-summary-wrapper');
+    const spinner = document.getElementById('import-progress-spinner');
+
+    const formData = new FormData();
+    if (customMapping) {
+        if (customMapping.col_prod) formData.append('col_prod', customMapping.col_prod);
+        if (customMapping.col_valid) formData.append('col_valid', customMapping.col_valid);
+        if (customMapping.col_code) formData.append('col_code', customMapping.col_code);
+        if (customMapping.col_quant) formData.append('col_quant', customMapping.col_quant);
+    }
+
+    try {
+        const resp = await fetch(`/reprocess-planilha/${fileId}`, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Client-ID': window.myClientId || ''
+            }
+        });
+
+        const data = await resp.json();
+
+        if (loading) loading.classList.add('hidden');
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
+
+        if (data.needs_mapping) {
+            renderColumnMappingInterface(data, { name: filename, fileId: fileId });
+            loadSpreadsheetHistory();
+            return;
+        }
+
+        if (!resp.ok || !data.success) {
+            throw new Error(data.error || `Erro HTTP ${resp.status}`);
+        }
+
+        const novosLotes = (data.stats && data.stats.novos_lotes !== undefined) ? data.stats.novos_lotes : 0;
+        const totalLinhas = (data.stats && data.stats.total_linhas !== undefined) ? data.stats.total_linhas : 0;
+        const inalterados = (data.stats && data.stats.inalterados !== undefined) ? data.stats.inalterados : 0;
+        const bloqueados = (data.stats && data.stats.bloqueados_zumbi !== undefined) ? data.stats.bloqueados_zumbi : 0;
+
+        if (progressBar) progressBar.style.width = '100%';
+        if (percentEl) percentEl.innerText = '100%';
+        if (spinner) { spinner.outerHTML = '<i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600 inline-block"></i>'; if (window.refreshIcons) window.refreshIcons(); }
+        if (stageEl) {
+            stageEl.innerHTML = `Re-processamento concluído! <b class="text-emerald-700 dark:text-emerald-400">${novosLotes} novas remessas cadastradas</b> no Galpão (${totalLinhas} linhas conciliadas)`;
+        }
+        if (countEl) {
+            countEl.innerHTML = `<i data-lucide="package-plus" class="w-3.5 h-3.5 inline-block mr-1 text-emerald-600"></i> <b class="text-emerald-800 dark:text-emerald-300">${novosLotes} novas remessas adicionadas</b> • ${inalterados} inalteradas • ${bloqueados} zumbis bloqueados`;
+        }
+        const miniStatsReproc = document.getElementById('import-progress-mini-stats');
+        if (miniStatsReproc) {
+            miniStatsReproc.innerHTML = `<span class="inline-flex items-center gap-1 bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-extrabold"><i data-lucide="sparkles" class="w-3 h-3"></i> +${novosLotes} Novas Remessas</span>`; if (window.refreshIcons) window.refreshIcons(miniStatsReproc);
+        }
+
+        const backupLinkHtml = `
+            <div class="mt-3 flex items-center justify-between text-xs bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-lg shadow-2xs">
+                <span class="flex items-center gap-1.5">
+                    <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i>
+                    <span>Origem da importação: Cópia de segurança <b>${filename}</b></span>
+                </span>
+                <a href="/download-planilha/${fileId}" download class="inline-flex items-center gap-1 font-bold underline hover:text-emerald-950 dark:hover:text-emerald-100">
+                    <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar Arquivo Original</span>
+                </a>
+            </div>
+        `;
+
+        if (summaryWrapper && data.html) {
+            summaryWrapper.innerHTML = data.html + backupLinkHtml;
+            if (window.htmx) htmx.process(summaryWrapper);
+        }
+
+        clientCache.clear();
+        performSearch(true);
+        loadSpreadsheetHistory();
+
+    } catch (err) {
+        if (loading) loading.classList.add('hidden');
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
+
+        resultContainer.innerHTML = `
+            <div class="mt-3 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-sm shadow-sm space-y-3">
+                <div class="font-bold flex items-center gap-1.5">
+                    <i data-lucide="x-circle" class="w-5 h-5 text-rose-600"></i>
+                    <span>Falha ao re-processar cópia salva:</span>
+                </div>
+                <div class="text-xs font-mono bg-white dark:bg-gray-800 p-2.5 rounded border border-red-200 dark:border-red-900/60 text-gray-800 dark:text-gray-200">${err.message}</div>
+                <div class="flex items-center gap-2 pt-1">
+                    <button type="button" onclick="reprocessSavedSpreadsheet('${fileId}', '${filename}')" class="text-xs bg-red-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-red-700 transition">
+                        Tentar Novamente
+                    </button>
+                    <a href="/download-planilha/${fileId}" download class="text-xs bg-amber-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-amber-700 transition">
+                        <span class="inline-flex items-center gap-1"><i data-lucide="download" class="w-3.5 h-3.5"></i> Baixar Cópia</span>
+                    </a>
+                </div>
+            </div>
+        `;
+        loadSpreadsheetHistory();
+    }
+}
+
+// ── Gestão do Histórico de Planilhas Salvas ─────────────────────────────────
+async function toggleSpreadsheetHistory() {
+    const wrapper = document.getElementById('spreadsheet-history-wrapper');
+    const icon = document.getElementById('history-toggle-icon');
+    if (!wrapper) return;
+
+    if (wrapper.classList.contains('hidden')) {
+        wrapper.classList.remove('hidden');
+        if (icon) icon.innerText = '▲';
+        loadSpreadsheetHistory();
+    } else {
+        wrapper.classList.add('hidden');
+        if (icon) icon.innerText = '▼';
+    }
+}
+
+async function loadSpreadsheetHistory() {
+    const wrapper = document.getElementById('spreadsheet-history-wrapper');
+    if (!wrapper || wrapper.classList.contains('hidden')) return;
+
+    try {
+        const resp = await fetch('/planilhas-salvas?html=1');
+        if (resp.ok) {
+            wrapper.innerHTML = await resp.text();
+            if (window.htmx) htmx.process(wrapper);
+        }
+    } catch (e) {
+        console.error('Erro ao carregar histórico de planilhas:', e);
+    }
+}
+
+async function deleteSavedSpreadsheet(fileId) {
+    if (!confirm('Deseja excluir esta cópia de segurança salva do histórico?')) return;
+    const wrapper = document.getElementById('spreadsheet-history-wrapper');
+
+    try {
+        const resp = await fetch(`/planilhas-salvas/${fileId}/delete`, { method: 'POST' });
+        if (resp.ok && wrapper) {
+            wrapper.innerHTML = await resp.text();
+            if (window.htmx) htmx.process(wrapper);
+        }
+    } catch (e) {
+        console.error('Erro ao excluir planilha salva:', e);
+    }
+}
+
+// ── Autocomplete e Seleção do Catálogo no Cadastro de Lotes ──────────────────
+let addLotDebounceTimer = null;
+
+function onAddLotInput(el) {
+    if (!el) return;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    el.value = el.value.toUpperCase();
+    if (start !== null && end !== null) {
+        try { el.setSelectionRange(start, end); } catch(e) {}
+    }
+    onAddLotSearch(el.value);
+}
+
+function onAddLotSearch(val) {
+    const q = val.trim().toUpperCase();
+    const dropdown = document.getElementById('dropdown-add-lot-results');
+    const badge = document.getElementById('badge-catalog-selected');
+    if (badge) badge.classList.add('hidden');
+
+    if (!q || q.length < 2) {
+        if (dropdown) dropdown.classList.add('hidden');
+        return;
+    }
+
+    clearTimeout(addLotDebounceTimer);
+    addLotDebounceTimer = setTimeout(async () => {
+        try {
+            const resp = await fetch(`/api/products/search?q=${encodeURIComponent(q)}`);
+            const items = await resp.json();
+            renderAddLotDropdown(items, q);
+
+            // Se for correspondência exata de código de barras ou nome, já auto-preenche o preço
+            const exact = items.find(it => (it.name && it.name.toUpperCase() === q.toUpperCase()) || (it.bar_code && it.bar_code === q));
+            if (exact && exact.price > 0) {
+                const priceInput = document.getElementById('input-add-lot-price');
+                if (priceInput && (!priceInput.value || parseFloat(priceInput.value) === 0)) {
+                    priceInput.value = parseFloat(exact.price).toFixed(2);
+                    const badge = document.getElementById('badge-catalog-selected');
+                    if (badge) badge.classList.remove('hidden');
+                }
+            }
+        } catch (e) {
+            console.error("Erro na busca de produtos:", e);
+        }
+    }, 100);
+}
+
+async function onAddLotBlur(input) {
+    setTimeout(async () => {
+        const q = (input.value || '').trim();
+        if (!q) return;
+        try {
+            const resp = await fetch(`/api/products/search?q=${encodeURIComponent(q)}`);
+            const items = await resp.json();
+            if (!items || items.length === 0) return;
+            const match = items.find(it => (it.name && it.name.toUpperCase() === q.toUpperCase()) || (it.bar_code && it.bar_code === q));
+            if (match) {
+                selectProductToAdd(match.name, match.price);
+            }
+        } catch (e) {
+            console.error("Erro ao puxar preço no blur:", e);
+        }
+    }, 200);
+}
+
+function renderAddLotDropdown(items, query) {
+    const dropdown = document.getElementById('dropdown-add-lot-results');
+    if (!dropdown) return;
+
+    if (!items || items.length === 0) {
+        dropdown.innerHTML = `
+            <div class="p-3 text-xs text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800">
+                Nenhum produto correspondente no catálogo.
+                <div class="mt-1 font-semibold text-emerald-700 dark:text-emerald-400">"<b>${query.toUpperCase()}</b>" será cadastrado como um produto novo.</div>
+            </div>
+        `;
+        dropdown.classList.remove('hidden');
+        return;
+    }
+
+    let html = `
+        <div class="p-2 bg-gray-50 dark:bg-gray-700/80 text-[11px] font-semibold text-gray-500 dark:text-gray-300 uppercase tracking-wider flex items-center justify-between border-b border-gray-100 dark:border-gray-700">
+            <span>Produtos no Catálogo (${items.length})</span>
+            <span class="text-emerald-700 dark:text-emerald-400">Clique para selecionar</span>
+        </div>
+    `;
+
+    items.forEach((item) => {
+        const codeText = item.bar_code ? `Cód: ${item.bar_code}` : `#${item.id}`;
+        const priceText = item.price > 0 ? `R$ ${parseFloat(item.price).toFixed(2)}` : '';
+        const escapedName = (item.name || '').replace(/'/g, "\\'");
+        html += `
+            <button type="button"
+                    onclick="selectProductToAdd('${escapedName}', ${item.price || 0})"
+                    class="w-full text-left px-3.5 py-2 hover:bg-emerald-50 dark:hover:bg-gray-700 active:bg-emerald-100 dark:active:bg-gray-600 transition flex items-center justify-between gap-2 border-b border-gray-100 dark:border-gray-700 last:border-b-0 cursor-pointer bg-white dark:bg-gray-800">
+                <span class="font-semibold text-xs sm:text-sm text-gray-800 dark:text-gray-100 uppercase truncate">${item.name}</span>
+                <div class="flex items-center gap-2 shrink-0">
+                    ${priceText ? `<span class="text-xs font-semibold text-emerald-600 dark:text-emerald-400">${priceText}</span>` : ''}
+                    <span class="text-[11px] font-mono text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded">${codeText}</span>
+                </div>
+            </button>
+        `;
+    });
+
+    dropdown.innerHTML = html;
+    dropdown.classList.remove('hidden');
+}
+
+function selectProductToAdd(name, price) {
+    const input = document.getElementById('input-add-lot-name');
+    const dropdown = document.getElementById('dropdown-add-lot-results');
+    const badge = document.getElementById('badge-catalog-selected');
+    const quantInput = document.getElementById('input-add-lot-quant');
+    const priceInput = document.getElementById('input-add-lot-price') || document.querySelector('input[name="price"]');
+
+    if (input) input.value = (name || '').toUpperCase();
+    if (dropdown) dropdown.classList.add('hidden');
+    if (badge) badge.classList.remove('hidden');
+
+    if (priceInput) {
+        priceInput.value = (price !== undefined && price !== null && parseFloat(price) > 0)
+            ? parseFloat(price).toFixed(2)
+            : '0.00';
+    }
+
+    if (quantInput) {
+        quantInput.focus();
+        quantInput.select();
+    }
+}
+
+function clearAddLotSelection() {
+    const dropdown = document.getElementById('dropdown-add-lot-results');
+    const badge = document.getElementById('badge-catalog-selected');
+    if (dropdown) dropdown.classList.add('hidden');
+    if (badge) badge.classList.add('hidden');
+}
+
+function onAddLotBeforeRequest(evt) {
+    const ni = document.getElementById('input-add-lot-name');
+    if (ni) ni.value = ni.value.trim().toUpperCase();
+    const btn = document.getElementById('btn-save-lot');
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-75', 'cursor-wait');
+        const span = btn.querySelector('span');
+        if (span) {
+            span.innerHTML = '<svg class="animate-spin -ml-0.5 mr-1.5 h-3.5 w-3.5 text-white inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg> Salvando...';
+        }
+    }
+}
+
+function onAddLotAfterRequest(evt) {
+    const msgDiv = document.getElementById('form-add-msg');
+    const btn = document.getElementById('btn-save-lot');
+
+    // 1. Reabilita o botão imediatamente, independente de sucesso ou erro
+    if (btn) {
+        btn.disabled = false;
+        btn.style.opacity = '';
+        btn.style.pointerEvents = '';
+        btn.classList.remove('opacity-75', 'cursor-wait');
+        const span = btn.querySelector('span');
+        if (span) {
+            span.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Salvar Lote';
+        }
+        if (window.refreshIcons) window.refreshIcons(btn);
+    }
+
+    if (evt.detail && evt.detail.successful) {
+        // 2. Limpa todos os inputs do formulário para o próximo lote
+        const form = document.getElementById('form-add-lot');
+        if (form) form.reset();
+        clearAddLotSelection();
+
+        const nameInput = document.getElementById('input-add-lot-name');
+        if (nameInput) {
+            nameInput.value = '';
+            nameInput.focus();
+        }
+        const quantInput = document.getElementById('input-add-lot-quant');
+        if (quantInput) quantInput.value = '0';
+        const priceInput = document.getElementById('input-add-lot-price');
+        if (priceInput) priceInput.value = '0.00';
+        const dateInput = document.getElementById('input-add-lot-date');
+        if (dateInput) dateInput.value = '';
+
+        // 3. Exibe confirmação visual de sucesso destacada
+        if (msgDiv) {
+            msgDiv.innerHTML = '<span class="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300 text-xs sm:text-sm font-semibold bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-700 px-3 py-1.5 rounded-lg shadow-xs"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i> Lote cadastrado com sucesso!</span>';
+            if (window.refreshIcons) window.refreshIcons(msgDiv);
+            setTimeout(() => {
+                if (msgDiv) msgDiv.innerHTML = '';
+            }, 5000);
+        }
+    } else {
+        const errorText = (evt.detail && evt.detail.xhr && evt.detail.xhr.responseText) ? evt.detail.xhr.responseText : 'Erro ao cadastrar lote.';
+        if (msgDiv) {
+            msgDiv.innerHTML = `<span class="inline-flex items-center gap-1.5 text-rose-700 dark:text-rose-300 text-xs sm:text-sm font-semibold bg-rose-50 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-700 px-3 py-1.5 rounded-lg shadow-xs"><i data-lucide="alert-circle" class="w-4 h-4 text-rose-500"></i> ${errorText}</span>`;
+            if (window.refreshIcons) window.refreshIcons(msgDiv);
+            setTimeout(() => {
+                if (msgDiv) msgDiv.innerHTML = '';
+            }, 6000);
+        }
+    }
+}
+
+// Fecha o dropdown se clicar fora
+document.addEventListener('click', function(e) {
+    const dropdown = document.getElementById('dropdown-add-lot-results');
+    const input = document.getElementById('input-add-lot-name');
+    if (dropdown && !dropdown.contains(e.target) && e.target !== input) {
+        dropdown.classList.add('hidden');
+    }
+});
+
+// Inicializa WebSocket e Carrossel de Filtros
+function bootstrapApp() {
+    initWebSocket();
+    initFilterDragScroll();
+    setTimeout(() => {
+        const currentFiltro = document.getElementById('current-filtro')?.value || 'todos';
+        const activeBtn = document.querySelector(`.filter-btn[data-filtro="${currentFiltro}"]`);
+        if (activeBtn) {
+            activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+        updateFilterScrollButtons();
+    }, 120);
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootstrapApp);
+} else {
+    bootstrapApp();
+}
+
+document.addEventListener('htmx:afterSwap', function() {
+    initFilterDragScroll();
+    updateFilterScrollButtons();
+});
+</script>
+
+{% endblock %}
