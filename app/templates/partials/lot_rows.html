@@ -17,13 +17,47 @@
     </td>
 
     <!-- Nome do Produto -->
-    <td class="td-product px-3 py-2.5 font-semibold sm:font-medium text-gray-900 dark:text-gray-100 sm:min-w-[280px] sm:max-w-[55ch] sm:truncate text-sm"
+    <td class="td-product px-3 py-2.5 font-semibold sm:font-medium text-gray-900 dark:text-gray-100 sm:min-w-[280px] sm:max-w-[55ch] text-sm"
+        id="product-cell-{{ lot['lot_id'] }}"
         title="{{ lot['product_name'] }}">
-        <span>{{ lot['product_name'] }}</span>
-        {% if lot.get('is_deleted') and lot.get('deleted_at') %}
-            <div class="text-[11px] font-normal text-rose-500 dark:text-rose-400 mt-0.5">
-                Baixado em: {{ lot['deleted_at'][:16] }}
+        {% if lot.get('is_deleted') %}
+            <span>{{ lot['product_name'] }}</span>
+            {% if lot.get('deleted_at') %}
+                <div class="text-[11px] font-normal text-rose-500 dark:text-rose-400 mt-0.5">
+                    Baixado em: {{ lot['deleted_at'][:16] }}
+                </div>
+            {% endif %}
+        {% else %}
+            <div id="view-name-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 group/pname">
+                <span class="truncate block sm:max-w-[48ch]">{{ lot['product_name'] }}</span>
+                <button type="button"
+                        onclick="startEditingName({{ lot['lot_id'] }})"
+                        class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer opacity-70 group-hover/pname:opacity-100"
+                        title="Editar nome do produto">
+                    <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                </button>
             </div>
+            <form id="edit-name-{{ lot['lot_id'] }}"
+                  hx-post="/lote/{{ lot['lot_id'] }}/nome"
+                  hx-target="#product-cell-{{ lot['lot_id'] }}"
+                  hx-swap="outerHTML"
+                  onsubmit="window.isEditingLot = false;"
+                  class="inline-flex items-center gap-1 w-full"
+                  style="display: none;">
+                <input type="text" id="input-name-{{ lot['lot_id'] }}" name="name" value="{{ lot['product_name'] }}" required
+                       class="w-full min-w-[200px] border border-indigo-400 dark:border-indigo-500 rounded px-2 py-0.5 text-xs uppercase text-gray-800 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                <button type="submit"
+                        class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-1 text-xs font-bold transition shadow-sm cursor-pointer shrink-0"
+                        title="Salvar">
+                    <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                </button>
+                <button type="button"
+                        onclick="stopEditingName({{ lot['lot_id'] }})"
+                        class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded px-1.5 py-1 text-xs transition cursor-pointer shrink-0"
+                        title="Cancelar">
+                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                </button>
+            </form>
         {% endif %}
     </td>
 
@@ -33,11 +67,11 @@
         {% if lot.get('is_deleted') %}
             <span class="font-bold text-red-600 dark:text-red-400">-{{ lot['quant'] }}</span>
         {% else %}
-            <div id="view-quant-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 whitespace-nowrap">
+            <div id="view-quant-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 whitespace-nowrap group/pquant">
                 <span class="font-bold sm:font-medium text-gray-800 dark:text-gray-100 bg-gray-50 dark:bg-gray-700/70 sm:bg-transparent px-2 py-0.5 sm:p-0 rounded">{{ lot['quant'] }}</span>
                 <button type="button"
                         onclick="startEditing({{ lot['lot_id'] }})"
-                        class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+                        class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer opacity-70 group-hover/pquant:opacity-100"
                         title="Editar quantidade"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
             </div>
             <form id="edit-quant-{{ lot['lot_id'] }}"
@@ -66,11 +100,11 @@
         {% if lot.get('is_deleted') %}
             <span class="font-medium text-gray-600 dark:text-gray-400">R$ {{ "%.2f" | format(lot['price']) }}</span>
         {% else %}
-            <div id="view-price-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 whitespace-nowrap">
+            <div id="view-price-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 whitespace-nowrap group/pprice">
                 <span class="font-bold sm:font-medium text-gray-800 dark:text-gray-100 bg-gray-50 dark:bg-gray-700/70 sm:bg-transparent px-2 py-0.5 sm:p-0 rounded">R$ {{ "%.2f" | format(lot['price']) }}</span>
                 <button type="button"
                         onclick="startEditingPrice({{ lot['lot_id'] }})"
-                        class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+                        class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer opacity-70 group-hover/pprice:opacity-100"
                         title="Editar preço"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
             </div>
             <form id="edit-price-{{ lot['lot_id'] }}"
@@ -93,8 +127,8 @@
         {% endif %}
     </td>
 
-    <!-- Validade -->
-    <td class="td-valid px-3 py-2.5 whitespace-nowrap">
+    <!-- Validade (Estritamente FIXA) -->
+    <td class="td-valid px-3 py-2.5 whitespace-nowrap" id="valid-cell-{{ lot['lot_id'] }}">
         <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold sm:font-semibold
             {% if lot['date_valid'] < now_date %}
                 bg-red-100 text-red-700 dark:bg-red-900/60 dark:text-red-300
@@ -104,27 +138,98 @@
                 bg-yellow-100 text-yellow-700 dark:bg-yellow-900/60 dark:text-yellow-300
             {% else %}
                 bg-green-100 text-green-700 dark:bg-green-900/60 dark:text-green-300
-            {% endif %}">
+            {% endif %}"
+            title="Data de validade fixa do lote">
             <i data-lucide="calendar" class="card-label w-3 h-3"></i>
             <span>{{ lot['date_valid'][8:] }}/{{ lot['date_valid'][5:7] }}/{{ lot['date_valid'][:4] }}</span>
+            <i data-lucide="lock" class="w-2.5 h-2.5 text-gray-400 dark:text-gray-500 opacity-60 ml-0.5" title="Data fixa"></i>
         </span>
     </td>
 
     <!-- Localização (Loja / Galpão) -->
-    <td class="td-location px-3 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap">
+    <td class="td-location px-3 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap text-xs sm:text-sm" id="location-cell-{{ lot['lot_id'] }}">
         <span class="card-label text-[11px] text-gray-400 dark:text-gray-500 mr-1 font-semibold">Local:</span>
-        <span>{{ lot['location'] }}</span>
+        {% if lot.get('is_deleted') %}
+            <span>{{ lot['location'] }}</span>
+        {% else %}
+            <div id="view-location-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 whitespace-nowrap group/ploc">
+                <span class="font-medium text-gray-800 dark:text-gray-200">{{ lot['location'] }}</span>
+                <button type="button"
+                        onclick="startEditingLocation({{ lot['lot_id'] }})"
+                        class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer opacity-70 group-hover/ploc:opacity-100"
+                        title="Editar localização">
+                    <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                </button>
+            </div>
+            <form id="edit-location-{{ lot['lot_id'] }}"
+                  hx-post="/lote/{{ lot['lot_id'] }}/localizacao"
+                  hx-target="#location-cell-{{ lot['lot_id'] }}"
+                  hx-swap="outerHTML"
+                  onsubmit="window.isEditingLot = false;"
+                  class="inline-flex items-center gap-1"
+                  style="display: none;">
+                <select id="input-location-{{ lot['lot_id'] }}" name="location"
+                        class="border border-indigo-400 dark:border-indigo-500 rounded px-1.5 py-0.5 text-xs text-gray-800 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <option value="LOJA" {% if lot['location'] == 'LOJA' %}selected{% endif %}>LOJA</option>
+                    <option value="GALPÃO" {% if lot['location'] in ('GALPÃO', 'GALPAO') %}selected{% endif %}>GALPÃO</option>
+                </select>
+                <button type="submit"
+                        class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5 text-xs font-bold transition shadow-sm cursor-pointer"
+                        title="Salvar">
+                    <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                </button>
+                <button type="button"
+                        onclick="stopEditingLocation({{ lot['lot_id'] }})"
+                        class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded px-1.5 py-0.5 text-xs transition cursor-pointer"
+                        title="Cancelar">
+                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                </button>
+            </form>
+        {% endif %}
     </td>
     
     <!-- Status -->
-    <td class="td-status px-3 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap">
+    <td class="td-status px-3 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap text-xs sm:text-sm" id="status-cell-{{ lot['lot_id'] }}">
+        <span class="card-label text-[11px] text-gray-400 dark:text-gray-500 mr-1 font-semibold">Status:</span>
         {% if lot.get('is_deleted') %}
             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
                 <i data-lucide="trash-2" class="w-3 h-3"></i> Baixado
             </span>
         {% else %}
-            <span class="card-label text-[11px] text-gray-400 dark:text-gray-500 mr-1 font-semibold">Status:</span>
-            <span>{{ lot['status'] }}</span>
+            <div id="view-status-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 whitespace-nowrap group/pstat">
+                <span class="font-medium text-gray-800 dark:text-gray-200">{{ lot['status'] }}</span>
+                <button type="button"
+                        onclick="startEditingStatus({{ lot['lot_id'] }})"
+                        class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer opacity-70 group-hover/pstat:opacity-100"
+                        title="Editar status">
+                    <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                </button>
+            </div>
+            <form id="edit-status-{{ lot['lot_id'] }}"
+                  hx-post="/lote/{{ lot['lot_id'] }}/status"
+                  hx-target="#status-cell-{{ lot['lot_id'] }}"
+                  hx-swap="outerHTML"
+                  onsubmit="window.isEditingLot = false;"
+                  class="inline-flex items-center gap-1"
+                  style="display: none;">
+                <select id="input-status-{{ lot['lot_id'] }}" name="status"
+                        class="border border-indigo-400 dark:border-indigo-500 rounded px-1.5 py-0.5 text-xs text-gray-800 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <option value="NORMAL" {% if lot['status'] == 'NORMAL' %}selected{% endif %}>NORMAL</option>
+                    <option value="QUEIMA-DE-ESTOQUE" {% if lot['status'] == 'QUEIMA-DE-ESTOQUE' %}selected{% endif %}>QUEIMA-DE-ESTOQUE</option>
+                    <option value="PROMOCIONAL" {% if lot['status'] == 'PROMOCIONAL' %}selected{% endif %}>PROMOCIONAL</option>
+                </select>
+                <button type="submit"
+                        class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5 text-xs font-bold transition shadow-sm cursor-pointer"
+                        title="Salvar">
+                    <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                </button>
+                <button type="button"
+                        onclick="stopEditingStatus({{ lot['lot_id'] }})"
+                        class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded px-1.5 py-0.5 text-xs transition cursor-pointer"
+                        title="Cancelar">
+                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                </button>
+            </form>
         {% endif %}
     </td>
 
@@ -150,14 +255,22 @@
                 </button>
             </div>
         {% else %}
-            <button hx-delete="/lote/{{ lot['lot_id'] }}"
-                    hx-target="#lot-{{ lot['lot_id'] }}"
-                    hx-swap="outerHTML swap:0.15s"
-                    hx-confirm="Tem certeza que deseja deletar/dar baixa no lote #{{ lot['lot_id'] }} — {{ lot['product_name'] }}?"
-                    class="inline-flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold py-1.5 px-3.5 rounded-lg transition shadow-xs cursor-pointer"
-                    title="Deletar lote (enviar para auditoria)">
-                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> <span>Dar Baixa</span>
-            </button>
+            <div class="inline-flex items-center gap-1.5">
+                <button type="button"
+                        onclick="openEditLotModal({{ lot['lot_id'] }}, '{{ lot['product_name'] | replace('\'', '\\\'') }}', {{ lot['quant'] }}, {{ lot['price'] }}, '{{ lot['date_valid'] }}', '{{ lot['location'] }}', '{{ lot['status'] }}')"
+                        class="inline-flex items-center justify-center gap-1 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-bold py-1.5 px-2.5 rounded-lg transition shadow-xs cursor-pointer"
+                        title="Editar todas as informações do lote">
+                    <i data-lucide="edit-3" class="w-3.5 h-3.5"></i> <span>Editar</span>
+                </button>
+                <button hx-delete="/lote/{{ lot['lot_id'] }}"
+                        hx-target="#lot-{{ lot['lot_id'] }}"
+                        hx-swap="outerHTML swap:0.15s"
+                        hx-confirm="Tem certeza que deseja deletar/dar baixa no lote #{{ lot['lot_id'] }} — {{ lot['product_name'] }}?"
+                        class="inline-flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition shadow-xs cursor-pointer"
+                        title="Deletar lote (enviar para auditoria)">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> <span>Dar Baixa</span>
+                </button>
+            </div>
         {% endif %}
     </td>
 </tr>

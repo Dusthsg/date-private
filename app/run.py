@@ -35,6 +35,11 @@ from app.db import (
     query_lots,
     update_lot_quant,
     update_lot_price,
+    update_lot_product_name,
+    update_lot_location,
+    update_lot_status,
+    update_lot_full,
+    get_lot_by_id,
     delete_lot as db_delete_lot,
     restore_lot,
     purge_deleted_movement,
@@ -657,6 +662,106 @@ def update_price(lot_id: int):
     broadcast_reload("update_price", exclude_client_id=client_id)
 
     return render_template("partials/price_cell.html", lot={"lot_id": lot_id, "price": price})
+
+
+@app.route("/lote/<int:lot_id>/nome", methods=["POST", "PATCH"])
+def update_product_name(lot_id: int):
+    """Atualiza o nome do produto vinculado a um lote específico."""
+    name = request.form.get("name", "").strip().upper()
+    if not name:
+        return "Nome do produto é obrigatório", 400
+
+    try:
+        update_lot_product_name(lot_id, name)
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "EDITAR_NOME", f"Alterou nome do produto do lote #{lot_id} para '{name}'", target_id=lot_id, product_name=name, ip_address=ip)
+    except Exception as e:
+        return f"Erro ao salvar: {str(e)}", 500
+
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("update_name", exclude_client_id=client_id)
+
+    lot = get_lot_by_id(lot_id) or {"lot_id": lot_id, "product_name": name}
+    return render_template("partials/product_cell.html", lot=lot)
+
+
+@app.route("/lote/<int:lot_id>/localizacao", methods=["POST", "PATCH"])
+def update_location(lot_id: int):
+    """Atualiza a localização de um lote específico (LOJA / GALPÃO)."""
+    location = request.form.get("location", "LOJA").strip().upper()
+    try:
+        update_lot_location(lot_id, location)
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "EDITAR_LOCAL", f"Alterou localização do lote #{lot_id} para '{location}'", target_id=lot_id, ip_address=ip)
+    except Exception as e:
+        return f"Erro ao salvar: {str(e)}", 500
+
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("update_location", exclude_client_id=client_id)
+
+    lot = get_lot_by_id(lot_id) or {"lot_id": lot_id, "location": location}
+    return render_template("partials/location_cell.html", lot=lot)
+
+
+@app.route("/lote/<int:lot_id>/status", methods=["POST", "PATCH"])
+def update_status(lot_id: int):
+    """Atualiza o status de um lote específico."""
+    status = request.form.get("status", "NORMAL").strip().upper()
+    try:
+        update_lot_status(lot_id, status)
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "EDITAR_STATUS", f"Alterou status do lote #{lot_id} para '{status}'", target_id=lot_id, ip_address=ip)
+    except Exception as e:
+        return f"Erro ao salvar: {str(e)}", 500
+
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("update_status", exclude_client_id=client_id)
+
+    lot = get_lot_by_id(lot_id) or {"lot_id": lot_id, "status": status}
+    return render_template("partials/status_cell.html", lot=lot)
+
+
+@app.route("/lote/<int:lot_id>/editar", methods=["POST"])
+def edit_lot_full(lot_id: int):
+    """
+    Atualiza múltiplos campos operacionais do lote (nome, quant, price, location, status).
+    A data de validade é intencionalmente ignorada para garantir que permaneça FIXA.
+    Retorna a linha HTML inteira atualizada para swap instantâneo no HTMX.
+    """
+    name = request.form.get("name", "").strip().upper()
+    quant_raw = request.form.get("quant", "").strip()
+    price_raw = request.form.get("price", "").strip().replace(",", ".")
+    location = request.form.get("location", "LOJA").strip().upper()
+    status = request.form.get("status", "NORMAL").strip().upper()
+
+    if not name:
+        return "Nome do produto é obrigatório", 400
+
+    try:
+        quant = int(quant_raw) if quant_raw else None
+        price = float(price_raw) if price_raw else None
+    except ValueError:
+        return "Quantidade ou preço inválidos", 400
+
+    try:
+        update_lot_full(lot_id, name=name, quant=quant, price=price, location=location, status=status)
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "EDITAR_LOTE", f"Editou lote #{lot_id}: '{name}', {quant} un, R$ {price:.2f}, {location}, {status} (validade fixa)", target_id=lot_id, product_name=name, ip_address=ip)
+    except Exception as e:
+        return f"Erro ao atualizar lote: {str(e)}", 500
+
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("edit_lot", exclude_client_id=client_id)
+
+    lot = get_lot_by_id(lot_id)
+    if not lot:
+        return f"Lote #{lot_id} não encontrado", 404
+
+    return render_template("partials/lot_row_item.html", lot=lot)
 
 
 @app.route("/import-planilha", methods=["GET", "POST"])
