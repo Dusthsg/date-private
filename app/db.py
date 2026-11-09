@@ -800,6 +800,34 @@ def init_sqlite_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_username ON audit_logs(username);")
 
+    # Tabela de opções de campos de lotes customizáveis (localidades e status)
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS lot_field_options (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            field_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            color TEXT DEFAULT '',
+            is_default INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(field_type, name)
+        );
+    ''')
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lot_field_options_type ON lot_field_options(field_type);")
+
+    cur.execute("SELECT COUNT(*) FROM lot_field_options;")
+    if cur.fetchone()[0] == 0:
+        default_options = [
+            ("location", "LOJA", "sky", 1),
+            ("location", "GALPÃO", "indigo", 0),
+            ("status", "NORMAL", "emerald", 1),
+            ("status", "QUEIMA-DE-ESTOQUE", "amber", 0),
+            ("status", "PROMOCIONAL", "purple", 0),
+        ]
+        cur.executemany(
+            "INSERT OR IGNORE INTO lot_field_options (field_type, name, color, is_default) VALUES (?, ?, ?, ?);",
+            default_options
+        )
+
     # Garante usuário administrador padrão caso a tabela esteja vazia
     cur.execute("SELECT COUNT(*) FROM users;")
     if cur.fetchone()[0] == 0:
@@ -973,6 +1001,33 @@ def init_pg_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_username ON audit_logs(username);")
+
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS lot_field_options (
+                id SERIAL PRIMARY KEY,
+                field_type VARCHAR(50) NOT NULL,
+                name VARCHAR(100) NOT NULL,
+                color VARCHAR(50) DEFAULT '',
+                is_default INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_lot_field_options UNIQUE(field_type, name)
+            );
+        ''')
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_pg_lot_field_options_type ON lot_field_options(field_type);")
+
+        cur.execute("SELECT COUNT(*) FROM lot_field_options;")
+        if cur.fetchone()[0] == 0:
+            default_options = [
+                ("location", "LOJA", "sky", 1),
+                ("location", "GALPÃO", "indigo", 0),
+                ("status", "NORMAL", "emerald", 1),
+                ("status", "QUEIMA-DE-ESTOQUE", "amber", 0),
+                ("status", "PROMOCIONAL", "purple", 0),
+            ]
+            cur.executemany(
+                "INSERT INTO lot_field_options (field_type, name, color, is_default) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING;",
+                default_options
+            )
 
         cur.execute("SELECT COUNT(*) FROM users;")
         if cur.fetchone()[0] == 0:
@@ -1777,6 +1832,128 @@ def update_lot_status(lot_id: int, status: str) -> bool:
             except Exception as e:
                 print(f"⚠️ Erro ao sincronizar status no Postgres: {e}")
         threading.Thread(target=_sync_pg, daemon=True).start()
+    return True
+
+
+_field_options_cache = {}
+_field_options_lock = threading.Lock()
+
+def get_field_options(field_type: str) -> list:
+    """Retorna lista de opções de campo ('location' ou 'status') configuradas no banco."""
+    ft = (field_type or "").strip().lower()
+    with _field_options_lock:
+        if ft in _field_options_cache:
+            return list(_field_options_cache[ft])
+
+    options = []
+    try:
+        init_sqlite_db()
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+            s_conn.row_factory = sqlite3.Row
+            s_cur = s_conn.cursor()
+            s_cur.execute(
+                "SELECT id, field_type, name, color, is_default FROM lot_field_options WHERE field_type = ? ORDER BY is_default DESC, id ASC",
+                (ft,)
+            )
+            rows = s_cur.fetchall()
+            options = [dict(r) for r in rows]
+    except Exception as e:
+        print(f"⚠️ Erro ao buscar opções de campo ({ft}): {e}")
+
+    if not options:
+        if ft == "location":
+            options = [
+                {"id": 1, "field_type": "location", "name": "LOJA", "color": "sky", "is_default": 1},
+                {"id": 2, "field_type": "location", "name": "GALPÃO", "color": "indigo", "is_default": 0},
+            ]
+        elif ft == "status":
+            options = [
+                {"id": 3, "field_type": "status", "name": "NORMAL", "color": "emerald", "is_default": 1},
+                {"id": 4, "field_type": "status", "name": "QUEIMA-DE-ESTOQUE", "color": "amber", "is_default": 0},
+                {"id": 5, "field_type": "status", "name": "PROMOCIONAL", "color": "purple", "is_default": 0},
+            ]
+
+    with _field_options_lock:
+        _field_options_cache[ft] = options
+    return options
+
+
+def add_field_option(field_type: str, name: str, color: str = "") -> bool:
+    """Adiciona uma nova opção de campo configurável no banco."""
+    ft = (field_type or "").strip().lower()
+    nm = (name or "").strip().upper()
+    if not nm or ft not in ("location", "status"):
+        return False
+
+    init_sqlite_db()
+    with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+        s_conn.execute(
+            "INSERT OR IGNORE INTO lot_field_options (field_type, name, color, is_default) VALUES (?, ?, ?, 0)",
+            (ft, nm, color)
+        )
+        s_conn.commit()
+
+    with _field_options_lock:
+        _field_options_cache.pop(ft, None)
+
+    if is_postgres_configured():
+        def _sync_pg_add():
+            try:
+                p_conn = _connect_pg_direct(timeout=5)
+                if p_conn:
+                    with p_conn.cursor() as cur:
+                        cur.execute(
+                            "INSERT INTO lot_field_options (field_type, name, color, is_default) VALUES (%s, %s, %s, 0) ON CONFLICT DO NOTHING",
+                            (ft, nm, color)
+                        )
+                    p_conn.commit()
+                    p_conn.close()
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar add_field_option no Postgres: {e}")
+        threading.Thread(target=_sync_pg_add, daemon=True).start()
+
+    return True
+
+
+def delete_field_option(field_type: str, name: str) -> bool:
+    """Remove uma opção de campo customizada."""
+    ft = (field_type or "").strip().lower()
+    nm = (name or "").strip().upper()
+    if not nm or ft not in ("location", "status"):
+        return False
+    # Opções padrão protegidas
+    if ft == "location" and nm == "LOJA":
+        return False
+    if ft == "status" and nm == "NORMAL":
+        return False
+
+    init_sqlite_db()
+    with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+        s_conn.execute(
+            "DELETE FROM lot_field_options WHERE field_type = ? AND name = ?",
+            (ft, nm)
+        )
+        s_conn.commit()
+
+    with _field_options_lock:
+        _field_options_cache.pop(ft, None)
+
+    if is_postgres_configured():
+        def _sync_pg_del():
+            try:
+                p_conn = _connect_pg_direct(timeout=5)
+                if p_conn:
+                    with p_conn.cursor() as cur:
+                        cur.execute(
+                            "DELETE FROM lot_field_options WHERE field_type = %s AND name = %s",
+                            (ft, nm)
+                        )
+                    p_conn.commit()
+                    p_conn.close()
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar delete_field_option no Postgres: {e}")
+        threading.Thread(target=_sync_pg_del, daemon=True).start()
+
     return True
 
 

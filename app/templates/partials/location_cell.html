@@ -1,40 +1,55 @@
-<td class="td-location px-3 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap text-xs sm:text-sm" id="location-cell-{{ lot['lot_id'] }}">
+<td class="td-location px-3 py-2.5 whitespace-nowrap text-xs" id="location-cell-{{ lot['lot_id'] }}">
     <span class="card-label text-[11px] text-gray-400 dark:text-gray-500 mr-1 font-semibold">Local:</span>
-    {% if lot.get('is_deleted') %}
-        <span>{{ lot['location'] }}</span>
-    {% else %}
-        <div id="view-location-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 whitespace-nowrap group/ploc">
-            <span class="font-medium text-gray-800 dark:text-gray-200">{{ lot['location'] }}</span>
+    <div class="relative inline-block text-left" id="loc-dropdown-{{ lot['lot_id'] }}">
+        {% if lot.get('is_deleted') %}
+            <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold
+                {% if lot['location'] in ('GALPÃO', 'GALPAO') %}
+                    bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/60
+                {% elif lot['location'] == 'LOJA' %}
+                    bg-sky-50 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300 border border-sky-200/60 dark:border-sky-800/60
+                {% else %}
+                    bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700
+                {% endif %}"
+                title="Localização do lote">
+                <i data-lucide="map-pin" class="w-3 h-3"></i>
+                <span>{{ lot['location'] }}</span>
+            </span>
+        {% else %}
             <button type="button"
-                    onclick="startEditingLocation({{ lot['lot_id'] }})"
-                    class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer opacity-70 group-hover/ploc:opacity-100"
-                    title="Editar localização">
-                <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                    onclick="window.toggleLotDropdown('menu-loc-{{ lot['lot_id'] }}', event)"
+                    class="lot-dropdown-trigger inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold sm:font-semibold border transition cursor-pointer select-none active:scale-95 shadow-2xs hover:shadow-xs
+                    {% if lot['location'] in ('GALPÃO', 'GALPAO') %}
+                        bg-indigo-100 text-indigo-800 dark:bg-indigo-950/70 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-200 dark:hover:bg-indigo-900/60
+                    {% elif lot['location'] == 'LOJA' %}
+                        bg-sky-100 text-sky-800 dark:bg-sky-950/70 dark:text-sky-300 border-sky-200 dark:border-sky-800 hover:bg-sky-200 dark:hover:bg-sky-900/60
+                    {% else %}
+                        bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700
+                    {% endif %}"
+                    title="Alterar localidade (Menu rápido)">
+                <i data-lucide="map-pin" class="w-3 h-3 text-sky-600 dark:text-sky-400"></i>
+                <span>{{ lot['location'] }}</span>
+                <i data-lucide="chevron-down" class="w-2.5 h-2.5 opacity-60"></i>
             </button>
-        </div>
-        <form id="edit-location-{{ lot['lot_id'] }}"
-              hx-post="/lote/{{ lot['lot_id'] }}/localizacao"
-              hx-target="#location-cell-{{ lot['lot_id'] }}"
-              hx-swap="outerHTML"
-              onsubmit="window.isEditingLot = false;"
-              class="inline-flex items-center gap-1"
-              style="display: none;">
-            <select id="input-location-{{ lot['lot_id'] }}" name="location"
-                    class="border border-indigo-400 dark:border-indigo-500 rounded px-1.5 py-0.5 text-xs text-gray-800 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                <option value="LOJA" {% if lot['location'] == 'LOJA' %}selected{% endif %}>LOJA</option>
-                <option value="GALPÃO" {% if lot['location'] in ('GALPÃO', 'GALPAO') %}selected{% endif %}>GALPÃO</option>
-            </select>
-            <button type="submit"
-                    class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5 text-xs font-bold transition shadow-sm cursor-pointer"
-                    title="Salvar">
-                <i data-lucide="check" class="w-3.5 h-3.5"></i>
-            </button>
-            <button type="button"
-                    onclick="stopEditingLocation({{ lot['lot_id'] }})"
-                    class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded px-1.5 py-0.5 text-xs transition cursor-pointer"
-                    title="Cancelar">
-                <i data-lucide="x" class="w-3.5 h-3.5"></i>
-            </button>
-        </form>
-    {% endif %}
+            <div id="menu-loc-{{ lot['lot_id'] }}"
+                 class="lot-floating-menu hidden absolute left-0 mt-1 min-w-[130px] bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                <div class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-700/60">
+                    Localidade
+                </div>
+                {% for loc_opt in (available_locations or [{'name': 'LOJA'}, {'name': 'GALPÃO'}]) %}
+                <button type="button"
+                        hx-post="/lote/{{ lot['lot_id'] }}/localizacao"
+                        hx-vals='{"location": "{{ loc_opt.name }}"}'
+                        hx-target="#location-cell-{{ lot['lot_id'] }}"
+                        hx-swap="outerHTML"
+                        onclick="window.closeAllLotDropdowns()"
+                        class="w-full text-left px-3 py-1.5 text-xs font-medium flex items-center justify-between hover:bg-sky-50 dark:hover:bg-sky-950/40 text-gray-700 dark:text-gray-200 hover:text-sky-600 dark:hover:text-sky-400 transition cursor-pointer">
+                    <span class="flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full {% if loc_opt.name in ('GALPÃO', 'GALPAO') %}bg-indigo-500{% else %}bg-sky-500{% endif %}"></span> {{ loc_opt.name }}
+                    </span>
+                    {% if lot['location'] == loc_opt.name %}<i data-lucide="check" class="w-3.5 h-3.5 text-sky-600 dark:text-sky-400"></i>{% endif %}
+                </button>
+                {% endfor %}
+            </div>
+        {% endif %}
+    </div>
 </td>

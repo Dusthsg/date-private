@@ -60,6 +60,9 @@ from app.db import (
     generate_api_token,
     log_audit,
     query_audit_logs,
+    get_field_options,
+    add_field_option,
+    delete_field_option,
     DATABASE_URL
 )
 
@@ -196,6 +199,8 @@ def inject_context():
         "current_user_name": u_name,
         "current_user_role": u_role,
         "active_operator": active_op,
+        "available_locations": get_field_options("location"),
+        "available_statuses": get_field_options("status"),
     }
 
 
@@ -1542,6 +1547,81 @@ def admin_generate_token_route():
 
     token = generate_api_token()
     return jsonify({"success": True, "token": token})
+
+
+@app.route("/api/admin/field-options", methods=["GET"])
+def get_admin_field_options():
+    if not session.get("user_id") or session.get("role") != "admin":
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    return jsonify({
+        "success": True,
+        "locations": get_field_options("location"),
+        "statuses": get_field_options("status")
+    })
+
+
+@app.route("/api/admin/field-options", methods=["POST"])
+def add_admin_field_option_route():
+    if not session.get("user_id") or session.get("role") != "admin":
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    data = request.get_json(silent=True) or request.form
+    field_type = (data.get("field_type") or "").strip().lower()
+    name = (data.get("name") or "").strip().upper()
+    color = (data.get("color") or "").strip().lower()
+
+    if not name or field_type not in ("location", "status"):
+        return jsonify({"success": False, "error": "Tipo de campo e nome são obrigatórios"}), 400
+
+    ok = add_field_option(field_type, name, color)
+    if not ok:
+        return jsonify({"success": False, "error": "Não foi possível adicionar (já existe ou inválido)"}), 400
+
+    effective_user = get_effective_user()
+    ip = request.remote_addr or "127.0.0.1"
+    tipo_desc = "Localidade" if field_type == "location" else "Status"
+    log_audit(effective_user, "ADD_CAMPO_OPCAO", f"Adicionou opção '{name}' para {tipo_desc}", ip_address=ip)
+
+    return jsonify({
+        "success": True,
+        "message": f"{tipo_desc} '{name}' adicionada com sucesso!",
+        "locations": get_field_options("location"),
+        "statuses": get_field_options("status")
+    })
+
+
+@app.route("/api/admin/field-options/<field_type>/<name>", methods=["DELETE"])
+@app.route("/api/admin/field-options/<field_type>/delete", methods=["POST"])
+def delete_admin_field_option_route(field_type: str, name: str = None):
+    if not session.get("user_id") or session.get("role") != "admin":
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    if not name:
+        data = request.get_json(silent=True) or request.form
+        name = (data.get("name") or "").strip().upper()
+
+    field_type = (field_type or "").strip().lower()
+    name = (name or "").strip().upper()
+
+    if (field_type == "location" and name == "LOJA") or (field_type == "status" and name == "NORMAL"):
+        return jsonify({"success": False, "error": "Esta opção padrão do sistema é protegida e não pode ser removida"}), 400
+
+    ok = delete_field_option(field_type, name)
+    if not ok:
+        return jsonify({"success": False, "error": "Não foi possível remover a opção"}), 400
+
+    effective_user = get_effective_user()
+    ip = request.remote_addr or "127.0.0.1"
+    tipo_desc = "Localidade" if field_type == "location" else "Status"
+    log_audit(effective_user, "DEL_CAMPO_OPCAO", f"Removeu opção '{name}' de {tipo_desc}", ip_address=ip)
+
+    return jsonify({
+        "success": True,
+        "message": f"{tipo_desc} '{name}' removida com sucesso!",
+        "locations": get_field_options("location"),
+        "statuses": get_field_options("status")
+    })
 
 if __name__ == "__main__":
     ip = get_local_ip()

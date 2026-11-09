@@ -141,92 +141,11 @@
         </span>
     </td>
 
-    <!-- Localização (Loja / Galpão) -->
-    <td class="td-location px-3 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap text-xs sm:text-sm" id="location-cell-{{ lot['lot_id'] }}">
-        <span class="card-label text-[11px] text-gray-400 dark:text-gray-500 mr-1 font-semibold">Local:</span>
-        {% if lot.get('is_deleted') %}
-            <span>{{ lot['location'] }}</span>
-        {% else %}
-            <div id="view-location-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 whitespace-nowrap group/ploc">
-                <span class="font-medium text-gray-800 dark:text-gray-200">{{ lot['location'] }}</span>
-                <button type="button"
-                        onclick="startEditingLocation({{ lot['lot_id'] }})"
-                        class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer opacity-70 group-hover/ploc:opacity-100"
-                        title="Editar localização">
-                    <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
-                </button>
-            </div>
-            <form id="edit-location-{{ lot['lot_id'] }}"
-                  hx-post="/lote/{{ lot['lot_id'] }}/localizacao"
-                  hx-target="#location-cell-{{ lot['lot_id'] }}"
-                  hx-swap="outerHTML"
-                  onsubmit="window.isEditingLot = false;"
-                  class="inline-flex items-center gap-1"
-                  style="display: none;">
-                <select id="input-location-{{ lot['lot_id'] }}" name="location"
-                        class="border border-indigo-400 dark:border-indigo-500 rounded px-1.5 py-0.5 text-xs text-gray-800 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                    <option value="LOJA" {% if lot['location'] == 'LOJA' %}selected{% endif %}>LOJA</option>
-                    <option value="GALPÃO" {% if lot['location'] in ('GALPÃO', 'GALPAO') %}selected{% endif %}>GALPÃO</option>
-                </select>
-                <button type="submit"
-                        class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5 text-xs font-bold transition shadow-sm cursor-pointer"
-                        title="Salvar">
-                    <i data-lucide="check" class="w-3.5 h-3.5"></i>
-                </button>
-                <button type="button"
-                        onclick="stopEditingLocation({{ lot['lot_id'] }})"
-                        class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded px-1.5 py-0.5 text-xs transition cursor-pointer"
-                        title="Cancelar">
-                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
-                </button>
-            </form>
-        {% endif %}
-    </td>
+    <!-- Localização (Loja / Galpão / Custom) -->
+    {% include "partials/location_cell.html" %}
     
-    <!-- Status -->
-    <td class="td-status px-3 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap text-xs sm:text-sm" id="status-cell-{{ lot['lot_id'] }}">
-        <span class="card-label text-[11px] text-gray-400 dark:text-gray-500 mr-1 font-semibold">Status:</span>
-        {% if lot.get('is_deleted') %}
-            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
-                <i data-lucide="trash-2" class="w-3 h-3"></i> Baixado
-            </span>
-        {% else %}
-            <div id="view-status-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 whitespace-nowrap group/pstat">
-                <span class="font-medium text-gray-800 dark:text-gray-200">{{ lot['status'] }}</span>
-                <button type="button"
-                        onclick="startEditingStatus({{ lot['lot_id'] }})"
-                        class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer opacity-70 group-hover/pstat:opacity-100"
-                        title="Editar status">
-                    <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
-                </button>
-            </div>
-            <form id="edit-status-{{ lot['lot_id'] }}"
-                  hx-post="/lote/{{ lot['lot_id'] }}/status"
-                  hx-target="#status-cell-{{ lot['lot_id'] }}"
-                  hx-swap="outerHTML"
-                  onsubmit="window.isEditingLot = false;"
-                  class="inline-flex items-center gap-1"
-                  style="display: none;">
-                <select id="input-status-{{ lot['lot_id'] }}" name="status"
-                        class="border border-indigo-400 dark:border-indigo-500 rounded px-1.5 py-0.5 text-xs text-gray-800 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                    <option value="NORMAL" {% if lot['status'] == 'NORMAL' %}selected{% endif %}>NORMAL</option>
-                    <option value="QUEIMA-DE-ESTOQUE" {% if lot['status'] == 'QUEIMA-DE-ESTOQUE' %}selected{% endif %}>QUEIMA-DE-ESTOQUE</option>
-                    <option value="PROMOCIONAL" {% if lot['status'] == 'PROMOCIONAL' %}selected{% endif %}>PROMOCIONAL</option>
-                </select>
-                <button type="submit"
-                        class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5 text-xs font-bold transition shadow-sm cursor-pointer"
-                        title="Salvar">
-                    <i data-lucide="check" class="w-3.5 h-3.5"></i>
-                </button>
-                <button type="button"
-                        onclick="stopEditingStatus({{ lot['lot_id'] }})"
-                        class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded px-1.5 py-0.5 text-xs transition cursor-pointer"
-                        title="Cancelar">
-                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
-                </button>
-            </form>
-        {% endif %}
-    </td>
+    <!-- Status (Normal / Queima / Custom) -->
+    {% include "partials/status_cell.html" %}
 
     <!-- Botões de Ação -->
     <td class="td-actions px-3 py-2.5 text-center whitespace-nowrap">
@@ -250,13 +169,7 @@
                 </button>
             </div>
         {% else %}
-            <div class="inline-flex items-center gap-1.5">
-                <button type="button"
-                        onclick="openEditLotModal({{ lot['lot_id'] }}, '{{ lot['product_name'] | replace('\'', '\\\'') }}', {{ lot['quant'] }}, {{ lot['price'] }}, '{{ lot['date_valid'] }}', '{{ lot['location'] }}', '{{ lot['status'] }}')"
-                        class="inline-flex items-center justify-center gap-1 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-bold py-1.5 px-2.5 rounded-lg transition shadow-xs cursor-pointer"
-                        title="Editar todas as informações do lote">
-                    <i data-lucide="edit-3" class="w-3.5 h-3.5"></i> <span>Editar</span>
-                </button>
+            <div class="inline-flex items-center justify-center">
                 <button hx-delete="/lote/{{ lot['lot_id'] }}"
                         hx-target="#lot-{{ lot['lot_id'] }}"
                         hx-swap="outerHTML swap:0.15s"

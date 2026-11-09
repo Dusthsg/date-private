@@ -293,6 +293,24 @@
             display: block !important;
             width: 100% !important;
         }
+
+        /* Menus Flutuantes de Localidade e Status com Estilo Semelhante à Data */
+        .lot-floating-menu {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        }
+        tr.lot-row {
+            position: relative;
+        }
+        tr.lot-row:focus-within,
+        tr.lot-row:has(.lot-floating-menu:not(.hidden)) {
+            z-index: 50 !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-location .lot-dropdown-trigger,
+        #lot-display-container.view-mode-table tr.lot-row td.td-status .lot-dropdown-trigger {
+            padding: 0.18rem 0.52rem !important;
+            font-size: 0.75rem !important;
+            line-height: 1.15 !important;
+        }
 </style>
     <script>
                 // Suporte a Lucide Icons com re-renderização de alta performance com escopo e requestAnimationFrame
@@ -409,49 +427,39 @@
             window.refreshIcons();
         }
 
-        function startEditingLocation(lotId) {
-            window.isEditingLot = true;
-            const viewDiv = document.getElementById('view-location-' + lotId);
-            if (viewDiv) viewDiv.style.display = 'none';
-            const editForm = document.getElementById('edit-location-' + lotId);
-            if (editForm) {
-                editForm.style.display = 'flex';
-                const input = document.getElementById('input-location-' + lotId);
-                if (input) input.focus();
+        /* Menus Flutuantes Rápidos para Localidade e Status */
+        window.toggleLotDropdown = function(menuId, evt) {
+            if (evt) {
+                evt.stopPropagation();
+                evt.preventDefault();
             }
-            window.refreshIcons();
-        }
-
-        function stopEditingLocation(lotId) {
-            window.isEditingLot = false;
-            const editForm = document.getElementById('edit-location-' + lotId);
-            if (editForm) editForm.style.display = 'none';
-            const viewDiv = document.getElementById('view-location-' + lotId);
-            if (viewDiv) viewDiv.style.display = 'flex';
-            window.refreshIcons();
-        }
-
-        function startEditingStatus(lotId) {
-            window.isEditingLot = true;
-            const viewDiv = document.getElementById('view-status-' + lotId);
-            if (viewDiv) viewDiv.style.display = 'none';
-            const editForm = document.getElementById('edit-status-' + lotId);
-            if (editForm) {
-                editForm.style.display = 'flex';
-                const input = document.getElementById('input-status-' + lotId);
-                if (input) input.focus();
+            const targetMenu = document.getElementById(menuId);
+            if (!targetMenu) return;
+            const isClosed = targetMenu.classList.contains('hidden');
+            window.closeAllLotDropdowns();
+            if (isClosed) {
+                targetMenu.classList.remove('hidden');
+                window.refreshIcons(targetMenu);
             }
-            window.refreshIcons();
-        }
+        };
 
-        function stopEditingStatus(lotId) {
-            window.isEditingLot = false;
-            const editForm = document.getElementById('edit-status-' + lotId);
-            if (editForm) editForm.style.display = 'none';
-            const viewDiv = document.getElementById('view-status-' + lotId);
-            if (viewDiv) viewDiv.style.display = 'flex';
-            window.refreshIcons();
-        }
+        window.closeAllLotDropdowns = function() {
+            document.querySelectorAll('.lot-floating-menu').forEach(menu => {
+                menu.classList.add('hidden');
+            });
+        };
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.lot-floating-menu') && !e.target.closest('.lot-dropdown-trigger')) {
+                window.closeAllLotDropdowns();
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                window.closeAllLotDropdowns();
+            }
+        });
 
         window.openEditLotModal = function(lotId, name, quant, price, dateValid, location, status) {
             const modal = document.getElementById('modal-edit-lot');

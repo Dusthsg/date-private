@@ -441,12 +441,92 @@
         </div>
     </div>
 
+    <!-- Seção 4: Campos Customizados do Sistema (Localidades e Status de Lotes) -->
+    <div class="bg-white dark:bg-gray-800 rounded-2xl p-4 sm:p-6 shadow-sm border border-gray-200/80 dark:border-gray-700 transition-colors">
+        <div class="flex items-center gap-2 mb-4">
+            <div class="p-2 rounded-lg bg-teal-50 dark:bg-teal-950/60 text-teal-600 dark:text-teal-400">
+                <i data-lucide="sliders-horizontal" class="w-5 h-5"></i>
+            </div>
+            <div>
+                <h2 class="text-base sm:text-lg font-bold text-gray-900 dark:text-white">Campos Predefinidos de Lotes</h2>
+                <p class="text-xs text-gray-500 dark:text-gray-400">Configure as opções disponíveis nos menus flutuantes de Localidade e Status dos lotes.</p>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Coluna 1: Localidades -->
+            <div class="p-4 rounded-xl border border-gray-200/80 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/40 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="map-pin" class="w-4 h-4 text-sky-600 dark:text-sky-400"></i>
+                            <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200">Localidades</h3>
+                        </div>
+                        <span class="text-[11px] text-gray-400">Opções ativas</span>
+                    </div>
+
+                    <!-- Lista de Badges de Localidades -->
+                    <div id="admin-locations-list" class="flex flex-wrap gap-2 mb-4 min-h-[44px] items-center">
+                        <div class="text-xs text-gray-400">Carregando localidades...</div>
+                    </div>
+                </div>
+
+                <!-- Formulário para Adicionar Localidade -->
+                <form onsubmit="submitAddFieldOption(event, 'location')" class="flex items-center gap-2 mt-2 pt-3 border-t border-gray-200/60 dark:border-gray-700/60">
+                    <input type="text"
+                           id="input-new-location"
+                           placeholder="Nova localidade (Ex: DEPÓSITO)"
+                           required
+                           class="flex-1 uppercase rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-1.5 text-xs text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-sky-500 shadow-xs">
+                    <button type="submit"
+                            class="bg-sky-600 hover:bg-sky-700 active:scale-95 text-white font-bold text-xs py-1.5 px-3 rounded-xl transition shadow-xs flex items-center gap-1 cursor-pointer shrink-0">
+                        <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                        <span>Adicionar</span>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Coluna 2: Status -->
+            <div class="p-4 rounded-xl border border-gray-200/80 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/40 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="tag" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i>
+                            <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200">Status Operacionais</h3>
+                        </div>
+                        <span class="text-[11px] text-gray-400">Opções ativas</span>
+                    </div>
+
+                    <!-- Lista de Badges de Status -->
+                    <div id="admin-statuses-list" class="flex flex-wrap gap-2 mb-4 min-h-[44px] items-center">
+                        <div class="text-xs text-gray-400">Carregando status...</div>
+                    </div>
+                </div>
+
+                <!-- Formulário para Adicionar Status -->
+                <form onsubmit="submitAddFieldOption(event, 'status')" class="flex items-center gap-2 mt-2 pt-3 border-t border-gray-200/60 dark:border-gray-700/60">
+                    <input type="text"
+                           id="input-new-status"
+                           placeholder="Novo status (Ex: LIQUIDAÇÃO)"
+                           required
+                           class="flex-1 uppercase rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-1.5 text-xs text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-xs">
+                    <button type="submit"
+                            class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs py-1.5 px-3 rounded-xl transition shadow-xs flex items-center gap-1 cursor-pointer shrink-0">
+                        <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                        <span>Adicionar</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <!-- Scripts Client-side do Painel de Administração -->
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     loadAuditLogsAdmin();
+    loadFieldOptionsAdmin();
 });
 
 function togglePasswordVisibility(inputId, iconId) {
@@ -707,6 +787,107 @@ async function loadAuditLogsAdmin() {
                 </td>
             </tr>
         `;
+    }
+}
+
+async function loadFieldOptionsAdmin() {
+    try {
+        const res = await fetch('/api/admin/field-options');
+        const data = await res.json();
+        if (!data.success) return;
+
+        // Render Localidades
+        const locContainer = document.getElementById('admin-locations-list');
+        if (locContainer && data.locations) {
+            locContainer.innerHTML = data.locations.map(loc => {
+                const isLoja = loc.name === 'LOJA';
+                return `
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-sky-100 text-sky-800 dark:bg-sky-950/70 dark:text-sky-300 border border-sky-200 dark:border-sky-800 shadow-2xs">
+                        <i data-lucide="map-pin" class="w-3 h-3 text-sky-600"></i>
+                        <span>${loc.name}</span>
+                        ${!isLoja ? `
+                            <button type="button" onclick="removeFieldOptionAdmin('location', '${loc.name}')" class="text-sky-400 hover:text-rose-600 transition ml-0.5 cursor-pointer" title="Remover localidade">
+                                <i data-lucide="x" class="w-3 h-3"></i>
+                            </button>
+                        ` : '<span class="text-[9px] text-sky-500 font-bold ml-0.5">(Padrão)</span>'}
+                    </span>
+                `;
+            }).join('');
+        }
+
+        // Render Status
+        const statContainer = document.getElementById('admin-statuses-list');
+        if (statContainer && data.statuses) {
+            statContainer.innerHTML = data.statuses.map(st => {
+                const isNormal = st.name === 'NORMAL';
+                const colorClass = st.name === 'QUEIMA-DE-ESTOQUE' 
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                    : (st.name === 'PROMOCIONAL'
+                        ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/70 dark:text-purple-300 border-purple-200 dark:border-purple-800'
+                        : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800');
+                return `
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${colorClass} border shadow-2xs">
+                        <i data-lucide="tag" class="w-3 h-3"></i>
+                        <span>${st.name}</span>
+                        ${!isNormal ? `
+                            <button type="button" onclick="removeFieldOptionAdmin('status', '${st.name}')" class="hover:text-rose-600 transition ml-0.5 cursor-pointer opacity-70 hover:opacity-100" title="Remover status">
+                                <i data-lucide="x" class="w-3 h-3"></i>
+                            </button>
+                        ` : '<span class="text-[9px] opacity-75 font-bold ml-0.5">(Padrão)</span>'}
+                    </span>
+                `;
+            }).join('');
+        }
+
+        if (window.refreshIcons) window.refreshIcons();
+    } catch (err) {
+        console.error('Erro ao carregar opções de campos:', err);
+    }
+}
+
+async function submitAddFieldOption(e, fieldType) {
+    e.preventDefault();
+    const inputId = fieldType === 'location' ? 'input-new-location' : 'input-new-status';
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    const val = input.value.trim().toUpperCase();
+    if (!val) return;
+
+    try {
+        const res = await fetch('/api/admin/field-options', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ field_type: fieldType, name: val })
+        });
+        const data = await res.json();
+        if (data.success) {
+            input.value = '';
+            if (window.showToast) window.showToast(data.message, 'success');
+            loadFieldOptionsAdmin();
+        } else {
+            if (window.showToast) window.showToast(data.error || 'Erro ao adicionar opção', 'error');
+        }
+    } catch (err) {
+        if (window.showToast) window.showToast('Erro de conexão ao adicionar opção', 'error');
+    }
+}
+
+async function removeFieldOptionAdmin(fieldType, name) {
+    if (!confirm(`Deseja realmente remover a opção "${name}" de ${fieldType === 'location' ? 'Localidade' : 'Status'}?`)) return;
+
+    try {
+        const res = await fetch(`/api/admin/field-options/${fieldType}/${encodeURIComponent(name)}`, {
+            method: 'DELETE'
+        });
+        const data = await res.json();
+        if (data.success) {
+            if (window.showToast) window.showToast(data.message, 'success');
+            loadFieldOptionsAdmin();
+        } else {
+            if (window.showToast) window.showToast(data.error || 'Erro ao remover opção', 'error');
+        }
+    } catch (err) {
+        if (window.showToast) window.showToast('Erro de conexão ao remover opção', 'error');
     }
 }
 </script>
