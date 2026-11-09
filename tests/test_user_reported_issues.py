@@ -6,8 +6,11 @@ Cada teste abaixo reproduz e valida uma das falhas ou exigências citadas pelo u
 ao longo do desenvolvimento do projeto.
 """
 
-import unittest
 import os
+os.environ["DATELIMIT_TESTING"] = "1"
+os.environ["TESTING"] = "true"
+
+import unittest
 import io
 import json
 import sqlite3
@@ -16,7 +19,7 @@ import uuid
 
 # Importa a aplicação Flask e camada de banco
 from app.run import app
-from app.db import SQLITE_PATH, is_postgres
+from app.db import SQLITE_PATH, is_postgres, set_test_db
 from app.spreadsheet_storage import (
     save_spreadsheet_backup,
     get_spreadsheet_backups,
@@ -61,6 +64,7 @@ class TestUserReportedIssues(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        set_test_db()
         app.config['TESTING'] = True
         cls.client = app.test_client()
 

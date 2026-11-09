@@ -48,6 +48,8 @@ Thumbs.db
 *.db-wal
 *.db-shm
 database/products_*.db
+database/test_products.db*
+database/products_test*.db
 !database/products.db
 
 # Logs

@@ -1,8 +1,16 @@
+import os
+os.environ["DATELIMIT_TESTING"] = "1"
+os.environ["TESTING"] = "true"
+
 import unittest
 from app.run import app
-from app.db import create_lot, get_lot_by_id, delete_lot, update_lot_full
+from app.db import create_lot, get_lot_by_id, delete_lot, update_lot_full, set_test_db, SQLITE_PATH
 
 class TestLotFieldEditing(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        set_test_db()
+
     def setUp(self):
         self.app = app
         self.client = app.test_client()

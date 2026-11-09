@@ -3,14 +3,18 @@ Bateria de Testes Automatizados - Sistema de Login, Permissões e Auditoria Comp
 DateLimit — Branch: feat/auth-audit
 """
 
-import unittest
 import os
+os.environ["DATELIMIT_TESTING"] = "1"
+os.environ["TESTING"] = "true"
+
+import unittest
 import json
 import uuid
 import sqlite3
 from app.run import app
 from app.db import (
     SQLITE_PATH,
+    set_test_db,
     get_user_by_username,
     get_user_by_pin,
     list_users,
@@ -26,6 +30,7 @@ class TestAuthAndAudit(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        set_test_db()
         admin = get_user_by_username("admin")
         if admin:
             update_user(admin["id"], name="Administrador", password="admin123", pin="1234", role="admin", active=True)
