@@ -237,7 +237,7 @@ def check_authentication():
     if (
         path.startswith("/static")
         or path.startswith("/favicon")
-        or path in ("/login", "/ws", "/api/operator/switch")
+        or path in ("/login", "/ws", "/api/operator/switch", "/healthz", "/api/health")
     ):
         return None
 
@@ -247,6 +247,27 @@ def check_authentication():
         if request.headers.get("HX-Request"):
             return Response("", 200, {"HX-Redirect": "/login"})
         return redirect("/login")
+
+
+@app.route("/healthz")
+@app.route("/api/health")
+def healthz_route():
+    from app.db import get_db_status, get_database_url, PSYCOPG2_AVAILABLE, PG8000_AVAILABLE
+    st = get_db_status()
+    db_url = get_database_url()
+    masked = f"{db_url[:12]}...{db_url[-12:]}" if len(db_url) > 24 else ("Configurada" if db_url else "NÃO CONFIGURADA")
+    return jsonify({
+        "status": "healthy",
+        "postgres_configured": st["postgres_configured"],
+        "postgres_online": st["postgres_online"],
+        "db_name": st["db_name"],
+        "database_url_status": masked,
+        "psycopg2_driver": PSYCOPG2_AVAILABLE,
+        "pg8000_driver": PG8000_AVAILABLE,
+        "last_error": st.get("last_error"),
+        "total_products": st.get("total_products"),
+        "total_lots": st.get("total_lots"),
+    })
 
 
 # ── Otimizações Globais de Rede e Cache ────────────────────────────────────────

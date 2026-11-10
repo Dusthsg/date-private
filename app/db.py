@@ -49,7 +49,21 @@ def set_test_db(path: Optional[str] = None):
     SQLITE_PATH = get_sqlite_path()
     init_sqlite_db()
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+def get_database_url() -> str:
+    """Retorna a URL de conexão do PostgreSQL limpa, normalizada e dinâmica."""
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        try:
+            from dotenv import dotenv_values
+            env_dict = dotenv_values(BASE_DIR / ".env")
+            url = (env_dict.get("DATABASE_URL") or "").strip()
+        except Exception:
+            pass
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[11:]
+    return url
+
+DATABASE_URL = get_database_url()
 
 try:
     import psycopg2
@@ -71,14 +85,17 @@ except ImportError:
     PG8000_AVAILABLE = False
 
 
-def _connect_pg_direct(timeout=4):
+def _connect_pg_direct(timeout=10):
     """
-    Estabelece uma conexão direta com o PostgreSQL com statement_timeout de proteção (4s)
+    Estabelece uma conexão direta com o PostgreSQL com statement_timeout de proteção (10s)
     e keepalives TCP agressivos para evitar travamentos em oscilações de rede.
     """
+    db_url = get_database_url()
+    if not db_url:
+        raise ValueError("DATABASE_URL não configurada no ambiente.")
     if PSYCOPG2_AVAILABLE:
         return psycopg2.connect(
-            DATABASE_URL,
+            db_url,
             keepalives=1,
             keepalives_idle=20,
             keepalives_interval=5,
@@ -86,7 +103,7 @@ def _connect_pg_direct(timeout=4):
             connect_timeout=timeout,
         )
     elif PG8000_AVAILABLE:
-        p = urllib.parse.urlparse(DATABASE_URL)
+        p = urllib.parse.urlparse(db_url)
         ssl_ctx = ssl.create_default_context()
         return pg8000.dbapi.connect(
             user=p.username,
@@ -142,7 +159,8 @@ def is_postgres_configured() -> bool:
     """Verifica se as configurações para PostgreSQL estão presentes no ambiente."""
     if os.environ.get("DATELIMIT_TESTING") == "1" or os.environ.get("TESTING") == "true":
         return False  # Testes NUNCA tocam no PostgreSQL / Neon do usuário
-    return bool(DATABASE_URL and (PSYCOPG2_AVAILABLE or PG8000_AVAILABLE))
+    url = get_database_url()
+    return bool(url and (PSYCOPG2_AVAILABLE or PG8000_AVAILABLE))
 
 
 def is_postgres() -> bool:
@@ -189,14 +207,17 @@ def _get_conn_last_used(conn) -> float:
 
 def get_pg_pool():
     global _pg_pool
-    if _pg_pool is None and DATABASE_URL and PSYCOPG2_AVAILABLE:
+    url = get_database_url()
+    if not url or not PSYCOPG2_AVAILABLE:
+        return None
+    if _pg_pool is None:
         with _pool_lock:
             if _pg_pool is None:
                 try:
                     _pg_pool = pool.ThreadedConnectionPool(
                         minconn=1,
-                        maxconn=6,
-                        dsn=DATABASE_URL,
+                        maxconn=4,  # Otimizado para 512MB RAM
+                        dsn=url,
                         keepalives=1,
                         keepalives_idle=20,
                         keepalives_interval=5,
@@ -204,6 +225,8 @@ def get_pg_pool():
                     )
                 except Exception as e:
                     print(f"⚠️ Erro ao inicializar pool Postgres: {e}")
+                    with _status_lock:
+                        _db_status["last_error"] = str(e)
                     _pg_pool = None
     return _pg_pool
 
@@ -642,8 +665,9 @@ def init_sqlite_db():
     conn = sqlite3.connect(str(SQLITE_PATH), timeout=10.0)
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA synchronous = NORMAL;")
-    conn.execute("PRAGMA busy_timeout = 10000;")
-    conn.execute("PRAGMA cache_size = -64000;")
+    conn.execute("PRAGMA busy_timeout = 5000;")
+    conn.execute("PRAGMA cache_size = -4000;")
+    conn.execute("PRAGMA mmap_size = 4194304;")
     conn.execute("PRAGMA foreign_keys = ON;")
     cur = conn.cursor()
 
@@ -1465,24 +1489,31 @@ def init_db():
     if is_postgres_configured():
         def _bg_init_pg():
             success = False
-            try:
-                success = init_pg_db()
-            except Exception as e:
-                print(f"⚠️ PostgreSQL offline na inicialização: {e}")
+            last_err = None
+            for attempt in range(1, 4):
+                try:
+                    success = init_pg_db()
+                    if success:
+                        break
+                except Exception as e:
+                    last_err = str(e)
+                    print(f"⚠️ Tentativa {attempt}/3 de conexão com PostgreSQL: {e}")
+                    time.sleep(2 * attempt)
 
             if success:
                 with _status_lock:
                     _db_status["postgres_online"] = True
+                    _db_status["last_error"] = None
                 print("🚀 PostgreSQL conectado com sucesso!")
                 threading.Thread(target=pull_cloud_to_sqlite, daemon=True).start()
                 _start_neon_keepalive()
-                threading.Thread(target=prewarm_filters_cache, daemon=True).start()
             else:
                 with _status_lock:
                     _db_status["postgres_online"] = False
-                print("⚡ PostgreSQL offline. Servidor rodando com cópia local SQLite (Offline-first).")
+                    if last_err:
+                        _db_status["last_error"] = last_err
+                print(f"⚡ PostgreSQL offline ({last_err or 'indisponível'}). Servidor rodando com cópia local SQLite.")
                 trigger_auto_reconnect()
-                threading.Thread(target=prewarm_filters_cache, daemon=True).start()
 
         threading.Thread(target=_bg_init_pg, daemon=True).start()
 
@@ -1597,6 +1628,8 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
                             "is_deleted": True
                         })
                 with _cache_lock:
+                    if len(_query_cache) > 30:
+                        _query_cache.clear()
                     _query_cache[cache_key] = (now, total, lots)
                 return total, lots
 
@@ -1667,6 +1700,8 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
 
             # Salva no cache em memória RAM
             with _cache_lock:
+                if len(_query_cache) > 30:
+                    _query_cache.clear()
                 _query_cache[cache_key] = (now, total, lots)
 
             return total, lots
