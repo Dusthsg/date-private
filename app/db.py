@@ -15,6 +15,7 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 from datetime import date, timedelta
+from typing import Optional
 
 # Carrega .env ou .env.local se existir
 try:
