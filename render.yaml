@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: datelimit
+    runtime: python
+    region: ohio
+    plan: free
+    branch: feat/auth-audit
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -k gthread --threads 20 --workers 1 --bind 0.0.0.0:$PORT wsgi:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
