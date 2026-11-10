@@ -217,6 +217,7 @@ def inject_context():
         "is_admin": (u_role == "admin"),
         "is_manager_or_admin": (u_role in ("admin", "gerente")),
         "current_user_name": u_name,
+        "current_user_username": session.get("username", ""),
         "current_user_role": u_role,
         "active_operator": active_op,
         "available_locations": get_field_options("location"),
@@ -1512,6 +1513,77 @@ def admin_panel_route():
         total_value_formatted=val_str,
         total_audit=total_audit
     )
+
+
+@app.route("/api/user/profile", methods=["GET", "POST"])
+def user_profile_route():
+    """Permite que qualquer usuário autenticado (operador, gerente ou admin) consulte e altere seu próprio perfil."""
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"error": "Sessão expirada. Faça login novamente."}), 401
+
+    if request.method == "GET":
+        user = get_user_by_id(user_id)
+        if not user:
+            return jsonify({"error": "Usuário não encontrado."}), 404
+        return jsonify({
+            "success": True,
+            "id": user["id"],
+            "name": user["name"],
+            "username": user["username"],
+            "pin": user["pin"],
+            "role": user["role"]
+        })
+
+    data = request.get_json(silent=True) or request.form
+    name = (data.get("name") or "").strip()
+    username = (data.get("username") or "").strip().lower()
+    password = (data.get("password") or "").strip() or None
+    pin = data.get("pin")
+
+    if not name:
+        return jsonify({"success": False, "error": "Nome completo não pode ficar em branco."}), 400
+    if not username:
+        return jsonify({"success": False, "error": "Nome de usuário não pode ficar em branco."}), 400
+
+    ok, msg = update_user(
+        user_id,
+        name=name,
+        username=username,
+        password=password,
+        pin=pin
+    )
+    if ok:
+        session["name"] = name
+        session["username"] = username
+        if session.get("active_operator") == session.get("name") or session.get("active_operator_username") == username:
+            session["active_operator"] = name
+            session["active_operator_username"] = username
+
+        ip = request.remote_addr or "127.0.0.1"
+        pwd_info = " com alteração de senha" if password else ""
+        log_audit(
+            name,
+            "PERFIL_ATUALIZADO",
+            f"Usuário atualizou seus dados de perfil (Nome: '{name}', Login: '@{username}'){pwd_info}",
+            user_id=user_id,
+            ip_address=ip
+        )
+        updated_user = get_user_by_id(user_id)
+        return jsonify({
+            "success": True,
+            "message": "Perfil atualizado com sucesso!",
+            "name": updated_user["name"],
+            "username": updated_user["username"],
+            "user": {
+                "id": updated_user["id"],
+                "name": updated_user["name"],
+                "username": updated_user["username"],
+                "pin": updated_user["pin"],
+                "role": updated_user["role"]
+            }
+        })
+    return jsonify({"success": False, "error": msg}), 400
 
 
 @app.route("/api/admin/profile", methods=["POST"])

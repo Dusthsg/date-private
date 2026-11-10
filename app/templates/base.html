@@ -746,6 +746,15 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
                     </button>
                 </div>
 
+                <!-- Botão Meu Perfil -->
+                <button type="button"
+                        onclick="openProfileModal()"
+                        class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-indigo-800/90 hover:bg-indigo-900 border border-indigo-600/50 text-indigo-100 transition shadow-xs cursor-pointer select-none"
+                        title="Meu Perfil — Alterar nome, usuário e senha">
+                    <i data-lucide="user-cog" class="w-3.5 h-3.5 text-indigo-300"></i>
+                    <span class="hidden lg:inline">Perfil</span>
+                </button>
+
                 <!-- Botão de Alertas Automáticos -->
                 <button id="btn-alerts-modal"
                         type="button"
@@ -838,6 +847,9 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
 
     <!-- Modal de Edição de Lote -->
     {% include "partials/edit_lot_modal.html" %}
+
+    <!-- Modal de Edição de Perfil do Usuário -->
+    {% include "partials/profile_modal.html" %}
 
     <!-- Barra de Navegação Inferior Fixa para Mobile (Bottom Navigation Bar) -->
     <nav class="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200/90 dark:border-gray-800 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] py-1.5 px-3 flex items-center justify-around safe-bottom">
