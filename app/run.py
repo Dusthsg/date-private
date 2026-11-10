@@ -73,8 +73,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 @lru_cache(maxsize=1)
 def get_local_ip():
     """Detecta o IP local da máquina na rede Wi-Fi/Ethernet com cache para zero sobrecarga."""
+    if os.environ.get("RENDER") or os.environ.get("PORT"):
+        return "127.0.0.1"
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
@@ -177,8 +180,25 @@ set_on_reconnect_callback(lambda: broadcast_reload("reconnected"))
 def inject_context():
     """Injeta datas de referência, informações de rede e status de autenticação/auditoria."""
     today = date.today()
+    if request.path in ("/login", "/favicon.ico"):
+        return {
+            "now_date": today.strftime("%Y-%m-%d"),
+            "critico_date": (today + timedelta(days=7)).strftime("%Y-%m-%d"),
+            "atencao_date": (today + timedelta(days=29)).strftime("%Y-%m-%d"),
+            "is_admin": False,
+            "is_manager_or_admin": False,
+            "current_user_name": "",
+            "current_user_role": "operador",
+            "active_operator": "Operador",
+            "available_locations": [],
+            "available_statuses": [],
+            "is_postgres": False,
+            "db_name": "Carregando...",
+            "last_sync": "",
+        }
+
     local_ip = get_local_ip()
-    port = 5000
+    port = int(os.environ.get("PORT", 5000))
     st = get_db_status()
     u_role = session.get("role", "operador")
     u_name = session.get("name", "Operador")

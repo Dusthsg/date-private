@@ -6,7 +6,7 @@ services:
     plan: free
     branch: feat/auth-audit
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -k gthread --threads 20 --workers 1 --bind 0.0.0.0:$PORT wsgi:app
+    startCommand: gunicorn -k gthread --threads 16 --workers 2 --timeout 120 --bind 0.0.0.0:$PORT wsgi:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.8
