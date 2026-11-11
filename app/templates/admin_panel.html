@@ -347,7 +347,7 @@
                         </td>
                         <td class="px-3.5 py-3 text-right whitespace-nowrap space-x-1">
                             <button type="button"
-                                    onclick="promptEditUserAdmin({{ u['id'] }}, '{{ u['name']|replace("'", "\\'") }}', '{{ u['pin'] }}', '{{ u['role'] }}')"
+                                    onclick="promptEditUserAdmin({{ u['id'] }}, '{{ u['name']|replace("'", "\\'") }}', '{{ u['username'] }}', '{{ u['pin'] or '' }}', '{{ u['role'] }}')"
                                     class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-indigo-600 dark:text-indigo-400 transition cursor-pointer" title="Editar">
                                 <i data-lucide="edit-3" class="w-4 h-4"></i>
                             </button>
@@ -529,20 +529,6 @@ document.addEventListener('DOMContentLoaded', () => {
     loadFieldOptionsAdmin();
 });
 
-function togglePasswordVisibility(inputId, iconId) {
-    const input = document.getElementById(inputId);
-    const icon = document.getElementById(iconId);
-    if (!input) return;
-    if (input.type === 'password') {
-        input.type = 'text';
-        if (icon) icon.setAttribute('data-lucide', 'eye-off');
-    } else {
-        input.type = 'password';
-        if (icon) icon.setAttribute('data-lucide', 'eye');
-    }
-    if (window.refreshIcons) window.refreshIcons();
-}
-
 function copyAdminToken() {
     const input = document.getElementById('admin-api-token');
     const btn = document.getElementById('btn-copy-token');
@@ -677,9 +663,11 @@ async function submitCreateUserAdmin(evt) {
     }
 }
 
-async function promptEditUserAdmin(id, currentName, currentPin, currentRole) {
+async function promptEditUserAdmin(id, currentName, currentUsername, currentPin, currentRole) {
     const newName = prompt("Nome completo do usuário:", currentName);
     if (newName === null) return;
+    const newUsername = prompt("Nome de usuário / Login (@):", currentUsername || '');
+    if (newUsername === null) return;
     const newPin = prompt("Código PIN (4 dígitos numéricos):", currentPin || '');
     if (newPin === null) return;
     const newRole = prompt("Cargo do usuário (operador, gerente ou admin):", currentRole || 'operador');
@@ -692,10 +680,11 @@ async function promptEditUserAdmin(id, currentName, currentPin, currentRole) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                name: newName,
-                pin: newPin,
+                name: newName.trim(),
+                username: newUsername.trim().toLowerCase(),
+                pin: newPin.trim(),
                 role: newRole.toLowerCase().trim(),
-                password: newPassword || undefined
+                password: newPassword.trim() || undefined
             })
         });
         const res = await resp.json();

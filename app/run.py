@@ -1480,12 +1480,13 @@ def user_update_api(user_id: int):
 
     data = request.get_json(silent=True) or request.form
     name = data.get("name")
+    username = data.get("username")
     password = data.get("password") or None
     pin = data.get("pin")
     role = data.get("role") if session.get("role") == "admin" else None
     active = data.get("active") if session.get("role") == "admin" else None
 
-    ok, msg = update_user(user_id, name=name, password=password, pin=pin, role=role, active=active)
+    ok, msg = update_user(user_id, name=name, username=username, password=password, pin=pin, role=role, active=active)
     if ok:
         ip = request.remote_addr or "127.0.0.1"
         curr_user = session.get("name") or "Admin"
@@ -1609,17 +1610,21 @@ def user_profile_route():
             ip_address=ip
         )
         updated_user = get_user_by_id(user_id)
+        u_name = updated_user["name"] if updated_user else name
+        u_user = updated_user["username"] if updated_user else username
+        u_pin = updated_user.get("pin") if updated_user else pin
+        u_role = updated_user.get("role", "operador") if updated_user else session.get("role", "operador")
         return jsonify({
             "success": True,
             "message": "Perfil atualizado com sucesso!",
-            "name": updated_user["name"],
-            "username": updated_user["username"],
+            "name": u_name,
+            "username": u_user,
             "user": {
-                "id": updated_user["id"],
-                "name": updated_user["name"],
-                "username": updated_user["username"],
-                "pin": updated_user["pin"],
-                "role": updated_user["role"]
+                "id": user_id,
+                "name": u_name,
+                "username": u_user,
+                "pin": u_pin,
+                "role": u_role
             }
         })
     return jsonify({"success": False, "error": msg}), 400

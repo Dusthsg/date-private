@@ -2988,6 +2988,11 @@ def create_user(username: str, name: str, password: str, pin: str = "", role: st
 def update_user(user_id: int, name: str = None, username: str = None, password: str = None, pin: str = None, role: str = None, active: bool = None, api_token: str = None) -> tuple[bool, str]:
     """Atualiza dados, login, senha, PIN, token ou papel de um usuário existente."""
     from werkzeug.security import generate_password_hash
+    try:
+        user_id = int(user_id)
+    except (TypeError, ValueError):
+        return False, "ID de usuário inválido."
+
     fields_pg = []
     fields_sq = []
     params = []
@@ -2998,7 +3003,7 @@ def update_user(user_id: int, name: str = None, username: str = None, password: 
     if username:
         u_clean = username.strip().lower()
         existing = get_user_by_username(u_clean)
-        if existing and existing["id"] != user_id:
+        if existing and int(existing["id"]) != user_id:
             return False, "Nome de usuário já está em uso por outro usuário."
         fields_pg.append("username = %s")
         fields_sq.append("username = ?")
@@ -3008,13 +3013,15 @@ def update_user(user_id: int, name: str = None, username: str = None, password: 
         fields_sq.append("password_hash = ?")
         params.append(generate_password_hash(password))
     if pin is not None:
+        p_clean = pin.strip() if isinstance(pin, str) else str(pin)
         fields_pg.append("pin = %s")
         fields_sq.append("pin = ?")
-        params.append(pin.strip() if pin.strip() else None)
+        params.append(p_clean if p_clean else None)
     if api_token is not None:
+        a_clean = api_token.strip() if isinstance(api_token, str) else str(api_token)
         fields_pg.append("api_token = %s")
         fields_sq.append("api_token = ?")
-        params.append(api_token.strip() if api_token.strip() else None)
+        params.append(a_clean if a_clean else None)
     if role:
         r = role.strip().lower()
         if r not in ("admin", "gerente", "operador"):
@@ -3043,7 +3050,8 @@ def update_user(user_id: int, name: str = None, username: str = None, password: 
             try:
                 with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
                     ph_fields_sq = ", ".join(fields_sq)
-                    s_conn.execute(f"UPDATE users SET {ph_fields_sq} WHERE id = ?", params + [user_id])
+                    params_sq = [1 if isinstance(p, bool) and p else (0 if isinstance(p, bool) and not p else p) for p in params]
+                    s_conn.execute(f"UPDATE users SET {ph_fields_sq} WHERE id = ?", params_sq + [user_id])
                     s_conn.commit()
             except Exception:
                 pass

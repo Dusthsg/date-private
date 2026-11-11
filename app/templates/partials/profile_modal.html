@@ -195,36 +195,18 @@
         if (modal) modal.classList.add('hidden');
     };
 
-    window.togglePasswordVisibility = function(inputId, btn) {
-        const input = document.getElementById(inputId);
-        if (!input) return;
-        const icon = btn.querySelector('i');
-        if (input.type === 'password') {
-            input.type = 'text';
-            if (icon) icon.setAttribute('data-lucide', 'eye-off');
-        } else {
-            input.type = 'password';
-            if (icon) icon.setAttribute('data-lucide', 'eye');
-        }
-        if (window.lucide) window.lucide.createIcons();
-    };
-
     function showProfileModalAlert(msg, isSuccess = false) {
         const alertBox = document.getElementById('profile-modal-alert');
-        const alertText = document.getElementById('profile-modal-alert-text');
-        const alertIcon = document.getElementById('profile-modal-alert-icon');
-        if (!alertBox || !alertText) return;
+        if (!alertBox) return;
 
         alertBox.className = isSuccess
             ? 'p-3 rounded-xl text-xs flex items-center gap-2 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
             : 'p-3 rounded-xl text-xs flex items-center gap-2 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300';
-        
-        if (alertIcon) {
-            alertIcon.setAttribute('data-lucide', isSuccess ? 'check-circle-2' : 'alert-circle');
-        }
-        alertText.textContent = msg;
+
+        const iconName = isSuccess ? 'check-circle-2' : 'alert-circle';
+        alertBox.innerHTML = `<i data-lucide="${iconName}" class="w-4 h-4 shrink-0"></i> <span id="profile-modal-alert-text">${msg}</span>`;
         alertBox.classList.remove('hidden');
-        if (window.lucide) window.lucide.createIcons();
+        if (window.refreshIcons) window.refreshIcons(alertBox);
     }
 
     function hideProfileModalAlert() {

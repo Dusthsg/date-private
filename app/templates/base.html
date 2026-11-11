@@ -335,6 +335,31 @@
             }
         };
 
+        // Alternância global e resiliente de visibilidade de senha / PIN
+        window.togglePasswordVisibility = function(inputId, trigger) {
+            const input = document.getElementById(inputId);
+            if (!input) return;
+
+            const isPassword = input.type === 'password';
+            input.type = isPassword ? 'text' : 'password';
+
+            let btn = null;
+            if (typeof trigger === 'string') {
+                const el = document.getElementById(trigger);
+                if (el) btn = el.tagName === 'BUTTON' ? el : (el.closest('button') || el.parentElement);
+            } else if (trigger && trigger.nodeType) {
+                btn = trigger.tagName === 'BUTTON' ? trigger : (trigger.closest('button') || trigger);
+            }
+
+            const iconName = isPassword ? 'eye-off' : 'eye';
+            if (btn) {
+                btn.innerHTML = `<i data-lucide="${iconName}" class="w-4 h-4"></i>`;
+                if (window.refreshIcons) window.refreshIcons(btn);
+            } else if (window.refreshIcons) {
+                window.refreshIcons();
+            }
+        };
+
         document.addEventListener('DOMContentLoaded', () => window.refreshIcons());
         document.addEventListener('htmx:afterSwap', (evt) => {
             const target = evt.detail && evt.detail.target;
