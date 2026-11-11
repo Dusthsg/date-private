@@ -227,8 +227,22 @@ def inject_context():
 
 # ── Middleware de Autenticação Segura ─────────────────────────────────────────
 
+_worker_init_lock = threading.Lock()
+_worker_initialized = False
+
 @app.before_request
 def check_authentication():
+    # Garante que o worker Gunicorn inicializou o banco no processo filho
+    global _worker_initialized
+    if not _worker_initialized:
+        with _worker_init_lock:
+            if not _worker_initialized:
+                _worker_initialized = True
+                try:
+                    init_db()
+                except Exception as e:
+                    print(f"⚠️ Erro ao inicializar banco no worker: {e}")
+
     # Ignora checagem em testes automatizados e em assets estáticos
     if app.config.get("TESTING"):
         return None
@@ -252,8 +266,12 @@ def check_authentication():
 @app.route("/healthz")
 @app.route("/api/health")
 def healthz_route():
-    from app.db import get_db_status, get_database_url, PSYCOPG2_AVAILABLE, PG8000_AVAILABLE
+    from app.db import get_db_status, get_database_url, reconnect_postgres, PSYCOPG2_AVAILABLE, PG8000_AVAILABLE
     st = get_db_status()
+    # Se configurado mas ainda offline, tenta religar imediatamente para diagnóstico em tempo real
+    if st["postgres_configured"] and not st["postgres_online"]:
+        reconnect_postgres()
+        st = get_db_status()
     db_url = get_database_url()
     masked = f"{db_url[:12]}...{db_url[-12:]}" if len(db_url) > 24 else ("Configurada" if db_url else "NÃO CONFIGURADA")
     return jsonify({

@@ -267,8 +267,8 @@ def _checkout_valid_pg_conn(pool_inst, max_retries=3):
             pool_inst.putconn(conn, close=True)
         except Exception:
             pass
-    # Se todas as conexões do pool estavam inativas, cria uma nova diretamente com timeout rápido
-    conn = _connect_pg_direct(timeout=4)
+    # Se todas as conexões do pool estavam inativas, cria uma nova diretamente com timeout de 10s
+    conn = _connect_pg_direct(timeout=10)
     _mark_conn_used(conn)
     return conn, False
 
@@ -288,9 +288,9 @@ def _auto_reconnect_worker():
         with _status_lock:
             if _db_status["postgres_online"]:
                 break
-        time.sleep(12)
+        time.sleep(10)
         try:
-            test_conn = _connect_pg_direct(timeout=8)
+            test_conn = _connect_pg_direct(timeout=10)
             test_cur = test_conn.cursor()
             test_cur.execute("SELECT 1;")
             test_cur.close()
@@ -304,6 +304,7 @@ def _auto_reconnect_worker():
             # Atualiza o pool e espelha a cópia para o SQLite
             get_pg_pool()
             pull_cloud_to_sqlite()
+            _start_neon_keepalive()
             clear_query_cache()
 
             if _on_reconnect_callback:
@@ -322,7 +323,7 @@ def reconnect_postgres() -> bool:
     if not is_postgres_configured():
         return False
     try:
-        test_conn = _connect_pg_direct(timeout=8)
+        test_conn = _connect_pg_direct(timeout=10)
         test_cur = test_conn.cursor()
         test_cur.execute("SELECT 1;")
         test_cur.close()
@@ -334,6 +335,7 @@ def reconnect_postgres() -> bool:
 
         get_pg_pool()
         pull_cloud_to_sqlite()
+        _start_neon_keepalive()
         clear_query_cache()
         return True
     except Exception as e:
@@ -1081,6 +1083,8 @@ def init_pg_db():
         return True
     except Exception as e:
         print(f"⚠️ Erro ao inicializar PostgreSQL: {e}")
+        with _status_lock:
+            _db_status["last_error"] = str(e)
         if conn:
             try:
                 conn.close()
@@ -1495,10 +1499,14 @@ def init_db():
                     success = init_pg_db()
                     if success:
                         break
+                    with _status_lock:
+                        last_err = _db_status.get("last_error") or "Falha ao validar tabelas no PostgreSQL"
                 except Exception as e:
                     last_err = str(e)
+                    with _status_lock:
+                        _db_status["last_error"] = last_err
                     print(f"⚠️ Tentativa {attempt}/3 de conexão com PostgreSQL: {e}")
-                    time.sleep(2 * attempt)
+                time.sleep(2 * attempt)
 
             if success:
                 with _status_lock:
