@@ -231,6 +231,18 @@ def get_pg_pool():
     return _pg_pool
 
 
+def reset_pg_pool():
+    """Fecha com segurança todas as conexões do pool existente e zera a referência para recriação limpa."""
+    global _pg_pool
+    with _pool_lock:
+        if _pg_pool is not None:
+            try:
+                _pg_pool.closeall()
+            except Exception:
+                pass
+            _pg_pool = None
+
+
 _sync_lock = threading.Lock()
 
 
@@ -290,6 +302,7 @@ def _auto_reconnect_worker():
                 break
         time.sleep(10)
         try:
+            reset_pg_pool()
             test_conn = _connect_pg_direct(timeout=10)
             test_cur = test_conn.cursor()
             test_cur.execute("SELECT 1;")
@@ -303,9 +316,9 @@ def _auto_reconnect_worker():
 
             # Atualiza o pool e espelha a cópia para o SQLite
             get_pg_pool()
-            pull_cloud_to_sqlite()
             _start_neon_keepalive()
             clear_query_cache()
+            pull_cloud_to_sqlite()
 
             if _on_reconnect_callback:
                 try:
@@ -323,6 +336,7 @@ def reconnect_postgres() -> bool:
     if not is_postgres_configured():
         return False
     try:
+        reset_pg_pool()
         test_conn = _connect_pg_direct(timeout=10)
         test_cur = test_conn.cursor()
         test_cur.execute("SELECT 1;")
@@ -334,9 +348,9 @@ def reconnect_postgres() -> bool:
             _db_status["last_error"] = None
 
         get_pg_pool()
-        pull_cloud_to_sqlite()
         _start_neon_keepalive()
         clear_query_cache()
+        pull_cloud_to_sqlite()
         return True
     except Exception as e:
         with _status_lock:
@@ -363,7 +377,7 @@ def get_db_cursor(commit=False):
             if pool_inst:
                 conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
             else:
-                conn = _connect_pg_direct(timeout=8)
+                conn = _connect_pg_direct(timeout=10)
                 _mark_conn_used(conn)
                 is_from_pool = False
         except Exception as e:
@@ -1114,7 +1128,8 @@ def pull_cloud_to_sqlite() -> dict:
     if not _sync_lock.acquire(blocking=False):
         with _status_lock:
             return {
-                "success": True,
+                "success": False,
+                "in_progress": True,
                 "message": "Sincronização já em andamento...",
                 "duration_s": 0.0,
                 "timestamp": _db_status["last_sync"] or time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1138,13 +1153,26 @@ def pull_cloud_to_sqlite() -> dict:
             except Exception:
                 return datetime.min
 
+    pg_conn = None
+    is_from_pool = False
+    pool_inst = None
+    has_pg_error = False
+    sqlite_conn = None
+    products = []
+    lots = []
+    uploaded_prods = 0
+    uploaded_lots = 0
+    uploaded_moves = 0
+    uploaded_users = 0
+    uploaded_audits = 0
+
     try:
         init_sqlite_db()
         pool_inst = get_pg_pool()
         if pool_inst:
             pg_conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
         else:
-            pg_conn = _connect_pg_direct(timeout=8)
+            pg_conn = _connect_pg_direct(timeout=10)
             is_from_pool = False
 
         pg_cur = pg_conn.cursor()
@@ -1342,9 +1370,17 @@ def pull_cloud_to_sqlite() -> dict:
 
         pg_cur.close()
         if is_from_pool and pool_inst:
-            pool_inst.putconn(pg_conn)
+            try:
+                pool_inst.putconn(pg_conn)
+            except Exception:
+                try:
+                    pg_conn.close()
+                except Exception:
+                    pass
+            pg_conn = None
         else:
             pg_conn.close()
+            pg_conn = None
 
         # Grava atomicamente no SQLite local em modo WAL
         sqlite_conn = sqlite3.connect(str(SQLITE_PATH), timeout=10.0)
@@ -1443,15 +1479,45 @@ def pull_cloud_to_sqlite() -> dict:
 
         sqlite_conn.commit()
         sqlite_conn.close()
+        sqlite_conn = None
 
     except Exception as e:
-        _sync_lock.release()
+        has_pg_error = True
+        if sqlite_conn:
+            try:
+                sqlite_conn.rollback()
+                sqlite_conn.close()
+            except Exception:
+                pass
+            sqlite_conn = None
         with _status_lock:
             _db_status["postgres_online"] = False
             _db_status["last_error"] = str(e)
+        trigger_auto_reconnect()
         return {"success": False, "error": f"Falha na conciliação com PostgreSQL: {e}"}
+    finally:
+        if pg_conn:
+            if is_from_pool and pool_inst:
+                try:
+                    pool_inst.putconn(pg_conn, close=has_pg_error)
+                except Exception:
+                    try:
+                        pg_conn.close()
+                    except Exception:
+                        pass
+            else:
+                try:
+                    pg_conn.close()
+                except Exception:
+                    pass
+        if sqlite_conn:
+            try:
+                sqlite_conn.close()
+            except Exception:
+                pass
+        _sync_lock.release()
 
-    _sync_lock.release()
+    _start_neon_keepalive()
     clear_query_cache()
 
     duration = round(time.time() - t0, 3)
@@ -1547,6 +1613,8 @@ def _start_neon_keepalive():
         while is_postgres_configured():
             time.sleep(25)  # Mantém canal TCP e Neon Compute 100% aquecidos
             if is_postgres():
+                conn = None
+                is_from_pool = False
                 try:
                     pool_inst = get_pg_pool()
                     if pool_inst:
@@ -1555,12 +1623,23 @@ def _start_neon_keepalive():
                             with conn.cursor() as cur:
                                 cur.execute("SELECT 1;")
                             _mark_conn_used(conn)
-                            if is_from_pool:
-                                pool_inst.putconn(conn)
-                            else:
-                                conn.close()
                 except Exception:
                     pass
+                finally:
+                    if conn:
+                        if is_from_pool and pool_inst:
+                            try:
+                                pool_inst.putconn(conn)
+                            except Exception:
+                                try:
+                                    conn.close()
+                                except Exception:
+                                    pass
+                        else:
+                            try:
+                                conn.close()
+                            except Exception:
+                                pass
 
     threading.Thread(target=_worker, daemon=True).start()
 

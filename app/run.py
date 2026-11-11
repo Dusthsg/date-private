@@ -31,6 +31,7 @@ from app.db import (
     get_db_status,
     pull_cloud_to_sqlite,
     reconnect_postgres,
+    trigger_auto_reconnect,
     set_on_reconnect_callback,
     query_lots,
     update_lot_quant,
@@ -1207,12 +1208,31 @@ def inventory_summary_api():
 @app.route("/api/connection/status", methods=["GET"])
 def connection_status():
     """Retorna o estado da conexão (PostgreSQL vs cópia local SQLite)."""
-    return jsonify(get_db_status())
+    st = get_db_status()
+    if st.get("postgres_configured") and not st.get("postgres_online"):
+        trigger_auto_reconnect()
+    return jsonify(st)
 
 
 @app.route("/api/connection/pull", methods=["POST"])
 def connection_pull():
     """Puxa a cópia mais atualizada do PostgreSQL para o SQLite local e testa conexão."""
+    if not is_postgres():
+        reconnected = reconnect_postgres()
+        st = get_db_status()
+        if not reconnected:
+            return jsonify({
+                "success": False,
+                "error": st.get("last_error") or "PostgreSQL inacessível. O sistema continua operando em cópia local SQLite.",
+                "db_status": st
+            }), 200
+        broadcast_reload("pulled")
+        return jsonify({
+            "success": True,
+            "message": "Conexão com PostgreSQL restabelecida e banco de dados sincronizado!",
+            "db_status": st
+        }), 200
+
     result = pull_cloud_to_sqlite()
     if result.get("success"):
         broadcast_reload("pulled")

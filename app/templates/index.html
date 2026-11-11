@@ -579,16 +579,9 @@ function initWebSocket(force = false) {
                     }
                     fetch('/api/inventory/summary').then(r => r.json()).then(updateSummaryUI).catch(() => {});
                     fetch('/api/connection/status').then(r => r.json()).then(st => {
-                        const dbBadge = document.getElementById('db-badge');
-                        const dbLabel = document.getElementById('db-label');
-                        if (dbBadge && dbLabel) {
-                            if (st.postgres_online) {
-                                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-800";
-                                dbLabel.innerText = "PostgreSQL";
-                            } else {
-                                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-800";
-                                dbLabel.innerText = "SQLite (Cópia Local)";
-                            }
+                        updateDbBadgeUI(st.postgres_online, st.db_name);
+                        if (!st.postgres_online) {
+                            checkAndAutoPullConnection();
                         }
                     }).catch(() => {});
                 }, 120);
@@ -1016,61 +1009,97 @@ async function purgeAllDeleted() {
     }
 }
 
-async function triggerPullConnection() {
+function updateDbBadgeUI(isPg, label) {
+    const dbBadge = document.getElementById('db-badge');
+    const dbLabel = document.getElementById('db-label');
+    if (!dbBadge || !dbLabel) return;
+    if (isPg) {
+        dbBadge.className = "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-800";
+        dbLabel.innerText = label || "PostgreSQL";
+        dbBadge.setAttribute("title", "Conectado ao banco na nuvem PostgreSQL (Neon)");
+    } else {
+        dbBadge.className = "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-800";
+        dbLabel.innerText = label || "SQLite (Cópia Local)";
+        dbBadge.setAttribute("title", "Operando em modo local resiliente. Tentando reconectar à nuvem...");
+    }
+}
+
+let isPullingConnection = false;
+let autoPullIntervalId = null;
+
+async function triggerPullConnection(isAuto = false) {
+    if (isPullingConnection) return;
+    isPullingConnection = true;
+
     const btn = document.getElementById('btn-pull-db');
     const spinner = document.getElementById('pull-spinner');
     const icon = document.getElementById('pull-icon');
     const text = document.getElementById('pull-text');
-    const dbBadge = document.getElementById('db-badge');
-    const dbLabel = document.getElementById('db-label');
 
     if (spinner) spinner.classList.remove('hidden');
     if (icon) icon.classList.add('hidden');
     if (text) text.innerText = 'Puxando...';
-    if (btn) btn.disabled = true;
+    if (btn && !isAuto) btn.disabled = true;
 
     try {
         const resp = await fetch('/api/connection/pull', { method: 'POST' });
         const data = await resp.json();
+
         if (data.success) {
+            updateDbBadgeUI(true, "PostgreSQL");
             if (text) text.innerText = 'Cópia Puxada!';
-            if (dbBadge && dbLabel) {
-                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
-                dbLabel.innerText = "PostgreSQL";
-            }
             clientCache.clear();
             performSearch(true);
+            fetch('/api/inventory/summary').then(r => r.json()).then(updateSummaryUI).catch(() => {});
+            setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
+        } else if (data.in_progress) {
+            if (text) text.innerText = 'Sincronizando...';
             setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
         } else {
-            // Se falhou ao puxar, tenta reconectar
+            // Se falhou ao puxar, tenta reconectar diretamente
             const reconResp = await fetch('/api/connection/reconnect', { method: 'POST' });
             const reconData = await reconResp.json();
             if (reconData.postgres_online) {
+                updateDbBadgeUI(true, "PostgreSQL");
                 if (text) text.innerText = 'Reconectado!';
-                if (dbBadge && dbLabel) {
-                    dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
-                    dbLabel.innerText = "PostgreSQL";
-                }
                 clientCache.clear();
                 performSearch(true);
+                fetch('/api/inventory/summary').then(r => r.json()).then(updateSummaryUI).catch(() => {});
                 setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
             } else {
+                updateDbBadgeUI(false, "SQLite (Cópia Local)");
                 if (text) text.innerText = 'Modo Local (SQLite)';
-                if (dbBadge && dbLabel) {
-                    dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200";
-                    dbLabel.innerText = "SQLite (Cópia Local)";
+                if (!isAuto && data.error) {
+                    console.warn("Aviso ao puxar conexão:", data.error);
                 }
                 setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3500);
             }
         }
     } catch (err) {
+        console.error("Erro ao puxar conexão:", err);
         if (text) text.innerText = 'Erro ao puxar';
         setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
     } finally {
         if (spinner) spinner.classList.add('hidden');
         if (icon) icon.classList.remove('hidden');
         if (btn) btn.disabled = false;
+        isPullingConnection = false;
     }
+}
+
+function checkAndAutoPullConnection() {
+    const dbLabel = document.getElementById('db-label');
+    const isLocal = dbLabel && dbLabel.innerText.toLowerCase().includes('sqlite');
+    if (isLocal && !isPullingConnection) {
+        console.log("Banco em modo local SQLite detectado: tentando puxar conexão com o PostgreSQL...");
+        triggerPullConnection(true);
+    }
+}
+
+function startAutoPullWatchdog() {
+    if (autoPullIntervalId) clearInterval(autoPullIntervalId);
+    // Checa a cada 20 segundos se o banco está em modo local; se estiver, tenta puxar a conexão automaticamente
+    autoPullIntervalId = setInterval(checkAndAutoPullConnection, 20000);
 }
 
 let currentSpreadsheetFile = null;
@@ -1887,6 +1916,8 @@ document.addEventListener('click', function(e) {
 function bootstrapApp() {
     initWebSocket();
     initFilterDragScroll();
+    startAutoPullWatchdog();
+    setTimeout(checkAndAutoPullConnection, 2500);
     setTimeout(() => {
         const currentFiltro = document.getElementById('current-filtro')?.value || 'todos';
         const activeBtn = document.querySelector(`.filter-btn[data-filtro="${currentFiltro}"]`);
