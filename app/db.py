@@ -15,6 +15,7 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 from datetime import date, timedelta
+from typing import Optional
 
 # Carrega .env ou .env.local se existir
 try:
@@ -25,8 +26,44 @@ try:
 except ImportError:
     BASE_DIR = Path(__file__).resolve().parent.parent
 
-SQLITE_PATH = BASE_DIR / "database" / "products.db"
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+def get_sqlite_path() -> Path:
+    """Retorna o caminho do banco SQLite; usa banco isolado de teste caso em ambiente de testes."""
+    custom = os.environ.get("DATELIMIT_DB_PATH", "").strip()
+    if custom:
+        return Path(custom)
+    if os.environ.get("DATELIMIT_TESTING") == "1" or os.environ.get("TESTING") == "true":
+        return BASE_DIR / "database" / "test_products.db"
+    return BASE_DIR / "database" / "products.db"
+
+SQLITE_PATH = get_sqlite_path()
+
+def set_test_db(path: Optional[str] = None):
+    """
+    Ativa explicitamente o banco de testes isolado.
+    Garante que nenhum teste altere o banco de dados de produção do usuário.
+    """
+    global SQLITE_PATH
+    os.environ["DATELIMIT_TESTING"] = "1"
+    if path:
+        os.environ["DATELIMIT_DB_PATH"] = str(path)
+    SQLITE_PATH = get_sqlite_path()
+    init_sqlite_db()
+
+def get_database_url() -> str:
+    """Retorna a URL de conexão do PostgreSQL limpa, normalizada e dinâmica."""
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        try:
+            from dotenv import dotenv_values
+            env_dict = dotenv_values(BASE_DIR / ".env")
+            url = (env_dict.get("DATABASE_URL") or "").strip()
+        except Exception:
+            pass
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[11:]
+    return url
+
+DATABASE_URL = get_database_url()
 
 try:
     import psycopg2
@@ -48,14 +85,17 @@ except ImportError:
     PG8000_AVAILABLE = False
 
 
-def _connect_pg_direct(timeout=4):
+def _connect_pg_direct(timeout=10):
     """
-    Estabelece uma conexão direta com o PostgreSQL com statement_timeout de proteção (4s)
+    Estabelece uma conexão direta com o PostgreSQL com statement_timeout de proteção (10s)
     e keepalives TCP agressivos para evitar travamentos em oscilações de rede.
     """
+    db_url = get_database_url()
+    if not db_url:
+        raise ValueError("DATABASE_URL não configurada no ambiente.")
     if PSYCOPG2_AVAILABLE:
         return psycopg2.connect(
-            DATABASE_URL,
+            db_url,
             keepalives=1,
             keepalives_idle=20,
             keepalives_interval=5,
@@ -63,7 +103,7 @@ def _connect_pg_direct(timeout=4):
             connect_timeout=timeout,
         )
     elif PG8000_AVAILABLE:
-        p = urllib.parse.urlparse(DATABASE_URL)
+        p = urllib.parse.urlparse(db_url)
         ssl_ctx = ssl.create_default_context()
         return pg8000.dbapi.connect(
             user=p.username,
@@ -117,7 +157,10 @@ def set_on_reconnect_callback(callback):
 
 def is_postgres_configured() -> bool:
     """Verifica se as configurações para PostgreSQL estão presentes no ambiente."""
-    return bool(DATABASE_URL and (PSYCOPG2_AVAILABLE or PG8000_AVAILABLE))
+    if os.environ.get("DATELIMIT_TESTING") == "1" or os.environ.get("TESTING") == "true":
+        return False  # Testes NUNCA tocam no PostgreSQL / Neon do usuário
+    url = get_database_url()
+    return bool(url and (PSYCOPG2_AVAILABLE or PG8000_AVAILABLE))
 
 
 def is_postgres() -> bool:
@@ -164,14 +207,17 @@ def _get_conn_last_used(conn) -> float:
 
 def get_pg_pool():
     global _pg_pool
-    if _pg_pool is None and DATABASE_URL and PSYCOPG2_AVAILABLE:
+    url = get_database_url()
+    if not url or not PSYCOPG2_AVAILABLE:
+        return None
+    if _pg_pool is None:
         with _pool_lock:
             if _pg_pool is None:
                 try:
                     _pg_pool = pool.ThreadedConnectionPool(
                         minconn=1,
-                        maxconn=6,
-                        dsn=DATABASE_URL,
+                        maxconn=4,  # Otimizado para 512MB RAM
+                        dsn=url,
                         keepalives=1,
                         keepalives_idle=20,
                         keepalives_interval=5,
@@ -179,8 +225,22 @@ def get_pg_pool():
                     )
                 except Exception as e:
                     print(f"⚠️ Erro ao inicializar pool Postgres: {e}")
+                    with _status_lock:
+                        _db_status["last_error"] = str(e)
                     _pg_pool = None
     return _pg_pool
+
+
+def reset_pg_pool():
+    """Fecha com segurança todas as conexões do pool existente e zera a referência para recriação limpa."""
+    global _pg_pool
+    with _pool_lock:
+        if _pg_pool is not None:
+            try:
+                _pg_pool.closeall()
+            except Exception:
+                pass
+            _pg_pool = None
 
 
 _sync_lock = threading.Lock()
@@ -219,8 +279,8 @@ def _checkout_valid_pg_conn(pool_inst, max_retries=3):
             pool_inst.putconn(conn, close=True)
         except Exception:
             pass
-    # Se todas as conexões do pool estavam inativas, cria uma nova diretamente com timeout rápido
-    conn = _connect_pg_direct(timeout=4)
+    # Se todas as conexões do pool estavam inativas, cria uma nova diretamente com timeout de 10s
+    conn = _connect_pg_direct(timeout=10)
     _mark_conn_used(conn)
     return conn, False
 
@@ -240,9 +300,10 @@ def _auto_reconnect_worker():
         with _status_lock:
             if _db_status["postgres_online"]:
                 break
-        time.sleep(12)
+        time.sleep(10)
         try:
-            test_conn = _connect_pg_direct(timeout=8)
+            reset_pg_pool()
+            test_conn = _connect_pg_direct(timeout=10)
             test_cur = test_conn.cursor()
             test_cur.execute("SELECT 1;")
             test_cur.close()
@@ -255,8 +316,9 @@ def _auto_reconnect_worker():
 
             # Atualiza o pool e espelha a cópia para o SQLite
             get_pg_pool()
-            pull_cloud_to_sqlite()
+            _start_neon_keepalive()
             clear_query_cache()
+            pull_cloud_to_sqlite()
 
             if _on_reconnect_callback:
                 try:
@@ -274,7 +336,8 @@ def reconnect_postgres() -> bool:
     if not is_postgres_configured():
         return False
     try:
-        test_conn = _connect_pg_direct(timeout=8)
+        reset_pg_pool()
+        test_conn = _connect_pg_direct(timeout=10)
         test_cur = test_conn.cursor()
         test_cur.execute("SELECT 1;")
         test_cur.close()
@@ -285,8 +348,9 @@ def reconnect_postgres() -> bool:
             _db_status["last_error"] = None
 
         get_pg_pool()
-        pull_cloud_to_sqlite()
+        _start_neon_keepalive()
         clear_query_cache()
+        pull_cloud_to_sqlite()
         return True
     except Exception as e:
         with _status_lock:
@@ -313,7 +377,7 @@ def get_db_cursor(commit=False):
             if pool_inst:
                 conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
             else:
-                conn = _connect_pg_direct(timeout=8)
+                conn = _connect_pg_direct(timeout=10)
                 _mark_conn_used(conn)
                 is_from_pool = False
         except Exception as e:
@@ -617,8 +681,9 @@ def init_sqlite_db():
     conn = sqlite3.connect(str(SQLITE_PATH), timeout=10.0)
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA synchronous = NORMAL;")
-    conn.execute("PRAGMA busy_timeout = 10000;")
-    conn.execute("PRAGMA cache_size = -64000;")
+    conn.execute("PRAGMA busy_timeout = 5000;")
+    conn.execute("PRAGMA cache_size = -4000;")
+    conn.execute("PRAGMA mmap_size = 4194304;")
     conn.execute("PRAGMA foreign_keys = ON;")
     cur = conn.cursor()
 
@@ -661,6 +726,9 @@ def init_sqlite_db():
         cur.execute("ALTER TABLE products ADD COLUMN bar_code TEXT;")
     if "price" not in p_cols:
         cur.execute("ALTER TABLE products ADD COLUMN price REAL DEFAULT 0.0;")
+    if "updated_at" not in p_cols:
+        cur.execute("ALTER TABLE products ADD COLUMN updated_at TEXT;")
+        cur.execute("UPDATE products SET updated_at = datetime('now') WHERE updated_at IS NULL;")
         cur.execute("""
             UPDATE products
             SET price = COALESCE((
@@ -737,6 +805,89 @@ def init_sqlite_db():
         VALUES (1, 0, 'telegram', '07:30');
     ''')
 
+    # Tabela de usuários e autenticação para SQLite
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            pin TEXT,
+            role TEXT DEFAULT 'operador',
+            active INTEGER DEFAULT 1,
+            api_token TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+    ''')
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN api_token TEXT;")
+    except Exception:
+        pass
+
+    # Tabela de logs de auditoria completos para SQLite
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_id INTEGER,
+            product_name TEXT,
+            details TEXT NOT NULL,
+            ip_address TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+    ''')
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_username ON audit_logs(username);")
+
+    # Tabela de opções de campos de lotes customizáveis (localidades e status)
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS lot_field_options (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            field_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            color TEXT DEFAULT '',
+            is_default INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(field_type, name)
+        );
+    ''')
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lot_field_options_type ON lot_field_options(field_type);")
+
+    cur.execute("SELECT COUNT(*) FROM lot_field_options;")
+    if cur.fetchone()[0] == 0:
+        default_options = [
+            ("location", "LOJA", "sky", 1),
+            ("location", "GALPÃO", "indigo", 0),
+            ("status", "NORMAL", "emerald", 1),
+            ("status", "ATENÇÃO", "yellow", 0),
+            ("status", "CRÍTICO", "orange", 0),
+            ("status", "VENCIDO", "red", 0),
+            ("status", "QUEIMA-DE-ESTOQUE", "amber", 0),
+            ("status", "PROMOCIONAL", "purple", 0),
+        ]
+        cur.executemany(
+            "INSERT OR IGNORE INTO lot_field_options (field_type, name, color, is_default) VALUES (?, ?, ?, ?);",
+            default_options
+        )
+
+    # Garante usuário administrador padrão caso a tabela esteja vazia
+    cur.execute("SELECT COUNT(*) FROM users;")
+    if cur.fetchone()[0] == 0:
+        from werkzeug.security import generate_password_hash
+        cur.execute(
+            "INSERT INTO users (username, name, password_hash, pin, role, active) VALUES (?, ?, ?, ?, ?, 1);",
+            ("admin", "Administrador", generate_password_hash("admin123"), "1234", "admin")
+        )
+        cur.execute(
+            "INSERT INTO audit_logs (username, action, details, ip_address) VALUES (?, ?, ?, ?);",
+            ("Sistema", "SISTEMA_INICIALIZADO", "Usuário admin padrão criado automaticamente", "127.0.0.1")
+        )
+
     conn.commit()
     conn.close()
 
@@ -801,7 +952,7 @@ def init_pg_db():
             conn.rollback()
 
         cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
-        cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP;")
+        cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
         cur.execute("""
             UPDATE products
             SET price = COALESCE((
@@ -862,6 +1013,84 @@ def init_pg_db():
             ON CONFLICT (id) DO NOTHING;
         ''')
 
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                pin VARCHAR(10),
+                role VARCHAR(20) DEFAULT 'operador',
+                active BOOLEAN DEFAULT TRUE,
+                api_token VARCHAR(128),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
+        try:
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS api_token VARCHAR(128);")
+        except Exception:
+            pass
+
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                username TEXT NOT NULL,
+                action VARCHAR(50) NOT NULL,
+                target_id INTEGER,
+                product_name TEXT,
+                details TEXT NOT NULL,
+                ip_address VARCHAR(50),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_username ON audit_logs(username);")
+
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS lot_field_options (
+                id SERIAL PRIMARY KEY,
+                field_type VARCHAR(50) NOT NULL,
+                name VARCHAR(100) NOT NULL,
+                color VARCHAR(50) DEFAULT '',
+                is_default INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_lot_field_options UNIQUE(field_type, name)
+            );
+        ''')
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_pg_lot_field_options_type ON lot_field_options(field_type);")
+
+        cur.execute("SELECT COUNT(*) FROM lot_field_options;")
+        if cur.fetchone()[0] == 0:
+            default_options = [
+                ("location", "LOJA", "sky", 1),
+                ("location", "GALPÃO", "indigo", 0),
+                ("status", "NORMAL", "emerald", 1),
+                ("status", "ATENÇÃO", "yellow", 0),
+                ("status", "CRÍTICO", "orange", 0),
+                ("status", "VENCIDO", "red", 0),
+                ("status", "QUEIMA-DE-ESTOQUE", "amber", 0),
+                ("status", "PROMOCIONAL", "purple", 0),
+            ]
+            cur.executemany(
+                "INSERT INTO lot_field_options (field_type, name, color, is_default) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING;",
+                default_options
+            )
+
+        cur.execute("SELECT COUNT(*) FROM users;")
+        if cur.fetchone()[0] == 0:
+            from werkzeug.security import generate_password_hash
+            cur.execute(
+                "INSERT INTO users (username, name, password_hash, pin, role, active) VALUES (%s, %s, %s, %s, %s, TRUE);",
+                ("admin", "Administrador", generate_password_hash("admin123"), "1234", "admin")
+            )
+            cur.execute(
+                "INSERT INTO audit_logs (username, action, details, ip_address) VALUES (%s, %s, %s, %s);",
+                ("Sistema", "SISTEMA_INICIALIZADO", "Usuário admin padrão criado automaticamente", "127.0.0.1")
+            )
+
         conn.commit()
         cur.close()
         if is_from_pool and pool_inst:
@@ -871,6 +1100,8 @@ def init_pg_db():
         return True
     except Exception as e:
         print(f"⚠️ Erro ao inicializar PostgreSQL: {e}")
+        with _status_lock:
+            _db_status["last_error"] = str(e)
         if conn:
             try:
                 conn.close()
@@ -888,6 +1119,8 @@ def pull_cloud_to_sqlite() -> dict:
        - Lotes novos ou com updated_at mais recente
        - Baixas (stock_movements) efetuadas localmente (removendo os lotes correspondentes no Neon)
        - Produtos novos ou com preço/dados mais recentes
+       - Usuários e permissões com dados mais recentes
+       - Logs de auditoria locais não presentes no Neon
     3. Atualiza os sequences do PostgreSQL para eliminar qualquer risco de colisão.
     4. Atualiza o SQLite local com a cópia integral unificada em modo WAL.
     """
@@ -898,7 +1131,8 @@ def pull_cloud_to_sqlite() -> dict:
     if not _sync_lock.acquire(blocking=False):
         with _status_lock:
             return {
-                "success": True,
+                "success": False,
+                "in_progress": True,
                 "message": "Sincronização já em andamento...",
                 "duration_s": 0.0,
                 "timestamp": _db_status["last_sync"] or time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -922,13 +1156,26 @@ def pull_cloud_to_sqlite() -> dict:
             except Exception:
                 return datetime.min
 
+    pg_conn = None
+    is_from_pool = False
+    pool_inst = None
+    has_pg_error = False
+    sqlite_conn = None
+    products = []
+    lots = []
+    uploaded_prods = 0
+    uploaded_lots = 0
+    uploaded_moves = 0
+    uploaded_users = 0
+    uploaded_audits = 0
+
     try:
         init_sqlite_db()
         pool_inst = get_pg_pool()
         if pool_inst:
             pg_conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
         else:
-            pg_conn = _connect_pg_direct(timeout=8)
+            pg_conn = _connect_pg_direct(timeout=10)
             is_from_pool = False
 
         pg_cur = pg_conn.cursor()
@@ -938,7 +1185,9 @@ def pull_cloud_to_sqlite() -> dict:
             SELECT
                 COALESCE((SELECT json_agg(p) FROM (SELECT id, name, bar_code, price, COALESCE(updated_at::TEXT, '') AS updated_at FROM products) p), '[]'::json) AS prods,
                 COALESCE((SELECT json_agg(l) FROM (SELECT id, product_id, quant, price, date_valid::TEXT, location, status, origin, created_at::TEXT, updated_at::TEXT FROM product_lots) l), '[]'::json) AS lots,
-                COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves;
+                COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves,
+                COALESCE((SELECT json_agg(u) FROM (SELECT id, username, name, password_hash, pin, role, active, COALESCE(api_token, '') AS api_token, created_at::TEXT, updated_at::TEXT FROM users) u), '[]'::json) AS users_data,
+                COALESCE((SELECT json_agg(a) FROM (SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at::TEXT FROM audit_logs ORDER BY id DESC LIMIT 500) a), '[]'::json) AS audit_data;
         """)
         raw_row = pg_cur.fetchone()
 
@@ -958,6 +1207,8 @@ def pull_cloud_to_sqlite() -> dict:
         pg_products = {p["id"]: p for p in _parse_json_col(raw_row[0])} if raw_row else {}
         pg_lots = {l["id"]: l for l in _parse_json_col(raw_row[1])} if raw_row else {}
         pg_moves = {m["id"]: m for m in _parse_json_col(raw_row[2])} if raw_row else {}
+        pg_users = {u["id"]: u for u in (_parse_json_col(raw_row[3]) if raw_row and len(raw_row) > 3 else [])}
+        pg_audit = {a["id"]: a for a in (_parse_json_col(raw_row[4]) if raw_row and len(raw_row) > 4 else [])}
 
         # 2. Lê snapshot local do SQLite
         with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
@@ -973,9 +1224,25 @@ def pull_cloud_to_sqlite() -> dict:
             s_cur.execute("SELECT id, product_id, lot_id, action, quant, date_valid, created_at FROM stock_movements")
             sq_moves = {r["id"]: dict(r) for r in s_cur.fetchall()}
 
+            sq_users = {}
+            try:
+                s_cur.execute("SELECT id, username, name, password_hash, pin, role, active, api_token, created_at, updated_at FROM users")
+                sq_users = {r["id"]: dict(r) for r in s_cur.fetchall()}
+            except Exception:
+                pass
+
+            sq_audit = {}
+            try:
+                s_cur.execute("SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at FROM audit_logs")
+                sq_audit = {r["id"]: dict(r) for r in s_cur.fetchall()}
+            except Exception:
+                pass
+
         uploaded_prods = 0
         uploaded_lots = 0
         uploaded_moves = 0
+        uploaded_users = 0
+        uploaded_audits = 0
 
         # 3. CONCILIAÇÃO DE PRODUTOS: Se local for mais recente ou novo -> Upload para Neon
         pg_prods_by_name = {p["name"].strip().upper(): p for p in pg_products.values() if p.get("name")}
@@ -1038,30 +1305,85 @@ def pull_cloud_to_sqlite() -> dict:
                 )
                 uploaded_lots += 1
 
-        # 6. Sincroniza sequences do PostgreSQL
+        # 6. CONCILIAÇÃO DE USUÁRIOS: Se local for mais recente ou novo -> Upload para Neon
+        for sq_id, sq_u in sq_users.items():
+            if sq_id in pg_users:
+                pg_u = pg_users[sq_id]
+                sq_time = parse_ts(sq_u.get("updated_at") or sq_u.get("created_at"))
+                pg_time = parse_ts(pg_u.get("updated_at") or pg_u.get("created_at"))
+                if sq_time > pg_time:
+                    pg_cur.execute(
+                        """UPDATE users
+                           SET name = %s, password_hash = %s, pin = %s, role = %s, active = %s, api_token = %s, updated_at = CURRENT_TIMESTAMP
+                           WHERE id = %s""",
+                        (sq_u["name"], sq_u["password_hash"], sq_u.get("pin"), sq_u.get("role", "operador"), bool(sq_u.get("active", 1)), sq_u.get("api_token"), sq_id)
+                    )
+                    uploaded_users += 1
+            else:
+                pg_cur.execute(
+                    """INSERT INTO users (id, username, name, password_hash, pin, role, active, api_token, created_at, updated_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                       ON CONFLICT (username) DO UPDATE SET name = EXCLUDED.name, pin = EXCLUDED.pin, updated_at = CURRENT_TIMESTAMP""",
+                    (sq_id, sq_u["username"], sq_u["name"], sq_u["password_hash"], sq_u.get("pin"), sq_u.get("role", "operador"), bool(sq_u.get("active", 1)), sq_u.get("api_token"))
+                )
+                uploaded_users += 1
+
+        # 7. CONCILIAÇÃO DE AUDITORIA: Envia logs criados localmente
+        pg_audit_keys = {(a["username"], a["action"], str(a["created_at"])[:19]) for a in pg_audit.values()}
+        for sq_id, sq_a in sq_audit.items():
+            k = (sq_a["username"], sq_a["action"], str(sq_a["created_at"])[:19])
+            if k not in pg_audit_keys and sq_id not in pg_audit:
+                pg_cur.execute(
+                    """INSERT INTO audit_logs (user_id, username, action, target_id, product_name, details, ip_address, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (sq_a.get("user_id"), sq_a["username"], sq_a["action"], sq_a.get("target_id"), sq_a.get("product_name"), sq_a.get("details", ""), sq_a.get("ip_address"), sq_a["created_at"])
+                )
+                uploaded_audits += 1
+
+        # 8. Sincroniza sequences do PostgreSQL
         pg_cur.execute("SELECT setval('products_id_seq', (SELECT COALESCE(MAX(id), 1) FROM products));")
         pg_cur.execute("SELECT setval('product_lots_id_seq', (SELECT COALESCE(MAX(id), 1) FROM product_lots));")
         pg_cur.execute("SELECT setval('stock_movements_id_seq', (SELECT COALESCE(MAX(id), 1) FROM stock_movements));")
+        try:
+            pg_cur.execute("SELECT setval('users_id_seq', (SELECT COALESCE(MAX(id), 1) FROM users));")
+        except Exception:
+            pass
+        try:
+            pg_cur.execute("SELECT setval('audit_logs_id_seq', (SELECT COALESCE(MAX(id), 1) FROM audit_logs));")
+        except Exception:
+            pass
 
         pg_conn.commit()
 
-        # 7. Puxa a versão unificada e final para o SQLite
+        # 9. Puxa a versão unificada e final para o SQLite
         pg_cur.execute("""
             SELECT
                 COALESCE((SELECT json_agg(p) FROM (SELECT id, name, bar_code, price, COALESCE(updated_at::TEXT, '') AS updated_at FROM products) p), '[]'::json) AS prods,
                 COALESCE((SELECT json_agg(l) FROM (SELECT id, product_id, quant, price, date_valid::TEXT, location, status, origin, created_at::TEXT, updated_at::TEXT FROM product_lots) l), '[]'::json) AS lots,
-                COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves;
+                COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves,
+                COALESCE((SELECT json_agg(u) FROM (SELECT id, username, name, password_hash, pin, role, active, COALESCE(api_token, '') AS api_token, created_at::TEXT, updated_at::TEXT FROM users) u), '[]'::json) AS users_data,
+                COALESCE((SELECT json_agg(a) FROM (SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at::TEXT FROM audit_logs ORDER BY id DESC LIMIT 500) a), '[]'::json) AS audit_data;
         """)
         fresh_row = pg_cur.fetchone()
         products = _parse_json_col(fresh_row[0]) if fresh_row else []
         lots = _parse_json_col(fresh_row[1]) if fresh_row else []
         movements = _parse_json_col(fresh_row[2]) if fresh_row else []
+        users_list = _parse_json_col(fresh_row[3]) if fresh_row and len(fresh_row) > 3 else []
+        audit_list = _parse_json_col(fresh_row[4]) if fresh_row and len(fresh_row) > 4 else []
 
         pg_cur.close()
         if is_from_pool and pool_inst:
-            pool_inst.putconn(pg_conn)
+            try:
+                pool_inst.putconn(pg_conn)
+            except Exception:
+                try:
+                    pg_conn.close()
+                except Exception:
+                    pass
+            pg_conn = None
         else:
             pg_conn.close()
+            pg_conn = None
 
         # Grava atomicamente no SQLite local em modo WAL
         sqlite_conn = sqlite3.connect(str(SQLITE_PATH), timeout=10.0)
@@ -1117,17 +1439,88 @@ def pull_cloud_to_sqlite() -> dict:
                 for m in movements
             ])
 
+        if users_list:
+            sqlite_cur.execute("DELETE FROM users;")
+            sqlite_cur.executemany("""
+                INSERT INTO users (id, username, name, password_hash, pin, role, active, api_token, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, [
+                (
+                    u["id"],
+                    u["username"],
+                    u["name"],
+                    u["password_hash"],
+                    u.get("pin"),
+                    u.get("role", "operador"),
+                    1 if u.get("active", True) else 0,
+                    u.get("api_token", ""),
+                    u.get("created_at"),
+                    u.get("updated_at")
+                )
+                for u in users_list
+            ])
+
+        if audit_list:
+            sqlite_cur.execute("DELETE FROM audit_logs;")
+            sqlite_cur.executemany("""
+                INSERT INTO audit_logs (id, user_id, username, action, target_id, product_name, details, ip_address, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, [
+                (
+                    a["id"],
+                    a.get("user_id"),
+                    a.get("username", "Sistema"),
+                    a.get("action", ""),
+                    a.get("target_id"),
+                    a.get("product_name"),
+                    a.get("details", ""),
+                    a.get("ip_address"),
+                    a.get("created_at")
+                )
+                for a in audit_list
+            ])
+
         sqlite_conn.commit()
         sqlite_conn.close()
+        sqlite_conn = None
 
     except Exception as e:
-        _sync_lock.release()
+        has_pg_error = True
+        if sqlite_conn:
+            try:
+                sqlite_conn.rollback()
+                sqlite_conn.close()
+            except Exception:
+                pass
+            sqlite_conn = None
         with _status_lock:
             _db_status["postgres_online"] = False
             _db_status["last_error"] = str(e)
+        trigger_auto_reconnect()
         return {"success": False, "error": f"Falha na conciliação com PostgreSQL: {e}"}
+    finally:
+        if pg_conn:
+            if is_from_pool and pool_inst:
+                try:
+                    pool_inst.putconn(pg_conn, close=has_pg_error)
+                except Exception:
+                    try:
+                        pg_conn.close()
+                    except Exception:
+                        pass
+            else:
+                try:
+                    pg_conn.close()
+                except Exception:
+                    pass
+        if sqlite_conn:
+            try:
+                sqlite_conn.close()
+            except Exception:
+                pass
+        _sync_lock.release()
 
-    _sync_lock.release()
+    _start_neon_keepalive()
     clear_query_cache()
 
     duration = round(time.time() - t0, 3)
@@ -1140,7 +1533,7 @@ def pull_cloud_to_sqlite() -> dict:
         _db_status["total_products"] = len(products)
         _db_status["total_lots"] = len(lots)
 
-    print(f"🔄 Conciliação concluída em {duration}s! Uploads para Neon: {uploaded_lots} lotes, {uploaded_prods} produtos, {uploaded_moves} baixas.")
+    print(f"🔄 Conciliação concluída em {duration}s! Uploads para Neon: {uploaded_lots} lotes, {uploaded_prods} produtos, {uploaded_moves} baixas, {uploaded_users} usuários.")
 
     return {
         "success": True,
@@ -1152,41 +1545,54 @@ def pull_cloud_to_sqlite() -> dict:
         "uploaded_lots": uploaded_lots,
         "uploaded_prods": uploaded_prods,
         "uploaded_moves": uploaded_moves,
+        "uploaded_users": uploaded_users
     }
-
 
 def init_db():
     """
     Inicialização resiliente em 2 etapas:
-    1. Primeiro: Garante a base SQLite local íntegra para o servidor poder rodar imediatamente.
-    2. Em seguida: Faz a ligação com o PostgreSQL. Se estiver online, ativa e sincroniza cópia local.
-       Se não estiver online, ativa o auto-reconnect e o servidor roda liso com o SQLite local!
+    1. Primeiro: Garante a base SQLite local íntegra para o servidor poder rodar imediatamente (< 5ms).
+    2. Em seguida: Faz a ligação com o PostgreSQL em segundo plano sem bloquear a inicialização do servidor.
+       Isso garante que o servidor web suba e responda em < 100ms no Render mesmo com o Neon iniciando a frio.
     """
-    # 1. Primeiro a cópia dos dados em SQL local para o servidor poder rodar
+    # 1. Primeiro a cópia dos dados em SQL local para o servidor poder rodar instantaneamente
     init_sqlite_db()
 
-    # 2. Em seguida tenta fazer a ligação com o PostgreSQL
+    # 2. Em seguida tenta fazer a ligação com o PostgreSQL em background thread
     if is_postgres_configured():
-        success = False
-        try:
-            success = init_pg_db()
-        except Exception as e:
-            print(f"⚠️ PostgreSQL offline na inicialização: {e}")
+        def _bg_init_pg():
+            success = False
+            last_err = None
+            for attempt in range(1, 4):
+                try:
+                    success = init_pg_db()
+                    if success:
+                        break
+                    with _status_lock:
+                        last_err = _db_status.get("last_error") or "Falha ao validar tabelas no PostgreSQL"
+                except Exception as e:
+                    last_err = str(e)
+                    with _status_lock:
+                        _db_status["last_error"] = last_err
+                    print(f"⚠️ Tentativa {attempt}/3 de conexão com PostgreSQL: {e}")
+                time.sleep(2 * attempt)
 
-        if success:
-            with _status_lock:
-                _db_status["postgres_online"] = True
-            print("🚀 PostgreSQL conectado com sucesso!")
-            # Puxa a cópia mais recente do Postgres para o SQLite em background thread
-            threading.Thread(target=pull_cloud_to_sqlite, daemon=True).start()
-            _start_neon_keepalive()
-            threading.Thread(target=prewarm_filters_cache, daemon=True).start()
-        else:
-            with _status_lock:
-                _db_status["postgres_online"] = False
-            print("⚡ PostgreSQL offline. Servidor rodando com cópia local SQLite (Offline-first).")
-            trigger_auto_reconnect()
-            threading.Thread(target=prewarm_filters_cache, daemon=True).start()
+            if success:
+                with _status_lock:
+                    _db_status["postgres_online"] = True
+                    _db_status["last_error"] = None
+                print("🚀 PostgreSQL conectado com sucesso!")
+                threading.Thread(target=pull_cloud_to_sqlite, daemon=True).start()
+                _start_neon_keepalive()
+            else:
+                with _status_lock:
+                    _db_status["postgres_online"] = False
+                    if last_err:
+                        _db_status["last_error"] = last_err
+                print(f"⚡ PostgreSQL offline ({last_err or 'indisponível'}). Servidor rodando com cópia local SQLite.")
+                trigger_auto_reconnect()
+
+        threading.Thread(target=_bg_init_pg, daemon=True).start()
 
 
 def prewarm_filters_cache():
@@ -1210,6 +1616,8 @@ def _start_neon_keepalive():
         while is_postgres_configured():
             time.sleep(25)  # Mantém canal TCP e Neon Compute 100% aquecidos
             if is_postgres():
+                conn = None
+                is_from_pool = False
                 try:
                     pool_inst = get_pg_pool()
                     if pool_inst:
@@ -1218,12 +1626,23 @@ def _start_neon_keepalive():
                             with conn.cursor() as cur:
                                 cur.execute("SELECT 1;")
                             _mark_conn_used(conn)
-                            if is_from_pool:
-                                pool_inst.putconn(conn)
-                            else:
-                                conn.close()
                 except Exception:
                     pass
+                finally:
+                    if conn:
+                        if is_from_pool and pool_inst:
+                            try:
+                                pool_inst.putconn(conn)
+                            except Exception:
+                                try:
+                                    conn.close()
+                                except Exception:
+                                    pass
+                        else:
+                            try:
+                                conn.close()
+                            except Exception:
+                                pass
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -1299,6 +1718,8 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
                             "is_deleted": True
                         })
                 with _cache_lock:
+                    if len(_query_cache) > 30:
+                        _query_cache.clear()
                     _query_cache[cache_key] = (now, total, lots)
                 return total, lots
 
@@ -1369,6 +1790,8 @@ def query_lots(filtro: str = "todos", busca: str = "", limit: int = 50, offset: 
 
             # Salva no cache em memória RAM
             with _cache_lock:
+                if len(_query_cache) > 30:
+                    _query_cache.clear()
                 _query_cache[cache_key] = (now, total, lots)
 
             return total, lots
@@ -1459,17 +1882,299 @@ def update_lot_price(lot_id: int, price: float) -> bool:
     return True
 
 
+def update_lot_product_name(lot_id: int, name: str) -> bool:
+    """Atualiza o nome do produto vinculado a um lote específico."""
+    name = (name or "").strip().upper()
+    if not name:
+        return False
+
+    _update_cache_lot_field(lot_id, "product_name", name)
+    clear_query_cache(clear_catalog=True)
+
+    target_pid = None
+    lot_price = 0.0
+    with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+        cur = s_conn.cursor()
+        cur.execute("SELECT product_id, price FROM product_lots WHERE id = ?", (lot_id,))
+        r = cur.fetchone()
+        if not r:
+            return False
+        old_pid, lot_price = r[0], r[1]
+        cur.execute("SELECT id FROM products WHERE UPPER(name) = ?", (name,))
+        p_row = cur.fetchone()
+        if p_row:
+            target_pid = p_row[0]
+        else:
+            cur.execute("SELECT COUNT(*) FROM product_lots WHERE product_id = ?", (old_pid,))
+            cnt = cur.fetchone()[0]
+            if cnt <= 1:
+                target_pid = old_pid
+                cur.execute("UPDATE products SET name = ?, updated_at = datetime('now') WHERE id = ?", (name, old_pid))
+            else:
+                cur.execute("INSERT INTO products (name, price, updated_at) VALUES (?, ?, datetime('now'))", (name, lot_price))
+                target_pid = cur.lastrowid
+        cur.execute("UPDATE product_lots SET product_id = ?, updated_at = datetime('now') WHERE id = ?", (target_pid, lot_id))
+        s_conn.commit()
+
+    if is_postgres():
+        def _sync_pg():
+            try:
+                with get_db_cursor(commit=True) as (cur, db_type):
+                    if db_type == "postgres":
+                        cur.execute("SELECT id FROM products WHERE UPPER(name) = %s", (name,))
+                        pg_p = cur.fetchone()
+                        if pg_p:
+                            pg_pid = pg_p[0]
+                        else:
+                            cur.execute("INSERT INTO products (name, price, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP) RETURNING id", (name, lot_price))
+                            pg_pid = cur.fetchone()[0]
+                        cur.execute("UPDATE product_lots SET product_id = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (pg_pid, lot_id))
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar nome no Postgres: {e}")
+        threading.Thread(target=_sync_pg, daemon=True).start()
+    return True
+
+
+def update_lot_location(lot_id: int, location: str) -> bool:
+    """Atualiza a localização física do lote (LOJA / GALPÃO)."""
+    location = (location or "LOJA").strip().upper()
+    _update_cache_lot_field(lot_id, "location", location)
+    _mirror_to_sqlite("UPDATE product_lots SET location = ?, updated_at = datetime('now') WHERE id = ?", (location, lot_id))
+    if is_postgres():
+        def _sync_pg():
+            try:
+                with get_db_cursor(commit=True) as (cur, db_type):
+                    if db_type == "postgres":
+                        cur.execute("UPDATE product_lots SET location = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (location, lot_id))
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar localização no Postgres: {e}")
+        threading.Thread(target=_sync_pg, daemon=True).start()
+    return True
+
+
+def update_lot_status(lot_id: int, status: str) -> bool:
+    """Atualiza o status operacional do lote (NORMAL / QUEIMA-DE-ESTOQUE / PROMOCIONAL)."""
+    status = (status or "NORMAL").strip().upper()
+    _update_cache_lot_field(lot_id, "status", status)
+    _mirror_to_sqlite("UPDATE product_lots SET status = ?, updated_at = datetime('now') WHERE id = ?", (status, lot_id))
+    if is_postgres():
+        def _sync_pg():
+            try:
+                with get_db_cursor(commit=True) as (cur, db_type):
+                    if db_type == "postgres":
+                        cur.execute("UPDATE product_lots SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (status, lot_id))
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar status no Postgres: {e}")
+        threading.Thread(target=_sync_pg, daemon=True).start()
+    return True
+
+
+_field_options_cache = {}
+_field_options_lock = threading.Lock()
+
+def get_field_options(field_type: str) -> list:
+    """Retorna lista de opções de campo ('location' ou 'status') configuradas no banco."""
+    ft = (field_type or "").strip().lower()
+    with _field_options_lock:
+        if ft in _field_options_cache:
+            return list(_field_options_cache[ft])
+
+    options = []
+    try:
+        init_sqlite_db()
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+            s_conn.row_factory = sqlite3.Row
+            s_cur = s_conn.cursor()
+            s_cur.execute(
+                "SELECT id, field_type, name, color, is_default FROM lot_field_options WHERE field_type = ? ORDER BY is_default DESC, id ASC",
+                (ft,)
+            )
+            rows = s_cur.fetchall()
+            options = [dict(r) for r in rows]
+    except Exception as e:
+        print(f"⚠️ Erro ao buscar opções de campo ({ft}): {e}")
+
+    if not options:
+        if ft == "location":
+            options = [
+                {"id": 1, "field_type": "location", "name": "LOJA", "color": "sky", "is_default": 1},
+                {"id": 2, "field_type": "location", "name": "GALPÃO", "color": "indigo", "is_default": 0},
+            ]
+        elif ft == "status":
+            options = [
+                {"id": 3, "field_type": "status", "name": "NORMAL", "color": "emerald", "is_default": 1},
+                {"id": 4, "field_type": "status", "name": "ATENÇÃO", "color": "yellow", "is_default": 0},
+                {"id": 5, "field_type": "status", "name": "CRÍTICO", "color": "orange", "is_default": 0},
+                {"id": 6, "field_type": "status", "name": "VENCIDO", "color": "red", "is_default": 0},
+                {"id": 7, "field_type": "status", "name": "QUEIMA-DE-ESTOQUE", "color": "amber", "is_default": 0},
+                {"id": 8, "field_type": "status", "name": "PROMOCIONAL", "color": "purple", "is_default": 0},
+            ]
+
+    with _field_options_lock:
+        _field_options_cache[ft] = options
+    return options
+
+
+def add_field_option(field_type: str, name: str, color: str = "") -> bool:
+    """Adiciona uma nova opção de campo configurável no banco."""
+    ft = (field_type or "").strip().lower()
+    nm = (name or "").strip().upper()
+    if not nm or ft not in ("location", "status"):
+        return False
+
+    init_sqlite_db()
+    with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+        s_conn.execute(
+            "INSERT OR IGNORE INTO lot_field_options (field_type, name, color, is_default) VALUES (?, ?, ?, 0)",
+            (ft, nm, color)
+        )
+        s_conn.commit()
+
+    with _field_options_lock:
+        _field_options_cache.pop(ft, None)
+
+    if is_postgres_configured():
+        def _sync_pg_add():
+            try:
+                p_conn = _connect_pg_direct(timeout=5)
+                if p_conn:
+                    with p_conn.cursor() as cur:
+                        cur.execute(
+                            "INSERT INTO lot_field_options (field_type, name, color, is_default) VALUES (%s, %s, %s, 0) ON CONFLICT DO NOTHING",
+                            (ft, nm, color)
+                        )
+                    p_conn.commit()
+                    p_conn.close()
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar add_field_option no Postgres: {e}")
+        threading.Thread(target=_sync_pg_add, daemon=True).start()
+
+    return True
+
+
+def delete_field_option(field_type: str, name: str) -> bool:
+    """Remove uma opção de campo customizada."""
+    ft = (field_type or "").strip().lower()
+    nm = (name or "").strip().upper()
+    if not nm or ft not in ("location", "status"):
+        return False
+    # Opções padrão protegidas
+    if ft == "location" and nm == "LOJA":
+        return False
+    if ft == "status" and nm == "NORMAL":
+        return False
+
+    init_sqlite_db()
+    with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+        s_conn.execute(
+            "DELETE FROM lot_field_options WHERE field_type = ? AND name = ?",
+            (ft, nm)
+        )
+        s_conn.commit()
+
+    with _field_options_lock:
+        _field_options_cache.pop(ft, None)
+
+    if is_postgres_configured():
+        def _sync_pg_del():
+            try:
+                p_conn = _connect_pg_direct(timeout=5)
+                if p_conn:
+                    with p_conn.cursor() as cur:
+                        cur.execute(
+                            "DELETE FROM lot_field_options WHERE field_type = %s AND name = %s",
+                            (ft, nm)
+                        )
+                    p_conn.commit()
+                    p_conn.close()
+            except Exception as e:
+                print(f"⚠️ Erro ao sincronizar delete_field_option no Postgres: {e}")
+        threading.Thread(target=_sync_pg_del, daemon=True).start()
+
+    return True
+
+
+def get_lot_by_id(lot_id: int) -> dict | None:
+    """Retorna os dados completos de um lote específico pelo ID."""
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT l.id AS lot_id, p.name AS product_name, l.product_id,
+                       l.quant, l.price, l.date_valid, l.location, l.status
+                FROM product_lots l
+                INNER JOIN products p ON p.id = l.product_id
+                WHERE l.id = ?
+            """, (lot_id,))
+            r = cur.fetchone()
+            if r:
+                return {
+                    "lot_id": r["lot_id"],
+                    "product_name": r["product_name"],
+                    "product_id": r["product_id"],
+                    "quant": r["quant"],
+                    "price": float(r["price"] or 0.0),
+                    "date_valid": str(r["date_valid"])[:10],
+                    "location": r["location"] or "LOJA",
+                    "status": r["status"] or "NORMAL"
+                }
+    except Exception as e:
+        print(f"⚠️ Erro ao buscar lote #{lot_id} no SQLite: {e}")
+
+    if is_postgres():
+        try:
+            with get_db_cursor() as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute("""
+                        SELECT l.id, p.name, l.product_id, l.quant, l.price, l.date_valid::TEXT, l.location, l.status
+                        FROM product_lots l
+                        INNER JOIN products p ON p.id = l.product_id
+                        WHERE l.id = %s
+                    """, (lot_id,))
+                    r = cur.fetchone()
+                    if r:
+                        return {
+                            "lot_id": r[0],
+                            "product_name": r[1],
+                            "product_id": r[2],
+                            "quant": r[3],
+                            "price": float(r[4] or 0.0),
+                            "date_valid": str(r[5])[:10],
+                            "location": r[6] or "LOJA",
+                            "status": r[7] or "NORMAL"
+                        }
+        except Exception as e:
+            print(f"⚠️ Erro ao buscar lote #{lot_id} no Postgres: {e}")
+    return None
+
+
+def update_lot_full(lot_id: int, name: str = None, quant: int = None, price: float = None, location: str = None, status: str = None) -> bool:
+    """
+    Atualiza múltiplos campos de um lote com segurança (data_valid permanece estritamente FIXA).
+    """
+    ok = True
+    if name is not None:
+        ok = ok and update_lot_product_name(lot_id, name)
+    if quant is not None:
+        ok = ok and update_lot_quant(lot_id, quant)
+    if price is not None:
+        ok = ok and update_lot_price(lot_id, price)
+    if location is not None:
+        ok = ok and update_lot_location(lot_id, location)
+    if status is not None:
+        ok = ok and update_lot_status(lot_id, status)
+    return ok
+
+
 def delete_lot(lot_id: int, sync: bool = True) -> bool:
     """
     Dá baixa no lote e registra a Lápide (tombstone) em stock_movements,
     garantindo que futuras importações de planilhas não ressuscitem esse lote (Item Zumbi).
     """
-    # 1. Remove do cache em RAM imediatamente (0.01ms)
+    # 1. Remove do cache em RAM imediatamente (0.01ms) e invalida cache de consultas
     _remove_cache_lot(lot_id)
-    with _cache_lock:
-        for k in list(_query_cache.keys()):
-            if k[0] in ("deletados", "deletado", "baixas"):
-                del _query_cache[k]
+    clear_query_cache(clear_catalog=False)
 
     # 2. Registra baixa e remove no SQLite local imediatamente (< 1ms)
     row_info = None
@@ -1861,7 +2566,7 @@ def search_products(term: str, limit: int = 10) -> list[dict]:
 
 
 def get_alert_settings() -> dict:
-    """Retorna as configurações atuais de alerta automático."""
+    """Retorna as configurações atuais de alerta automático (Local-First instantâneo < 0.1ms com fallback)."""
     defaults = {
         "enabled": False,
         "channel": "telegram",
@@ -1875,38 +2580,87 @@ def get_alert_settings() -> dict:
         "include_criticos": True,
         "include_atencao": False
     }
+
+    # 1. Tenta SQLite local instantâneo (< 0.1ms)
     try:
-        with get_db_cursor() as (cur, db_type):
-            ph = "%s" if db_type == "postgres" else "?"
-            cur.execute(f"""
+        with sqlite3.connect(str(SQLITE_PATH), timeout=2.0) as s_conn:
+            s_conn.row_factory = sqlite3.Row
+            s_cur = s_conn.cursor()
+            s_cur.execute("""
                 SELECT enabled, channel, daily_time, telegram_token, telegram_chat_id,
                        webhook_url, last_sent_date, last_status, include_vencidos,
                        include_criticos, include_atencao
                 FROM alert_settings
-                WHERE id = {ph}
-            """, (1,))
-            row = cur.fetchone()
-            if row:
+                WHERE id = 1
+            """)
+            r = s_cur.fetchone()
+            if r:
                 return {
-                    "enabled": bool(row[0]),
-                    "channel": str(row[1] or "telegram"),
-                    "daily_time": str(row[2] or "07:30"),
-                    "telegram_token": str(row[3] or ""),
-                    "telegram_chat_id": str(row[4] or ""),
-                    "webhook_url": str(row[5] or ""),
-                    "last_sent_date": str(row[6] or ""),
-                    "last_status": str(row[7] or "Nenhum envio realizado ainda."),
-                    "include_vencidos": bool(row[8]),
-                    "include_criticos": bool(row[9]),
-                    "include_atencao": bool(row[10])
+                    "enabled": bool(r["enabled"]),
+                    "channel": str(r["channel"] or "telegram"),
+                    "daily_time": str(r["daily_time"] or "07:30"),
+                    "telegram_token": str(r["telegram_token"] or ""),
+                    "telegram_chat_id": str(r["telegram_chat_id"] or ""),
+                    "webhook_url": str(r["webhook_url"] or ""),
+                    "last_sent_date": str(r["last_sent_date"] or ""),
+                    "last_status": str(r["last_status"] or "Nenhum envio realizado ainda."),
+                    "include_vencidos": bool(r["include_vencidos"]),
+                    "include_criticos": bool(r["include_criticos"]),
+                    "include_atencao": bool(r["include_atencao"])
                 }
     except Exception as e:
-        print(f"⚠️ Erro ao ler alert_settings: {e}")
+        pass
+
+    # 2. Fallback para PostgreSQL
+    if is_postgres():
+        try:
+            with get_db_cursor() as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute("""
+                        SELECT enabled, channel, daily_time, telegram_token, telegram_chat_id,
+                               webhook_url, last_sent_date, last_status, include_vencidos,
+                               include_criticos, include_atencao
+                        FROM alert_settings
+                        WHERE id = %s
+                    """, (1,))
+                    row = cur.fetchone()
+                    if row:
+                        res = {
+                            "enabled": bool(row[0]),
+                            "channel": str(row[1] or "telegram"),
+                            "daily_time": str(row[2] or "07:30"),
+                            "telegram_token": str(row[3] or ""),
+                            "telegram_chat_id": str(row[4] or ""),
+                            "webhook_url": str(row[5] or ""),
+                            "last_sent_date": str(row[6] or ""),
+                            "last_status": str(row[7] or "Nenhum envio realizado ainda."),
+                            "include_vencidos": bool(row[8]),
+                            "include_criticos": bool(row[9]),
+                            "include_atencao": bool(row[10])
+                        }
+                        try:
+                            with sqlite3.connect(str(SQLITE_PATH), timeout=2.0) as s_conn:
+                                s_conn.execute("""
+                                    INSERT OR REPLACE INTO alert_settings (id, enabled, channel, daily_time, telegram_token, telegram_chat_id, webhook_url, last_sent_date, last_status, include_vencidos, include_criticos, include_atencao)
+                                    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (
+                                    1 if res["enabled"] else 0, res["channel"], res["daily_time"],
+                                    res["telegram_token"], res["telegram_chat_id"], res["webhook_url"],
+                                    res["last_sent_date"], res["last_status"],
+                                    1 if res["include_vencidos"] else 0, 1 if res["include_criticos"] else 0, 1 if res["include_atencao"] else 0
+                                ))
+                                s_conn.commit()
+                        except Exception:
+                            pass
+                        return res
+        except Exception as e:
+            print(f"⚠️ Erro ao ler alert_settings do Postgres: {e}")
+
     return defaults
 
 
 def save_alert_settings(data: dict) -> bool:
-    """Salva configurações de alerta no banco (dual-write)."""
+    """Salva configurações de alerta no banco (Local-First resiliente com dual-write)."""
     enabled = bool(data.get("enabled", False))
     channel = str(data.get("channel", "telegram")).strip()
     daily_time = str(data.get("daily_time", "07:30")).strip()
@@ -1917,64 +2671,619 @@ def save_alert_settings(data: dict) -> bool:
     include_criticos = bool(data.get("include_criticos", True))
     include_atencao = bool(data.get("include_atencao", False))
 
+    sqlite_ok = False
+    # 1. Persiste imediatamente no SQLite local (< 0.5ms)
     try:
-        with get_db_cursor(commit=True) as (cur, db_type):
-            ph = "%s" if db_type == "postgres" else "?"
-            cur.execute(f"""
-                UPDATE alert_settings
-                SET enabled = {ph},
-                    channel = {ph},
-                    daily_time = {ph},
-                    telegram_token = {ph},
-                    telegram_chat_id = {ph},
-                    webhook_url = {ph},
-                    include_vencidos = {ph},
-                    include_criticos = {ph},
-                    include_atencao = {ph}
-                WHERE id = {ph}
+        with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+            s_conn.execute("""
+                INSERT OR REPLACE INTO alert_settings (
+                    id, enabled, channel, daily_time, telegram_token, telegram_chat_id,
+                    webhook_url, include_vencidos, include_criticos, include_atencao
+                )
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                enabled if db_type == "postgres" else (1 if enabled else 0),
-                channel,
-                daily_time,
-                telegram_token,
-                telegram_chat_id,
-                webhook_url,
-                include_vencidos if db_type == "postgres" else (1 if include_vencidos else 0),
-                include_criticos if db_type == "postgres" else (1 if include_criticos else 0),
-                include_atencao if db_type == "postgres" else (1 if include_atencao else 0),
-                1
+                1 if enabled else 0, channel, daily_time, telegram_token, telegram_chat_id,
+                webhook_url, 1 if include_vencidos else 0, 1 if include_criticos else 0, 1 if include_atencao else 0
             ))
-
-        if is_postgres():
-            try:
-                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
-                    s_conn.execute("""
-                        UPDATE alert_settings
-                        SET enabled = ?, channel = ?, daily_time = ?, telegram_token = ?, telegram_chat_id = ?,
-                            webhook_url = ?, include_vencidos = ?, include_criticos = ?, include_atencao = ?
-                        WHERE id = 1
-                    """, (1 if enabled else 0, channel, daily_time, telegram_token, telegram_chat_id, webhook_url, 1 if include_vencidos else 0, 1 if include_criticos else 0, 1 if include_atencao else 0))
-                    s_conn.commit()
-            except Exception:
-                pass
-        return True
+            s_conn.commit()
+            sqlite_ok = True
     except Exception as e:
-        print(f"⚠️ Erro ao salvar alert_settings: {e}")
-        return False
+        print(f"⚠️ Erro ao salvar alert_settings no SQLite: {e}")
+
+    # 2. Sincroniza com PostgreSQL quando online
+    if is_postgres():
+        try:
+            with get_db_cursor(commit=True) as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute("""
+                        INSERT INTO alert_settings (
+                            id, enabled, channel, daily_time, telegram_token, telegram_chat_id,
+                            webhook_url, include_vencidos, include_criticos, include_atencao
+                        )
+                        VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET
+                            enabled = EXCLUDED.enabled,
+                            channel = EXCLUDED.channel,
+                            daily_time = EXCLUDED.daily_time,
+                            telegram_token = EXCLUDED.telegram_token,
+                            telegram_chat_id = EXCLUDED.telegram_chat_id,
+                            webhook_url = EXCLUDED.webhook_url,
+                            include_vencidos = EXCLUDED.include_vencidos,
+                            include_criticos = EXCLUDED.include_criticos,
+                            include_atencao = EXCLUDED.include_atencao;
+                    """, (
+                        enabled, channel, daily_time, telegram_token, telegram_chat_id,
+                        webhook_url, include_vencidos, include_criticos, include_atencao
+                    ))
+        except Exception as e:
+            print(f"⚠️ Aviso: Postgres offline/erro ao sincronizar alert_settings: {e}")
+
+    return sqlite_ok
 
 
 def update_alert_sent_status(last_date: str, status_msg: str):
-    """Atualiza a data do último envio e o log de status."""
+    """Atualiza a data do último envio e o log de status (Local-First com sync)."""
     try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+            s_conn.execute("UPDATE alert_settings SET last_sent_date = ?, last_status = ? WHERE id = 1", (last_date, status_msg))
+            s_conn.commit()
+    except Exception:
+        pass
+
+    if is_postgres():
+        try:
+            with get_db_cursor(commit=True) as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute("UPDATE alert_settings SET last_sent_date = %s, last_status = %s WHERE id = 1", (last_date, status_msg))
+        except Exception as e:
+            print(f"⚠️ Erro ao atualizar status de alerta no Postgres: {e}")
+
+
+import secrets
+
+def generate_api_token() -> str:
+    """Gera um token de acesso de alta entropia para integração e APIs do DateLimit."""
+    return "dkl_live_" + secrets.token_urlsafe(24)
+
+# ── Módulo de Autenticação, Usuários e Auditoria Completa ───────────────────────
+
+def get_user_by_username(username: str) -> dict | None:
+    """Busca usuário pelo username de forma insensível a maiúsculas (Local-First ultra rápido < 0.2ms)."""
+    if not username:
+        return None
+    username_clean = username.strip().lower()
+
+    # 1. Consulta SQLite local instantânea (< 0.2ms)
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+            s_conn.row_factory = sqlite3.Row
+            s_cur = s_conn.cursor()
+            s_cur.execute(
+                "SELECT id, username, name, password_hash, pin, role, active, created_at, COALESCE(api_token, '') as api_token FROM users WHERE LOWER(username) = ? LIMIT 1",
+                (username_clean,)
+            )
+            r = s_cur.fetchone()
+            if r:
+                return {
+                    "id": r["id"],
+                    "username": r["username"],
+                    "name": r["name"],
+                    "password_hash": r["password_hash"],
+                    "pin": r["pin"] or "",
+                    "role": r["role"] or "operador",
+                    "active": bool(r["active"]),
+                    "created_at": str(r["created_at"])[:19] if r["created_at"] else "",
+                    "api_token": r["api_token"] or ""
+                }
+    except Exception:
+        pass
+
+    # 2. Fallback para PostgreSQL caso não esteja no SQLite
+    if is_postgres():
+        try:
+            with get_db_cursor() as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute(
+                        "SELECT id, username, name, password_hash, pin, role, active, created_at, COALESCE(api_token, '') FROM users WHERE LOWER(username) = %s LIMIT 1",
+                        (username_clean,)
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        u = {
+                            "id": row[0],
+                            "username": row[1],
+                            "name": row[2],
+                            "password_hash": row[3],
+                            "pin": row[4] or "",
+                            "role": row[5] or "operador",
+                            "active": bool(row[6]),
+                            "created_at": str(row[7])[:19] if row[7] else "",
+                            "api_token": row[8] or ""
+                        }
+                        try:
+                            with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                                s_conn.execute(
+                                    "INSERT OR REPLACE INTO users (id, username, name, password_hash, pin, role, active, api_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                    (u["id"], u["username"], u["name"], u["password_hash"], u["pin"], u["role"], 1 if u["active"] else 0, u["api_token"])
+                                )
+                                s_conn.commit()
+                        except Exception:
+                            pass
+                        return u
+        except Exception:
+            pass
+    return None
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    """Busca usuário pelo ID (Local-First ultra rápido < 0.2ms)."""
+    if not user_id:
+        return None
+
+    # 1. Consulta SQLite local instantânea (< 0.2ms)
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+            s_conn.row_factory = sqlite3.Row
+            s_cur = s_conn.cursor()
+            s_cur.execute(
+                "SELECT id, username, name, password_hash, pin, role, active, created_at, COALESCE(api_token, '') as api_token FROM users WHERE id = ? LIMIT 1",
+                (user_id,)
+            )
+            r = s_cur.fetchone()
+            if r:
+                return {
+                    "id": r["id"],
+                    "username": r["username"],
+                    "name": r["name"],
+                    "password_hash": r["password_hash"],
+                    "pin": r["pin"] or "",
+                    "role": r["role"] or "operador",
+                    "active": bool(r["active"]),
+                    "created_at": str(r["created_at"])[:19] if r["created_at"] else "",
+                    "api_token": r["api_token"] or ""
+                }
+    except Exception:
+        pass
+
+    # 2. Fallback para PostgreSQL
+    if is_postgres():
+        try:
+            with get_db_cursor() as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute(
+                        "SELECT id, username, name, password_hash, pin, role, active, created_at, COALESCE(api_token, '') FROM users WHERE id = %s LIMIT 1",
+                        (user_id,)
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        u = {
+                            "id": row[0],
+                            "username": row[1],
+                            "name": row[2],
+                            "password_hash": row[3],
+                            "pin": row[4] or "",
+                            "role": row[5] or "operador",
+                            "active": bool(row[6]),
+                            "created_at": str(row[7])[:19] if row[7] else "",
+                            "api_token": row[8] or ""
+                        }
+                        try:
+                            with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                                s_conn.execute(
+                                    "INSERT OR REPLACE INTO users (id, username, name, password_hash, pin, role, active, api_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                    (u["id"], u["username"], u["name"], u["password_hash"], u["pin"], u["role"], 1 if u["active"] else 0, u["api_token"])
+                                )
+                                s_conn.commit()
+                        except Exception:
+                            pass
+                        return u
+        except Exception:
+            pass
+    return None
+
+
+def get_user_by_pin(pin: str) -> dict | None:
+    """Localiza usuário ativo por PIN rápido para troca de operador no chão de loja (< 0.2ms)."""
+    if not pin:
+        return None
+    pin_clean = pin.strip()
+
+    # 1. Consulta SQLite local instantânea (< 0.2ms)
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+            s_conn.row_factory = sqlite3.Row
+            s_cur = s_conn.cursor()
+            s_cur.execute(
+                "SELECT id, username, name, password_hash, pin, role, active, created_at FROM users WHERE pin = ? AND active = 1 LIMIT 1",
+                (pin_clean,)
+            )
+            r = s_cur.fetchone()
+            if r:
+                return {
+                    "id": r["id"],
+                    "username": r["username"],
+                    "name": r["name"],
+                    "password_hash": r["password_hash"],
+                    "pin": r["pin"] or "",
+                    "role": r["role"] or "operador",
+                    "active": bool(r["active"]),
+                    "created_at": str(r["created_at"])[:19] if r["created_at"] else ""
+                }
+    except Exception:
+        pass
+
+    # 2. Fallback para PostgreSQL
+    if is_postgres():
+        try:
+            with get_db_cursor() as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute(
+                        "SELECT id, username, name, password_hash, pin, role, active, created_at FROM users WHERE pin = %s AND active = TRUE LIMIT 1",
+                        (pin_clean,)
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return {
+                            "id": row[0],
+                            "username": row[1],
+                            "name": row[2],
+                            "password_hash": row[3],
+                            "pin": row[4] or "",
+                            "role": row[5] or "operador",
+                            "active": bool(row[6]),
+                            "created_at": str(row[7])[:19] if row[7] else ""
+                        }
+        except Exception:
+            pass
+    return None
+
+
+def list_users() -> list[dict]:
+    """Lista todos os usuários cadastrados no sistema (Local-First ultra rápido < 0.2ms)."""
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+            s_conn.row_factory = sqlite3.Row
+            cur = s_conn.cursor()
+            cur.execute("SELECT id, username, name, pin, role, active, created_at, COALESCE(api_token, '') as api_token FROM users ORDER BY (CASE WHEN role='admin' THEN 0 ELSE 1 END), name ASC")
+            rows = cur.fetchall()
+            if rows:
+                return [{
+                    "id": r["id"],
+                    "username": r["username"],
+                    "name": r["name"],
+                    "pin": r["pin"] or "",
+                    "role": r["role"] or "operador",
+                    "active": bool(r["active"]),
+                    "created_at": str(r["created_at"])[:19] if r["created_at"] else "",
+                    "api_token": r["api_token"] or ""
+                } for r in rows]
+    except Exception:
+        pass
+
+    # Fallback PostgreSQL
+    if is_postgres():
+        try:
+            with get_db_cursor() as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute("SELECT id, username, name, pin, role, active, created_at, COALESCE(api_token, '') FROM users ORDER BY (CASE WHEN role='admin' THEN 0 ELSE 1 END), name ASC")
+                    rows = cur.fetchall()
+                    return [{
+                        "id": r[0],
+                        "username": r[1],
+                        "name": r[2],
+                        "pin": r[3] or "",
+                        "role": r[4] or "operador",
+                        "active": bool(r[5]),
+                        "created_at": str(r[6])[:19] if r[6] else "",
+                        "api_token": r[7] or ""
+                    } for r in rows]
+        except Exception:
+            pass
+    return []
+
+
+def list_active_operators() -> list[dict]:
+    """Retorna lista simplificada de operadores ativos para troca rápida (< 0.2ms)."""
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+            s_conn.row_factory = sqlite3.Row
+            cur = s_conn.cursor()
+            cur.execute("SELECT id, username, name, pin, role FROM users WHERE active = 1 ORDER BY name ASC")
+            rows = cur.fetchall()
+            if rows:
+                return [{"id": r["id"], "username": r["username"], "name": r["name"], "pin": r["pin"] or "", "role": r["role"]} for r in rows]
+    except Exception:
+        pass
+
+    if is_postgres():
+        try:
+            with get_db_cursor() as (cur, db_type):
+                if db_type == "postgres":
+                    cur.execute("SELECT id, username, name, pin, role FROM users WHERE active = TRUE ORDER BY name ASC")
+                    rows = cur.fetchall()
+                    return [{"id": r[0], "username": r[1], "name": r[2], "pin": r[3] or "", "role": r[4]} for r in rows]
+        except Exception:
+            pass
+    return []
+
+
+def create_user(username: str, name: str, password: str, pin: str = "", role: str = "operador") -> tuple[bool, str]:
+    """Cadastra um novo usuário no sistema (dual-write)."""
+    from werkzeug.security import generate_password_hash
+    username = username.strip().lower()
+    name = name.strip()
+    pin = pin.strip()
+    role_clean = role.strip().lower() if role else "operador"
+    if role_clean not in ("admin", "gerente", "operador"):
+        role_clean = "operador"
+    role = role_clean
+    if not username or not name or not password:
+        return False, "Usuário, nome e senha são obrigatórios."
+    if get_user_by_username(username):
+        return False, "Nome de usuário já cadastrado."
+    if pin and len(pin) < 3:
+        return False, "O PIN deve ter no mínimo 3 dígitos."
+    
+    pw_hash = generate_password_hash(password)
+    try:
+        new_id = None
         with get_db_cursor(commit=True) as (cur, db_type):
             ph = "%s" if db_type == "postgres" else "?"
-            cur.execute(f"UPDATE alert_settings SET last_sent_date = {ph}, last_status = {ph} WHERE id = {ph}", (last_date, status_msg, 1))
+            if db_type == "postgres":
+                cur.execute(
+                    f"""INSERT INTO users (username, name, password_hash, pin, role, active)
+                        VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}) RETURNING id""",
+                    (username, name, pw_hash, pin or None, role, True)
+                )
+                r_id = cur.fetchone()
+                if r_id:
+                    new_id = r_id[0]
+            else:
+                cur.execute(
+                    f"""INSERT INTO users (username, name, password_hash, pin, role, active)
+                        VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph})""",
+                    (username, name, pw_hash, pin or None, role, 1)
+                )
+                new_id = cur.lastrowid
+
         if is_postgres():
             try:
                 with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
-                    s_conn.execute("UPDATE alert_settings SET last_sent_date = ?, last_status = ? WHERE id = 1", (last_date, status_msg))
+                    if new_id:
+                        s_conn.execute(
+                            "INSERT OR REPLACE INTO users (id, username, name, password_hash, pin, role, active) VALUES (?, ?, ?, ?, ?, ?, 1)",
+                            (new_id, username, name, pw_hash, pin or None, role)
+                        )
+                    else:
+                        s_conn.execute(
+                            "INSERT OR REPLACE INTO users (username, name, password_hash, pin, role, active) VALUES (?, ?, ?, ?, ?, 1)",
+                            (username, name, pw_hash, pin or None, role)
+                        )
                     s_conn.commit()
             except Exception:
                 pass
+        return True, "Usuário cadastrado com sucesso!"
     except Exception as e:
-        print(f"⚠️ Erro ao atualizar status de alerta: {e}")
+        return False, f"Erro ao criar usuário: {e}"
+
+
+def update_user(user_id: int, name: str = None, username: str = None, password: str = None, pin: str = None, role: str = None, active: bool = None, api_token: str = None) -> tuple[bool, str]:
+    """Atualiza dados, login, senha, PIN, token ou papel de um usuário existente."""
+    from werkzeug.security import generate_password_hash
+    try:
+        user_id = int(user_id)
+    except (TypeError, ValueError):
+        return False, "ID de usuário inválido."
+
+    fields_pg = []
+    fields_sq = []
+    params = []
+    if name:
+        fields_pg.append("name = %s")
+        fields_sq.append("name = ?")
+        params.append(name.strip())
+    if username:
+        u_clean = username.strip().lower()
+        existing = get_user_by_username(u_clean)
+        if existing and int(existing["id"]) != user_id:
+            return False, "Nome de usuário já está em uso por outro usuário."
+        fields_pg.append("username = %s")
+        fields_sq.append("username = ?")
+        params.append(u_clean)
+    if password:
+        fields_pg.append("password_hash = %s")
+        fields_sq.append("password_hash = ?")
+        params.append(generate_password_hash(password))
+    if pin is not None:
+        p_clean = pin.strip() if isinstance(pin, str) else str(pin)
+        fields_pg.append("pin = %s")
+        fields_sq.append("pin = ?")
+        params.append(p_clean if p_clean else None)
+    if api_token is not None:
+        a_clean = api_token.strip() if isinstance(api_token, str) else str(api_token)
+        fields_pg.append("api_token = %s")
+        fields_sq.append("api_token = ?")
+        params.append(a_clean if a_clean else None)
+    if role:
+        r = role.strip().lower()
+        if r not in ("admin", "gerente", "operador"):
+            r = "operador"
+        fields_pg.append("role = %s")
+        fields_sq.append("role = ?")
+        params.append(r)
+    if active is not None:
+        fields_pg.append("active = %s")
+        fields_sq.append("active = ?")
+        params.append(bool(active))
+
+    if not fields_pg:
+        return False, "Nenhum campo informado para atualização."
+
+    fields_pg.append("updated_at = CURRENT_TIMESTAMP")
+    fields_sq.append("updated_at = datetime('now')")
+
+    try:
+        with get_db_cursor(commit=True) as (cur, db_type):
+            ph_fields = ", ".join(fields_pg if db_type == "postgres" else fields_sq)
+            ph = "%s" if db_type == "postgres" else "?"
+            cur.execute(f"UPDATE users SET {ph_fields} WHERE id = {ph}", params + [user_id])
+
+        if is_postgres():
+            try:
+                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                    ph_fields_sq = ", ".join(fields_sq)
+                    params_sq = [1 if isinstance(p, bool) and p else (0 if isinstance(p, bool) and not p else p) for p in params]
+                    s_conn.execute(f"UPDATE users SET {ph_fields_sq} WHERE id = ?", params_sq + [user_id])
+                    s_conn.commit()
+            except Exception:
+                pass
+        return True, "Usuário atualizado com sucesso!"
+    except Exception as e:
+        return False, f"Erro ao atualizar usuário: {e}"
+
+
+def delete_user(user_id: int) -> tuple[bool, str]:
+    """Remove um usuário do sistema (com proteção para o último administrador)."""
+    target_username = None
+    with get_db_cursor() as (cur, db_type):
+        ph = "%s" if db_type == "postgres" else "?"
+        cur.execute(f"SELECT role FROM users WHERE id = {ph}", (user_id,))
+        row = cur.fetchone()
+
+        if not row and is_postgres():
+            try:
+                with sqlite3.connect(str(SQLITE_PATH), timeout=2.0) as s_c:
+                    s_r = s_c.execute("SELECT role, username FROM users WHERE id = ?", (user_id,)).fetchone()
+                    if s_r:
+                        target_username = s_r[1]
+                        cur.execute("SELECT role, id FROM users WHERE LOWER(username) = %s", (target_username.lower(),))
+                        pg_row = cur.fetchone()
+                        if pg_row:
+                            row = pg_row
+                            user_id = pg_row[1]
+            except Exception:
+                pass
+
+        if not row:
+            return False, "Usuário não encontrado."
+        if row[0] == "admin":
+            act_clause = 'active = TRUE' if db_type == 'postgres' else 'active = 1'
+            cur.execute(f"SELECT COUNT(*) FROM users WHERE role = 'admin' AND {act_clause}")
+            admin_count = cur.fetchone()[0]
+            if admin_count <= 1:
+                return False, "Não é permitido excluir o único administrador do sistema."
+
+    try:
+        with get_db_cursor(commit=True) as (cur, db_type):
+            ph = "%s" if db_type == "postgres" else "?"
+            cur.execute(f"DELETE FROM users WHERE id = {ph}", (user_id,))
+            if target_username:
+                cur.execute(f"DELETE FROM users WHERE LOWER(username) = {ph}", (target_username.lower(),))
+        if is_postgres():
+            try:
+                with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
+                    s_conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+                    if target_username:
+                        s_conn.execute("DELETE FROM users WHERE LOWER(username) = ?", (target_username.lower(),))
+                    s_conn.commit()
+            except Exception:
+                pass
+        return True, "Usuário removido com sucesso!"
+    except Exception as e:
+        return False, f"Erro ao excluir usuário: {e}"
+
+
+def log_audit(username: str, action: str, details: str, user_id: int = None, target_id: int = None, product_name: str = None, ip_address: str = None):
+    """
+    Grava um evento de auditoria no SQLite local (< 0.2ms)
+    e sincroniza no Postgres em background daemon thread.
+    """
+    username = (username or "Sistema").strip()
+    action = (action or "ACAO").upper().strip()
+    details = (details or "").strip()
+    ip_address = (ip_address or "").strip()
+    product_name = (product_name or "").strip() if product_name else None
+
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+            s_conn.execute("PRAGMA journal_mode = WAL;")
+            s_conn.execute(
+                """INSERT INTO audit_logs (user_id, username, action, target_id, product_name, details, ip_address, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+                (user_id, username, action, target_id, product_name, details, ip_address)
+            )
+            s_conn.commit()
+    except Exception as e:
+        print(f"⚠️ Erro ao gravar audit_log no SQLite: {e}")
+
+    if is_postgres():
+        def _async_audit_pg():
+            try:
+                with get_db_cursor(commit=True) as (cur, db_type):
+                    if db_type == "postgres":
+                        cur.execute(
+                            """INSERT INTO audit_logs (user_id, username, action, target_id, product_name, details, ip_address, created_at)
+                               VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)""",
+                            (user_id, username, action, target_id, product_name, details, ip_address)
+                        )
+            except Exception as ex:
+                print(f"⚠️ Erro ao gravar audit_log no Postgres: {ex}")
+
+        threading.Thread(target=_async_audit_pg, daemon=True).start()
+
+
+def query_audit_logs(limit: int = 100, offset: int = 0, user: str = None, action: str = None, search: str = None, start_date: str = None, end_date: str = None) -> tuple[int, list[dict]]:
+    """Consulta paginada e filtrada de logs de auditoria."""
+    where_clauses = ["1=1"]
+    params = []
+    if user:
+        where_clauses.append("LOWER(username) = LOWER(?)")
+        params.append(user.strip())
+    if action:
+        where_clauses.append("action = ?")
+        params.append(action.strip().upper())
+    if search:
+        s = f"%{search.strip().upper()}%"
+        where_clauses.append("(UPPER(details) LIKE ? OR UPPER(COALESCE(product_name, '')) LIKE ? OR UPPER(username) LIKE ?)")
+        params.extend([s, s, s])
+    if start_date:
+        where_clauses.append("created_at >= ?")
+        params.append(f"{start_date} 00:00:00")
+    if end_date:
+        where_clauses.append("created_at <= ?")
+        params.append(f"{end_date} 23:59:59")
+
+    where_sql = " AND ".join(where_clauses)
+    try:
+        with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
+            s_conn.row_factory = sqlite3.Row
+            cur = s_conn.cursor()
+            cur.execute(f"SELECT COUNT(*) FROM audit_logs WHERE {where_sql}", params)
+            total = cur.fetchone()[0]
+
+            cur.execute(
+                f"""SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at
+                    FROM audit_logs
+                    WHERE {where_sql}
+                    ORDER BY id DESC
+                    LIMIT ? OFFSET ?""",
+                params + [limit, offset]
+            )
+            rows = cur.fetchall()
+            logs = []
+            for r in rows:
+                logs.append({
+                    "id": r["id"],
+                    "user_id": r["user_id"],
+                    "username": r["username"],
+                    "action": r["action"],
+                    "target_id": r["target_id"],
+                    "product_name": r["product_name"] or "",
+                    "details": r["details"],
+                    "ip_address": r["ip_address"] or "",
+                    "created_at": str(r["created_at"])[:19]
+                })
+            return total, logs
+    except Exception as e:
+        print(f"⚠️ Erro ao consultar audit_logs: {e}")
+        return 0, []

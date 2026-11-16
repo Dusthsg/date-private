@@ -1,4 +1,5 @@
 import time
+import os
 """
 Interface web — DateLimit (Edição Privada com Suporte a WebSocket, PostgreSQL e SQLite)
 Flask + WebSocket + HTMX + TailwindCSS.
@@ -20,6 +21,9 @@ from datetime import date, timedelta
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from flask_sock import Sock
 
+from flask import session, redirect, url_for
+from werkzeug.security import check_password_hash
+
 from app.db import (
     init_db,
     is_postgres,
@@ -27,10 +31,16 @@ from app.db import (
     get_db_status,
     pull_cloud_to_sqlite,
     reconnect_postgres,
+    trigger_auto_reconnect,
     set_on_reconnect_callback,
     query_lots,
     update_lot_quant,
     update_lot_price,
+    update_lot_product_name,
+    update_lot_location,
+    update_lot_status,
+    update_lot_full,
+    get_lot_by_id,
     delete_lot as db_delete_lot,
     restore_lot,
     purge_deleted_movement,
@@ -40,6 +50,20 @@ from app.db import (
     clear_query_cache,
     get_inventory_summary,
     register_cache_clear_callback,
+    get_user_by_username,
+    get_user_by_id,
+    get_user_by_pin,
+    list_users,
+    list_active_operators,
+    create_user,
+    update_user,
+    delete_user,
+    generate_api_token,
+    log_audit,
+    query_audit_logs,
+    get_field_options,
+    add_field_option,
+    delete_field_option,
     DATABASE_URL
 )
 
@@ -50,8 +74,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 @lru_cache(maxsize=1)
 def get_local_ip():
     """Detecta o IP local da máquina na rede Wi-Fi/Ethernet com cache para zero sobrecarga."""
+    if os.environ.get("RENDER") or os.environ.get("PORT"):
+        return "127.0.0.1"
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
@@ -62,7 +89,14 @@ def get_local_ip():
 
 # ── App Flask e WebSocket ─────────────────────────────────────────────────────
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "datelimit-private-auth-secret-key-2026")
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=7)
 sock = Sock(app)
+
+def get_effective_user():
+    """Retorna o operador ativo no momento (chão de loja) ou o usuário logado."""
+    return session.get("active_operator") or session.get("name") or session.get("username") or "Operador"
+
 
 class SafeWebSocket:
     """Invólucro thread-safe para WebSocket que impede corrupção de sockets por escritas simultâneas."""
@@ -145,11 +179,31 @@ set_on_reconnect_callback(lambda: broadcast_reload("reconnected"))
 
 @app.context_processor
 def inject_context():
-    """Injeta datas de referência e informações de rede nos templates."""
+    """Injeta datas de referência, informações de rede e status de autenticação/auditoria."""
     today = date.today()
+    if request.path in ("/login", "/favicon.ico"):
+        return {
+            "now_date": today.strftime("%Y-%m-%d"),
+            "critico_date": (today + timedelta(days=7)).strftime("%Y-%m-%d"),
+            "atencao_date": (today + timedelta(days=29)).strftime("%Y-%m-%d"),
+            "is_admin": False,
+            "is_manager_or_admin": False,
+            "current_user_name": "",
+            "current_user_role": "operador",
+            "active_operator": "Operador",
+            "available_locations": [],
+            "available_statuses": [],
+            "is_postgres": False,
+            "db_name": "Carregando...",
+            "last_sync": "",
+        }
+
     local_ip = get_local_ip()
-    port = 5000
+    port = int(os.environ.get("PORT", 5000))
     st = get_db_status()
+    u_role = session.get("role", "operador")
+    u_name = session.get("name", "Operador")
+    active_op = session.get("active_operator") or u_name
     return {
         "now_date": today.strftime("%Y-%m-%d"),
         "critico_date": (today + timedelta(days=7)).strftime("%Y-%m-%d"),
@@ -161,7 +215,78 @@ def inject_context():
         "is_postgres": st["postgres_online"],
         "db_name": st["db_name"],
         "last_sync": st["last_sync"],
+        "is_admin": (u_role == "admin"),
+        "is_manager_or_admin": (u_role in ("admin", "gerente")),
+        "current_user_name": u_name,
+        "current_user_username": session.get("username", ""),
+        "current_user_role": u_role,
+        "active_operator": active_op,
+        "available_locations": get_field_options("location"),
+        "available_statuses": get_field_options("status"),
     }
+
+
+# ── Middleware de Autenticação Segura ─────────────────────────────────────────
+
+_worker_init_lock = threading.Lock()
+_worker_initialized = False
+
+@app.before_request
+def check_authentication():
+    # Garante que o worker Gunicorn inicializou o banco no processo filho
+    global _worker_initialized
+    if not _worker_initialized:
+        with _worker_init_lock:
+            if not _worker_initialized:
+                _worker_initialized = True
+                try:
+                    init_db()
+                except Exception as e:
+                    print(f"⚠️ Erro ao inicializar banco no worker: {e}")
+
+    # Ignora checagem em testes automatizados e em assets estáticos
+    if app.config.get("TESTING"):
+        return None
+
+    path = request.path
+    if (
+        path.startswith("/static")
+        or path.startswith("/favicon")
+        or path in ("/login", "/ws", "/api/operator/switch", "/healthz", "/api/health")
+    ):
+        return None
+
+    if not session.get("user_id"):
+        if path.startswith("/api/"):
+            return jsonify({"error": "Sessão expirada. Faça login novamente."}), 401
+        if request.headers.get("HX-Request"):
+            return Response("", 200, {"HX-Redirect": "/login"})
+        return redirect("/login")
+
+
+@app.route("/healthz")
+@app.route("/api/health")
+def healthz_route():
+    from app.db import get_db_status, get_database_url, reconnect_postgres, PSYCOPG2_AVAILABLE, PG8000_AVAILABLE
+    st = get_db_status()
+    # Se configurado mas ainda offline, tenta religar imediatamente para diagnóstico em tempo real
+    if st["postgres_configured"] and not st["postgres_online"]:
+        reconnect_postgres()
+        st = get_db_status()
+    db_url = get_database_url()
+    masked = f"{db_url[:12]}...{db_url[-12:]}" if len(db_url) > 24 else ("Configurada" if db_url else "NÃO CONFIGURADA")
+    return jsonify({
+        "status": "healthy",
+        "postgres_configured": st["postgres_configured"],
+        "postgres_online": st["postgres_online"],
+        "db_name": st["db_name"],
+        "database_url_status": masked,
+        "psycopg2_driver": PSYCOPG2_AVAILABLE,
+        "pg8000_driver": PG8000_AVAILABLE,
+        "last_error": st.get("last_error"),
+        "total_products": st.get("total_products"),
+        "total_lots": st.get("total_lots"),
+    })
 
 
 # ── Otimizações Globais de Rede e Cache ────────────────────────────────────────
@@ -448,6 +573,17 @@ def add_lot():
             location=location,
             status=status
         )
+        # Registra auditoria completa com rastreamento do operador
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(
+            effective_user,
+            "CRIAR_LOTE",
+            f"Cadastrou lote #{lot_id} de '{name}': {quant} un, validade {date_valid}, R$ {price:.2f}",
+            target_id=lot_id,
+            product_name=name,
+            ip_address=ip
+        )
     except Exception as e:
         return f'<div class="text-red-500 text-xs p-2">Erro ao cadastrar lote: {str(e)}</div>', 500
 
@@ -478,6 +614,9 @@ def delete_lot(lot_id: int):
     """Dar baixa (deletar) em um lote específico com resposta ultrarrápida (< 1ms)."""
     try:
         db_delete_lot(lot_id, sync=False)
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "BAIXA_LOTE", f"Deu baixa (deletou) no lote #{lot_id}", target_id=lot_id, ip_address=ip)
     except Exception as e:
         return f"Erro ao deletar: {str(e)}", 500
 
@@ -496,6 +635,9 @@ def restore_lot_route(movement_id: int):
         ok = restore_lot(movement_id, sync=False)
         if not ok:
             return "Item não encontrado ou já restaurado.", 404
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "RESTAURAR_LOTE", f"Restaurou registro de baixa #{movement_id} de volta para a loja", target_id=movement_id, ip_address=ip)
     except Exception as e:
         return f"Erro ao restaurar lote: {str(e)}", 500
 
@@ -509,6 +651,9 @@ def purge_movement_route(movement_id: int):
     """Exclui permanentemente um registro de baixa (deletado) do histórico de auditoria."""
     try:
         purge_deleted_movement(movement_id, sync=False)
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "PURGAR_BAIXA", f"Excluiu definitivamente registro de baixa #{movement_id}", target_id=movement_id, ip_address=ip)
     except Exception as e:
         return f"Erro ao excluir registro de auditoria: {str(e)}", 500
 
@@ -522,6 +667,9 @@ def purge_all_deleted_route():
     """Exclui permanentemente todos os registros de baixa do histórico de auditoria."""
     try:
         purge_all_deleted_movements()
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "LIMPAR_AUDITORIA", "Limpou todos os registros de baixas do histórico", ip_address=ip)
     except Exception as e:
         return f"Erro ao limpar auditoria: {str(e)}", 500
 
@@ -543,6 +691,9 @@ def update_quant(lot_id: int):
 
     try:
         update_lot_quant(lot_id, quant)
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "EDITAR_QTD", f"Alterou quantidade do lote #{lot_id} para {quant} un", target_id=lot_id, ip_address=ip)
     except Exception as e:
         return f"Erro ao salvar: {str(e)}", 500
 
@@ -566,6 +717,9 @@ def update_price(lot_id: int):
 
     try:
         update_lot_price(lot_id, price)
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "EDITAR_PRECO", f"Alterou preço do lote #{lot_id} para R$ {price:.2f}", target_id=lot_id, ip_address=ip)
     except Exception as e:
         return f"Erro ao salvar: {str(e)}", 500
 
@@ -574,6 +728,106 @@ def update_price(lot_id: int):
     broadcast_reload("update_price", exclude_client_id=client_id)
 
     return render_template("partials/price_cell.html", lot={"lot_id": lot_id, "price": price})
+
+
+@app.route("/lote/<int:lot_id>/nome", methods=["POST", "PATCH"])
+def update_product_name(lot_id: int):
+    """Atualiza o nome do produto vinculado a um lote específico."""
+    name = request.form.get("name", "").strip().upper()
+    if not name:
+        return "Nome do produto é obrigatório", 400
+
+    try:
+        update_lot_product_name(lot_id, name)
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "EDITAR_NOME", f"Alterou nome do produto do lote #{lot_id} para '{name}'", target_id=lot_id, product_name=name, ip_address=ip)
+    except Exception as e:
+        return f"Erro ao salvar: {str(e)}", 500
+
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("update_name", exclude_client_id=client_id)
+
+    lot = get_lot_by_id(lot_id) or {"lot_id": lot_id, "product_name": name}
+    return render_template("partials/product_cell.html", lot=lot)
+
+
+@app.route("/lote/<int:lot_id>/localizacao", methods=["POST", "PATCH"])
+def update_location(lot_id: int):
+    """Atualiza a localização de um lote específico (LOJA / GALPÃO)."""
+    location = request.form.get("location", "LOJA").strip().upper()
+    try:
+        update_lot_location(lot_id, location)
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "EDITAR_LOCAL", f"Alterou localização do lote #{lot_id} para '{location}'", target_id=lot_id, ip_address=ip)
+    except Exception as e:
+        return f"Erro ao salvar: {str(e)}", 500
+
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("update_location", exclude_client_id=client_id)
+
+    lot = get_lot_by_id(lot_id) or {"lot_id": lot_id, "location": location}
+    return render_template("partials/location_cell.html", lot=lot)
+
+
+@app.route("/lote/<int:lot_id>/status", methods=["POST", "PATCH"])
+def update_status(lot_id: int):
+    """Atualiza o status de um lote específico."""
+    status = request.form.get("status", "NORMAL").strip().upper()
+    try:
+        update_lot_status(lot_id, status)
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "EDITAR_STATUS", f"Alterou status do lote #{lot_id} para '{status}'", target_id=lot_id, ip_address=ip)
+    except Exception as e:
+        return f"Erro ao salvar: {str(e)}", 500
+
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("update_status", exclude_client_id=client_id)
+
+    lot = get_lot_by_id(lot_id) or {"lot_id": lot_id, "status": status}
+    return render_template("partials/status_cell.html", lot=lot)
+
+
+@app.route("/lote/<int:lot_id>/editar", methods=["POST"])
+def edit_lot_full(lot_id: int):
+    """
+    Atualiza múltiplos campos operacionais do lote (nome, quant, price, location, status).
+    A data de validade é intencionalmente ignorada para garantir que permaneça FIXA.
+    Retorna a linha HTML inteira atualizada para swap instantâneo no HTMX.
+    """
+    name = request.form.get("name", "").strip().upper()
+    quant_raw = request.form.get("quant", "").strip()
+    price_raw = request.form.get("price", "").strip().replace(",", ".")
+    location = request.form.get("location", "LOJA").strip().upper()
+    status = request.form.get("status", "NORMAL").strip().upper()
+
+    if not name:
+        return "Nome do produto é obrigatório", 400
+
+    try:
+        quant = int(quant_raw) if quant_raw else None
+        price = float(price_raw) if price_raw else None
+    except ValueError:
+        return "Quantidade ou preço inválidos", 400
+
+    try:
+        update_lot_full(lot_id, name=name, quant=quant, price=price, location=location, status=status)
+        effective_user = get_effective_user()
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(effective_user, "EDITAR_LOTE", f"Editou lote #{lot_id}: '{name}', {quant} un, R$ {price:.2f}, {location}, {status} (validade fixa)", target_id=lot_id, product_name=name, ip_address=ip)
+    except Exception as e:
+        return f"Erro ao atualizar lote: {str(e)}", 500
+
+    client_id = request.headers.get("X-Client-ID")
+    broadcast_reload("edit_lot", exclude_client_id=client_id)
+
+    lot = get_lot_by_id(lot_id)
+    if not lot:
+        return f"Lote #{lot_id} não encontrado", 404
+
+    return render_template("partials/lot_row_item.html", lot=lot)
 
 
 @app.route("/import-planilha", methods=["GET", "POST"])
@@ -954,12 +1208,31 @@ def inventory_summary_api():
 @app.route("/api/connection/status", methods=["GET"])
 def connection_status():
     """Retorna o estado da conexão (PostgreSQL vs cópia local SQLite)."""
-    return jsonify(get_db_status())
+    st = get_db_status()
+    if st.get("postgres_configured") and not st.get("postgres_online"):
+        trigger_auto_reconnect()
+    return jsonify(st)
 
 
 @app.route("/api/connection/pull", methods=["POST"])
 def connection_pull():
     """Puxa a cópia mais atualizada do PostgreSQL para o SQLite local e testa conexão."""
+    if not is_postgres():
+        reconnected = reconnect_postgres()
+        st = get_db_status()
+        if not reconnected:
+            return jsonify({
+                "success": False,
+                "error": st.get("last_error") or "PostgreSQL inacessível. O sistema continua operando em cópia local SQLite.",
+                "db_status": st
+            }), 200
+        broadcast_reload("pulled")
+        return jsonify({
+            "success": True,
+            "message": "Conexão com PostgreSQL restabelecida e banco de dados sincronizado!",
+            "db_status": st
+        }), 200
+
     result = pull_cloud_to_sqlite()
     if result.get("success"):
         broadcast_reload("pulled")
@@ -984,9 +1257,13 @@ from app.db import get_alert_settings, save_alert_settings
 
 @app.route("/api/alerts/settings", methods=["GET"])
 def api_get_alert_settings():
-    """Retorna as configurações atuais de alerta."""
-    st = get_alert_settings()
-    return jsonify(st), 200
+    """Retorna as configurações atuais de alerta (Local-First resiliente)."""
+    try:
+        st = get_alert_settings()
+        return jsonify(st), 200
+    except Exception as e:
+        print(f"⚠️ Erro ao consultar configurações de alerta: {e}")
+        return jsonify({"error": "Erro ao consultar configurações de alerta."}), 500
 
 
 @app.route("/api/alerts/settings", methods=["POST"])
@@ -1034,9 +1311,478 @@ threading.Thread(target=_alert_scheduler_loop, daemon=True, name="AlertScheduler
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
+
+
+# ── Rotas de Autenticação, Troca de Operador e Auditoria ────────────────────────
+
+@app.route("/login", methods=["GET", "POST"])
+def login_route():
+    if session.get("user_id"):
+        return redirect("/")
+
+    error = None
+    if request.method == "POST":
+        login_type = request.form.get("login_type", "password")
+        ip = request.remote_addr or "127.0.0.1"
+
+        if login_type == "pin":
+            pin = request.form.get("pin", "").strip()
+            user = get_user_by_pin(pin)
+            if user:
+                session.permanent = True
+                session["user_id"] = user["id"]
+                session["username"] = user["username"]
+                session["name"] = user["name"]
+                session["role"] = user["role"]
+                session["active_operator"] = user["name"]
+                session["active_operator_username"] = user["username"]
+                log_audit(user["name"], "LOGIN", f"Acesso rápido via PIN ({user['role']})", user_id=user["id"], ip_address=ip)
+                return redirect("/")
+            else:
+                error = "PIN incorreto ou operador inativo."
+        else:
+            username = request.form.get("username", "").strip()
+            password = request.form.get("password", "")
+            user = get_user_by_username(username)
+            if user and check_password_hash(user["password_hash"], password):
+                if not user["active"]:
+                    error = "Esta conta de usuário está desativada."
+                else:
+                    session.permanent = True
+                    session["user_id"] = user["id"]
+                    session["username"] = user["username"]
+                    session["name"] = user["name"]
+                    session["role"] = user["role"]
+                    session["active_operator"] = user["name"]
+                    session["active_operator_username"] = user["username"]
+                    log_audit(user["name"], "LOGIN", f"Login com senha ({user['role']})", user_id=user["id"], ip_address=ip)
+                    return redirect("/")
+            else:
+                error = "Usuário ou senha incorretos."
+
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout", methods=["GET", "POST"])
+def logout_route():
+    ip = request.remote_addr or "127.0.0.1"
+    name = session.get("name") or session.get("username") or "Usuário"
+    u_id = session.get("user_id")
+    log_audit(name, "LOGOUT", "Encerrou a sessão no sistema", user_id=u_id, ip_address=ip)
+    session.clear()
+    return redirect("/login")
+
+
+@app.route("/api/operator/switch", methods=["POST"])
+def switch_operator_route():
+    data = request.get_json(silent=True) or request.form
+    pin = (data.get("pin") or "").strip()
+    if not pin:
+        return jsonify({"success": False, "error": "PIN é obrigatório."}), 400
+
+    user = get_user_by_pin(pin)
+    if not user:
+        return jsonify({"success": False, "error": "PIN não encontrado ou operador inativo."}), 401
+
+    old_op = session.get("name") or session.get("active_operator") or "Desconhecido"
+    session.permanent = True
+    session["user_id"] = user["id"]
+    session["username"] = user["username"]
+    session["name"] = user["name"]
+    session["role"] = user["role"]
+    session["active_operator"] = user["name"]
+    session["active_operator_username"] = user["username"]
+    ip = request.remote_addr or "127.0.0.1"
+    log_audit(
+        user["name"],
+        "TROCA_OPERADOR",
+        f"Trocou operador ativo no chão de loja via PIN (de '{old_op}' para '{user['name']}' [{user['role']}])",
+        user_id=user["id"],
+        ip_address=ip
+    )
+    summary = get_inventory_summary()
+    val = summary.get("total_value", 0.0)
+    val_str = f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return jsonify({
+        "success": True,
+        "active_operator": user["name"],
+        "operator_name": user["name"],
+        "role": user["role"],
+        "user_id": user["id"],
+        "username": user["username"],
+        "total_value_formatted": val_str
+    })
+
+
+@app.route("/api/audit/logs", methods=["GET"])
+def audit_logs_api():
+    if session.get("role") != "admin":
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    limit = request.args.get("limit", 50, type=int)
+    offset = request.args.get("offset", 0, type=int)
+    user = request.args.get("user", "").strip() or None
+    action = request.args.get("action", "").strip() or None
+    search = request.args.get("search", "").strip() or None
+    start_date = request.args.get("start_date", "").strip() or None
+    end_date = request.args.get("end_date", "").strip() or None
+
+    total, logs = query_audit_logs(limit=limit, offset=offset, user=user, action=action, search=search, start_date=start_date, end_date=end_date)
+    return jsonify({"total": total, "logs": logs})
+
+
+@app.route("/api/audit/export", methods=["GET"])
+def audit_export_api():
+    if session.get("role") != "admin":
+        return redirect("/login")
+
+    user = request.args.get("user", "").strip() or None
+    action = request.args.get("action", "").strip() or None
+    search = request.args.get("search", "").strip() or None
+    total, logs = query_audit_logs(limit=5000, offset=0, user=user, action=action, search=search)
+
+    import io
+    import csv
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(["ID", "Data/Hora", "Quem Mexeu", "Ação", "Detalhes", "Produto Relacionado", "IP Origem"])
+    for l in logs:
+        writer.writerow([
+            l["id"],
+            l["created_at"],
+            l["username"],
+            l["action"],
+            l["details"],
+            l["product_name"] or "",
+            l["ip_address"] or ""
+        ])
+
+    csv_data = output.getvalue().encode("utf-8")
+    return Response(
+        csv_data,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=auditoria_datelimit_{date.today().strftime('%Y%m%d')}.csv"}
+    )
+
+
+@app.route("/api/users", methods=["GET", "POST"])
+def users_api():
+    if session.get("role") != "admin":
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    if request.method == "POST":
+        data = request.get_json(silent=True) or request.form
+        name = (data.get("name") or "").strip()
+        username = (data.get("username") or "").strip()
+        password = data.get("password", "")
+        pin = (data.get("pin") or "").strip()
+        role = data.get("role", "operador")
+
+        ok, msg = create_user(username, name, password, pin=pin, role=role)
+        if ok:
+            ip = request.remote_addr or "127.0.0.1"
+            curr_user = session.get("name") or "Admin"
+            log_audit(curr_user, "CRIAR_USUARIO", f"Cadastrou novo usuário '@{username}' ({name}) como {role}", ip_address=ip)
+            u = get_user_by_username(username)
+            return jsonify({"success": True, "message": msg, "user": u})
+        return jsonify({"success": False, "error": msg}), 400
+
+    users = list_users()
+    return jsonify(users)
+
+
+@app.route("/api/users/<int:user_id>", methods=["PUT", "POST"])
+@app.route("/api/users/<int:user_id>/update", methods=["POST"])
+def user_update_api(user_id: int):
+    if session.get("role") != "admin" and session.get("user_id") != user_id:
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    data = request.get_json(silent=True) or request.form
+    name = data.get("name")
+    username = data.get("username")
+    password = data.get("password") or None
+    pin = data.get("pin")
+    role = data.get("role") if session.get("role") == "admin" else None
+    active = data.get("active") if session.get("role") == "admin" else None
+
+    ok, msg = update_user(user_id, name=name, username=username, password=password, pin=pin, role=role, active=active)
+    if ok:
+        ip = request.remote_addr or "127.0.0.1"
+        curr_user = session.get("name") or "Admin"
+        log_audit(curr_user, "EDITAR_USUARIO", f"Atualizou cadastro do usuário ID #{user_id}", target_id=user_id, ip_address=ip)
+        return jsonify({"success": True, "message": msg})
+    return jsonify({"success": False, "error": msg}), 400
+
+
+@app.route("/api/users/<int:user_id>", methods=["DELETE"])
+@app.route("/api/users/<int:user_id>/delete", methods=["POST", "DELETE"])
+def user_delete_api(user_id: int):
+    if session.get("role") != "admin":
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    ok, msg = delete_user(user_id)
+    if ok:
+        ip = request.remote_addr or "127.0.0.1"
+        curr_user = session.get("name") or "Admin"
+        log_audit(curr_user, "EXCLUIR_USUARIO", f"Excluiu usuário ID #{user_id}", target_id=user_id, ip_address=ip)
+        return jsonify({"success": True, "message": msg})
+    return jsonify({"success": False, "error": msg}), 400
+
+
+
+
+# ── Rota do Painel Administrativo Dedicado ─────────────────────────────────────
+
+@app.route("/admin")
+@app.route("/admin/painel")
+def admin_panel_route():
+    if not session.get("user_id"):
+        return redirect("/login")
+    if session.get("role") not in ("admin", "gerente"):
+        return Response("Acesso restrito a administradores e gerentes", 403)
+
+    admin_id = session.get("user_id")
+    admin_user = get_user_by_id(admin_id)
+    if not admin_user:
+        return redirect("/login")
+
+    # Se o admin ainda não tiver token gerado, gera um automaticamente
+    if not admin_user.get("api_token"):
+        new_tok = generate_api_token()
+        update_user(admin_id, api_token=new_tok)
+        admin_user["api_token"] = new_tok
+
+    users_list = list_users()
+    db_status = get_db_status()
+    total_lots, _ = query_lots(limit=1)
+    total_audit, _ = query_audit_logs(limit=1)
+    summary = get_inventory_summary()
+    val = summary.get("total_value", 0.0)
+    val_str = f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    return render_template(
+        "admin_panel.html",
+        admin=admin_user,
+        users=users_list,
+        db_status=db_status,
+        total_lots=summary.get("total_lots", total_lots),
+        total_units=summary.get("total_units", 0),
+        total_products=summary.get("total_products", 0),
+        total_value=val,
+        total_value_formatted=val_str,
+        total_audit=total_audit
+    )
+
+
+@app.route("/api/user/profile", methods=["GET", "POST"])
+def user_profile_route():
+    """Permite que qualquer usuário autenticado (operador, gerente ou admin) consulte e altere seu próprio perfil."""
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"error": "Sessão expirada. Faça login novamente."}), 401
+
+    if request.method == "GET":
+        user = get_user_by_id(user_id)
+        if not user:
+            return jsonify({"error": "Usuário não encontrado."}), 404
+        return jsonify({
+            "success": True,
+            "id": user["id"],
+            "name": user["name"],
+            "username": user["username"],
+            "pin": user["pin"],
+            "role": user["role"]
+        })
+
+    data = request.get_json(silent=True) or request.form
+    name = (data.get("name") or "").strip()
+    username = (data.get("username") or "").strip().lower()
+    password = (data.get("password") or "").strip() or None
+    pin = data.get("pin")
+
+    if not name:
+        return jsonify({"success": False, "error": "Nome completo não pode ficar em branco."}), 400
+    if not username:
+        return jsonify({"success": False, "error": "Nome de usuário não pode ficar em branco."}), 400
+
+    ok, msg = update_user(
+        user_id,
+        name=name,
+        username=username,
+        password=password,
+        pin=pin
+    )
+    if ok:
+        session["name"] = name
+        session["username"] = username
+        if session.get("active_operator") == session.get("name") or session.get("active_operator_username") == username:
+            session["active_operator"] = name
+            session["active_operator_username"] = username
+
+        ip = request.remote_addr or "127.0.0.1"
+        pwd_info = " com alteração de senha" if password else ""
+        log_audit(
+            name,
+            "PERFIL_ATUALIZADO",
+            f"Usuário atualizou seus dados de perfil (Nome: '{name}', Login: '@{username}'){pwd_info}",
+            user_id=user_id,
+            ip_address=ip
+        )
+        updated_user = get_user_by_id(user_id)
+        u_name = updated_user["name"] if updated_user else name
+        u_user = updated_user["username"] if updated_user else username
+        u_pin = updated_user.get("pin") if updated_user else pin
+        u_role = updated_user.get("role", "operador") if updated_user else session.get("role", "operador")
+        return jsonify({
+            "success": True,
+            "message": "Perfil atualizado com sucesso!",
+            "name": u_name,
+            "username": u_user,
+            "user": {
+                "id": user_id,
+                "name": u_name,
+                "username": u_user,
+                "pin": u_pin,
+                "role": u_role
+            }
+        })
+    return jsonify({"success": False, "error": msg}), 400
+
+
+@app.route("/api/admin/profile", methods=["POST"])
+def admin_profile_update():
+    if not session.get("user_id") or session.get("role") not in ("admin", "gerente"):
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    admin_id = session.get("user_id")
+    data = request.get_json(silent=True) or request.form
+    name = (data.get("name") or "").strip()
+    username = (data.get("username") or "").strip().lower()
+    password = (data.get("password") or "").strip() or None
+    pin = data.get("pin")
+    api_token = (data.get("api_token") or "").strip() or None
+
+    if not name:
+        return jsonify({"success": False, "error": "Nome completo não pode ficar em branco."}), 400
+    if not username:
+        return jsonify({"success": False, "error": "Nome de usuário não pode ficar em branco."}), 400
+
+    ok, msg = update_user(
+        admin_id,
+        name=name,
+        username=username,
+        password=password,
+        pin=pin,
+        api_token=api_token
+    )
+    if ok:
+        # Atualiza a sessão ativa imediatamente para refletir na interface
+        session["name"] = name
+        session["username"] = username
+        if session.get("active_operator") == session.get("name"):
+            session["active_operator"] = name
+
+        ip = request.remote_addr or "127.0.0.1"
+        log_audit(
+            name,
+            "PERFIL_ADMIN_ATUALIZADO",
+            f"Admin atualizou dados de cadastro (Nome: '{name}', Login: '@{username}')",
+            user_id=admin_id,
+            ip_address=ip
+        )
+        updated_user = get_user_by_id(admin_id)
+        return jsonify({"success": True, "message": "Perfil de administrador atualizado com sucesso!", "admin": updated_user})
+    return jsonify({"success": False, "error": msg}), 400
+
+
+@app.route("/api/admin/generate-token", methods=["POST"])
+def admin_generate_token_route():
+    if not session.get("user_id") or session.get("role") != "admin":
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    token = generate_api_token()
+    return jsonify({"success": True, "token": token})
+
+
+@app.route("/api/admin/field-options", methods=["GET"])
+def get_admin_field_options():
+    if not session.get("user_id") or session.get("role") != "admin":
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    return jsonify({
+        "success": True,
+        "locations": get_field_options("location"),
+        "statuses": get_field_options("status")
+    })
+
+
+@app.route("/api/admin/field-options", methods=["POST"])
+def add_admin_field_option_route():
+    if not session.get("user_id") or session.get("role") != "admin":
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    data = request.get_json(silent=True) or request.form
+    field_type = (data.get("field_type") or "").strip().lower()
+    name = (data.get("name") or "").strip().upper()
+    color = (data.get("color") or "").strip().lower()
+
+    if not name or field_type not in ("location", "status"):
+        return jsonify({"success": False, "error": "Tipo de campo e nome são obrigatórios"}), 400
+
+    ok = add_field_option(field_type, name, color)
+    if not ok:
+        return jsonify({"success": False, "error": "Não foi possível adicionar (já existe ou inválido)"}), 400
+
+    effective_user = get_effective_user()
+    ip = request.remote_addr or "127.0.0.1"
+    tipo_desc = "Localidade" if field_type == "location" else "Status"
+    log_audit(effective_user, "ADD_CAMPO_OPCAO", f"Adicionou opção '{name}' para {tipo_desc}", ip_address=ip)
+
+    return jsonify({
+        "success": True,
+        "message": f"{tipo_desc} '{name}' adicionada com sucesso!",
+        "locations": get_field_options("location"),
+        "statuses": get_field_options("status")
+    })
+
+
+@app.route("/api/admin/field-options/<field_type>/<name>", methods=["DELETE"])
+@app.route("/api/admin/field-options/<field_type>/delete", methods=["POST"])
+def delete_admin_field_option_route(field_type: str, name: str = None):
+    if not session.get("user_id") or session.get("role") != "admin":
+        return jsonify({"error": "Acesso não autorizado"}), 403
+
+    if not name:
+        data = request.get_json(silent=True) or request.form
+        name = (data.get("name") or "").strip().upper()
+
+    field_type = (field_type or "").strip().lower()
+    name = (name or "").strip().upper()
+
+    if (field_type == "location" and name == "LOJA") or (field_type == "status" and name == "NORMAL"):
+        return jsonify({"success": False, "error": "Esta opção padrão do sistema é protegida e não pode ser removida"}), 400
+
+    ok = delete_field_option(field_type, name)
+    if not ok:
+        return jsonify({"success": False, "error": "Não foi possível remover a opção"}), 400
+
+    effective_user = get_effective_user()
+    ip = request.remote_addr or "127.0.0.1"
+    tipo_desc = "Localidade" if field_type == "location" else "Status"
+    log_audit(effective_user, "DEL_CAMPO_OPCAO", f"Removeu opção '{name}' de {tipo_desc}", ip_address=ip)
+
+    return jsonify({
+        "success": True,
+        "message": f"{tipo_desc} '{name}' removida com sucesso!",
+        "locations": get_field_options("location"),
+        "statuses": get_field_options("status")
+    })
+
 if __name__ == "__main__":
     ip = get_local_ip()
-    port = 5000
+    port = int(os.environ.get("PORT", 5000))
+    debug = os.environ.get("FLASK_DEBUG", "0").lower() in ("1", "true")
     db_label = "PostgreSQL" if is_postgres() else "SQLite"
     print("\n" + "=" * 60)
     print(f"🚀 DateLimit Web rodando com WebSocket e banco [{db_label}]!")
@@ -1044,4 +1790,4 @@ if __name__ == "__main__":
     print(f"📱 Celular / Outro dispositivo na rede:")
     print(f"   http://{ip}:{port}")
     print("=" * 60 + "\n")
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=debug)

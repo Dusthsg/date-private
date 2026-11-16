@@ -1,0 +1,43 @@
+<td class="td-product px-3 py-2.5 font-semibold sm:font-medium text-gray-900 dark:text-gray-100 sm:min-w-[280px] sm:max-w-[55ch] text-sm"
+    id="product-cell-{{ lot['lot_id'] }}"
+    title="{{ lot['product_name'] }}">
+    {% if lot.get('is_deleted') %}
+        <span>{{ lot['product_name'] }}</span>
+        {% if lot.get('deleted_at') %}
+            <div class="text-[11px] font-normal text-rose-500 dark:text-rose-400 mt-0.5">
+                Baixado em: {{ lot['deleted_at'][:16] }}
+            </div>
+        {% endif %}
+    {% else %}
+        <div id="view-name-{{ lot['lot_id'] }}" class="inline-flex items-center gap-1.5 group/pname">
+            <span class="truncate block sm:max-w-[48ch]">{{ lot['product_name'] }}</span>
+            <button type="button"
+                    onclick="startEditingName({{ lot['lot_id'] }})"
+                    class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer opacity-70 group-hover/pname:opacity-100"
+                    title="Editar nome do produto">
+                <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+            </button>
+        </div>
+        <form id="edit-name-{{ lot['lot_id'] }}"
+              hx-post="/lote/{{ lot['lot_id'] }}/nome"
+              hx-target="#product-cell-{{ lot['lot_id'] }}"
+              hx-swap="outerHTML"
+              onsubmit="window.isEditingLot = false;"
+              class="inline-flex items-center gap-1 w-full"
+              style="display: none;">
+            <input type="text" id="input-name-{{ lot['lot_id'] }}" name="name" value="{{ lot['product_name'] }}" required
+                   class="w-full min-w-[200px] border border-indigo-400 dark:border-indigo-500 rounded px-2 py-0.5 text-xs uppercase text-gray-800 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+            <button type="submit"
+                    class="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-1 text-xs font-bold transition shadow-sm cursor-pointer shrink-0"
+                    title="Salvar">
+                <i data-lucide="check" class="w-3.5 h-3.5"></i>
+            </button>
+            <button type="button"
+                    onclick="stopEditingName({{ lot['lot_id'] }})"
+                    class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded px-1.5 py-1 text-xs transition cursor-pointer shrink-0"
+                    title="Cancelar">
+                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+            </button>
+        </form>
+    {% endif %}
+</td>

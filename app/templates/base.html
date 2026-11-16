@@ -293,6 +293,24 @@
             display: block !important;
             width: 100% !important;
         }
+
+        /* Menus Flutuantes de Localidade e Status com Estilo Semelhante à Data */
+        .lot-floating-menu {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        }
+        tr.lot-row {
+            position: relative;
+        }
+        tr.lot-row:focus-within,
+        tr.lot-row:has(.lot-floating-menu:not(.hidden)) {
+            z-index: 50 !important;
+        }
+        #lot-display-container.view-mode-table tr.lot-row td.td-location .lot-dropdown-trigger,
+        #lot-display-container.view-mode-table tr.lot-row td.td-status .lot-dropdown-trigger {
+            padding: 0.18rem 0.52rem !important;
+            font-size: 0.75rem !important;
+            line-height: 1.15 !important;
+        }
 </style>
     <script>
                 // Suporte a Lucide Icons com re-renderização de alta performance com escopo e requestAnimationFrame
@@ -314,6 +332,31 @@
                 }
             } catch (e) {
                 console.error("Erro ao renderizar Lucide icons:", e);
+            }
+        };
+
+        // Alternância global e resiliente de visibilidade de senha / PIN
+        window.togglePasswordVisibility = function(inputId, trigger) {
+            const input = document.getElementById(inputId);
+            if (!input) return;
+
+            const isPassword = input.type === 'password';
+            input.type = isPassword ? 'text' : 'password';
+
+            let btn = null;
+            if (typeof trigger === 'string') {
+                const el = document.getElementById(trigger);
+                if (el) btn = el.tagName === 'BUTTON' ? el : (el.closest('button') || el.parentElement);
+            } else if (trigger && trigger.nodeType) {
+                btn = trigger.tagName === 'BUTTON' ? trigger : (trigger.closest('button') || trigger);
+            }
+
+            const iconName = isPassword ? 'eye-off' : 'eye';
+            if (btn) {
+                btn.innerHTML = `<i data-lucide="${iconName}" class="w-4 h-4"></i>`;
+                if (window.refreshIcons) window.refreshIcons(btn);
+            } else if (window.refreshIcons) {
+                window.refreshIcons();
             }
         };
 
@@ -384,6 +427,133 @@
             window.refreshIcons();
         }
 
+        function startEditingName(lotId) {
+            window.isEditingLot = true;
+            const viewDiv = document.getElementById('view-name-' + lotId);
+            if (viewDiv) viewDiv.style.display = 'none';
+            const editForm = document.getElementById('edit-name-' + lotId);
+            if (editForm) {
+                editForm.style.display = 'flex';
+                const input = document.getElementById('input-name-' + lotId);
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }
+            window.refreshIcons();
+        }
+
+        function stopEditingName(lotId) {
+            window.isEditingLot = false;
+            const editForm = document.getElementById('edit-name-' + lotId);
+            if (editForm) editForm.style.display = 'none';
+            const viewDiv = document.getElementById('view-name-' + lotId);
+            if (viewDiv) viewDiv.style.display = 'flex';
+            window.refreshIcons();
+        }
+
+        /* Menus Flutuantes Rápidos para Localidade e Status */
+        window.toggleLotDropdown = function(menuId, evt) {
+            if (evt) {
+                evt.stopPropagation();
+                evt.preventDefault();
+            }
+            const targetMenu = document.getElementById(menuId);
+            if (!targetMenu) return;
+            const isClosed = targetMenu.classList.contains('hidden');
+            window.closeAllLotDropdowns();
+            if (isClosed) {
+                targetMenu.classList.remove('hidden');
+                window.refreshIcons(targetMenu);
+            }
+        };
+
+        window.closeAllLotDropdowns = function() {
+            document.querySelectorAll('.lot-floating-menu').forEach(menu => {
+                menu.classList.add('hidden');
+            });
+        };
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.lot-floating-menu') && !e.target.closest('.lot-dropdown-trigger')) {
+                window.closeAllLotDropdowns();
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                window.closeAllLotDropdowns();
+            }
+        });
+
+        window.openEditLotModal = function(lotId, name, quant, price, dateValid, location, status) {
+            const modal = document.getElementById('modal-edit-lot');
+            if (!modal) return;
+            const form = document.getElementById('form-edit-lot');
+            if (form) {
+                form.setAttribute('hx-post', '/lote/' + lotId + '/editar');
+                form.setAttribute('hx-target', '#lot-' + lotId);
+                form.setAttribute('hx-swap', 'outerHTML swap:0.15s');
+                if (window.htmx) window.htmx.process(form);
+            }
+            document.getElementById('edit-modal-lot-id').value = lotId;
+            const titleEl = document.getElementById('edit-modal-lot-id-title');
+            if (titleEl) titleEl.textContent = '#' + lotId;
+
+            const nameInput = document.getElementById('edit-modal-name');
+            if (nameInput) nameInput.value = name || '';
+
+            const quantInput = document.getElementById('edit-modal-quant');
+            if (quantInput) quantInput.value = (quant !== undefined && quant !== null) ? quant : '0';
+
+            const priceInput = document.getElementById('edit-modal-price');
+            if (priceInput) priceInput.value = (price !== undefined && price !== null) ? Number(price).toFixed(2) : '0.00';
+
+            const dateInput = document.getElementById('edit-modal-date');
+            if (dateInput) dateInput.value = dateValid || '';
+
+            const locSelect = document.getElementById('edit-modal-location');
+            if (locSelect) locSelect.value = (location && location.toUpperCase().includes('GALP')) ? 'GALPÃO' : 'LOJA';
+
+            const statusSelect = document.getElementById('edit-modal-status');
+            if (statusSelect) statusSelect.value = status || 'NORMAL';
+
+            const msgDiv = document.getElementById('edit-modal-msg');
+            if (msgDiv) {
+                msgDiv.innerHTML = '';
+                msgDiv.classList.add('hidden');
+            }
+
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            if (window.refreshIcons) window.refreshIcons(modal);
+        };
+
+        window.closeEditLotModal = function() {
+            const modal = document.getElementById('modal-edit-lot');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+        };
+
+        window.onEditLotModalAfterRequest = function(evt) {
+            const msgDiv = document.getElementById('edit-modal-msg');
+            if (evt.detail && evt.detail.successful) {
+                closeEditLotModal();
+                if (typeof showToastNotification === 'function') {
+                    showToastNotification('Lote atualizado com sucesso!', 'success');
+                }
+            } else {
+                const err = (evt.detail && evt.detail.xhr && evt.detail.xhr.responseText) ? evt.detail.xhr.responseText : 'Erro ao atualizar lote.';
+                if (msgDiv) {
+                    msgDiv.className = 'text-xs font-semibold p-2.5 rounded-lg border bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800';
+                    msgDiv.innerHTML = `⚠️ ${err}`;
+                    msgDiv.classList.remove('hidden');
+                }
+            }
+        };
+
         // Bloqueia qualquer requisição de polling (every 5s) se o usuário estiver editando ou com foco em input
         document.addEventListener("htmx:confirm", function(evt) {
             // Se a requisição veio do polling da tabela
@@ -392,7 +562,7 @@
                     evt.preventDefault();
                     return;
                 }
-                const openEditForms = Array.from(document.querySelectorAll("form[id^='edit-quant-'], form[id^='edit-price-']"))
+                const openEditForms = Array.from(document.querySelectorAll("form[id^='edit-']"))
                     .filter(f => f.style.display === 'flex' || (!f.classList.contains('hidden') && f.style.display !== 'none'));
                 if (openEditForms && openEditForms.length > 0) {
                     window.isEditingLot = true;
@@ -536,22 +706,21 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
                 <span class="text-indigo-200 dark:text-indigo-300 text-xs hidden sm:inline">Controle de Validade</span>
             </div>
 
-            <!-- Controles Mobile (Visíveis em celular < sm) -->
+            <!-- Controles Mobile (Visíveis apenas em celular < sm) -->
             <div class="flex sm:hidden items-center gap-1.5">
-                <!-- Botão de Alertas Rápido -->
+                <a id="mobile-header-admin-link" href="/admin"
+                   class="{% if not is_admin %}hidden {% endif %}p-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 active:scale-95 text-white transition shadow-xs cursor-pointer"
+                   title="Painel Admin">
+                    <i data-lucide="shield" class="w-4 h-4"></i>
+                </a>
+                <!-- Operador Ativo e Troca Rápida de PIN no Mobile -->
                 <button type="button"
-                        onclick="openAlertsModal()"
-                        class="p-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 active:scale-95 text-white transition shadow-xs cursor-pointer"
-                        title="Alertas Automáticos">
-                    <i data-lucide="bell" class="w-4 h-4"></i>
-                </button>
-
-                <!-- Botão Alternar Modo Escuro -->
-                <button type="button"
-                        onclick="toggleDarkMode()"
-                        class="p-1.5 rounded-lg bg-indigo-800/80 hover:bg-indigo-900 dark:bg-gray-700 text-amber-300 transition cursor-pointer"
-                        title="Alternar Modo Escuro">
-                    <i data-lucide="moon" class="w-4 h-4"></i>
+                        onclick="openSwitchOperatorModal()"
+                        class="inline-flex items-center gap-1 bg-emerald-800/90 text-emerald-100 px-2 py-1 rounded-full border border-emerald-600/50 text-[11px] active:scale-95 transition cursor-pointer font-medium"
+                        title="Operador ativo. Toque para alternar operador via PIN">
+                    <i data-lucide="user-check" class="w-3.5 h-3.5 text-emerald-300"></i>
+                    <span id="mobile-operator-name" class="max-w-[85px] truncate font-semibold">{{ active_operator }}</span>
+                    <span class="text-[9px] bg-emerald-600 text-white px-1 py-0.2 rounded font-bold">PIN</span>
                 </button>
 
                 <!-- Botão Menu Gaveta -->
@@ -564,24 +733,70 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
             </div>
 
             <!-- Controles Desktop e Tablet (Visíveis em telas sm+) -->
-            <div class="hidden sm:flex items-center gap-2 text-xs">
+            <div class="hidden sm:flex items-center gap-1.5 lg:gap-2 text-xs">
+                <!-- Grupo Admin: Painel, Auditoria e Usuários -->
+                <div id="header-admin-group" class="{% if not is_admin %}hidden {% endif %}inline-flex items-center bg-purple-900/60 p-0.5 rounded-lg border border-purple-500/50 shadow-xs">
+                    <a href="/admin"
+                       class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-white hover:bg-purple-600 transition"
+                       title="Painel de Administração">
+                        <i data-lucide="shield" class="w-3.5 h-3.5"></i>
+                        <span class="hidden md:inline">Admin</span>
+                    </a>
+                    <button id="btn-audit-modal"
+                            type="button"
+                            onclick="openAuditModal()"
+                            class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-purple-200 hover:text-white hover:bg-purple-600 transition cursor-pointer"
+                            title="Histórico Completo de Auditoria">
+                        <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
+                        <span class="hidden xl:inline">Auditoria</span>
+                    </button>
+                    <button id="btn-users-modal"
+                            type="button"
+                            onclick="openUsersModal()"
+                            class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-purple-200 hover:text-white hover:bg-purple-600 transition cursor-pointer"
+                            title="Gerenciar Usuários e Operadores">
+                        <i data-lucide="users" class="w-3.5 h-3.5"></i>
+                        <span class="hidden xl:inline">Usuários</span>
+                    </button>
+                </div>
+
+                <!-- Operador Ativo e Troca Rápida de PIN -->
+                <div class="inline-flex items-center gap-1.5 bg-emerald-800/80 dark:bg-emerald-950/70 text-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-600/50">
+                    <i data-lucide="user-check" class="w-3.5 h-3.5 text-emerald-300"></i>
+                    <span class="max-w-[85px] sm:max-w-[120px] truncate">Operador: <strong id="desktop-operator-name" class="text-white">{{ active_operator }}</strong></span>
+                    <button type="button" onclick="openSwitchOperatorModal()"
+                            class="ml-0.5 bg-emerald-700 hover:bg-emerald-600 px-1.5 py-0.5 rounded text-[10px] font-bold text-white transition cursor-pointer"
+                            title="Trocar operador ativo no chão de loja via PIN">
+                        PIN
+                    </button>
+                </div>
+
+                <!-- Botão Meu Perfil -->
+                <button type="button"
+                        onclick="openProfileModal()"
+                        class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-indigo-800/90 hover:bg-indigo-900 border border-indigo-600/50 text-indigo-100 transition shadow-xs cursor-pointer select-none"
+                        title="Meu Perfil — Alterar nome, usuário e senha">
+                    <i data-lucide="user-cog" class="w-3.5 h-3.5 text-indigo-300"></i>
+                    <span class="hidden lg:inline">Perfil</span>
+                </button>
+
                 <!-- Botão de Alertas Automáticos -->
                 <button id="btn-alerts-modal"
                         type="button"
                         onclick="openAlertsModal()"
-                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-600 active:scale-95 text-white transition border border-amber-400/80 shadow-xs cursor-pointer select-none"
+                        class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-600 active:scale-95 text-white transition border border-amber-400/80 shadow-xs cursor-pointer select-none"
                         title="Configurar Alertas Automáticos">
                     <i data-lucide="bell" class="w-3.5 h-3.5"></i>
-                    <span>Alertas</span>
+                    <span class="hidden lg:inline">Alertas</span>
                 </button>
 
                 <!-- Menu Popover de Conexões de Rede (Local e Wi-Fi) -->
                 <div class="relative group/net">
                     <button type="button"
-                            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-800/90 hover:bg-indigo-900 border border-indigo-600/50 text-indigo-100 transition shadow-xs cursor-pointer"
+                            class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-indigo-800/90 hover:bg-indigo-900 border border-indigo-600/50 text-indigo-100 transition shadow-xs cursor-pointer"
                             title="Endereços de Acesso (Local e Wi-Fi)">
                         <i data-lucide="wifi" class="w-3.5 h-3.5 text-emerald-400"></i>
-                        <span>Rede</span>
+                        <span class="hidden md:inline">Rede</span>
                         <i data-lucide="chevron-down" class="w-3 h-3 opacity-70"></i>
                     </button>
                     <div class="hidden group-hover/net:block hover:block absolute right-0 top-full mt-1.5 w-64 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 p-2.5 z-50 transition-all">
@@ -603,11 +818,19 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
                 <button id="btn-theme-toggle"
                         type="button"
                         onclick="toggleDarkMode()"
-                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-800/90 hover:bg-indigo-900 dark:bg-gray-700 dark:hover:bg-gray-600 text-indigo-100 dark:text-amber-300 transition border border-indigo-600/70 dark:border-gray-600 shadow-xs cursor-pointer select-none active:scale-95"
+                        class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-indigo-800/90 hover:bg-indigo-900 dark:bg-gray-700 dark:hover:bg-gray-600 text-indigo-100 dark:text-amber-300 transition border border-indigo-600/70 dark:border-gray-600 shadow-xs cursor-pointer select-none active:scale-95"
                         title="Alternar entre modo claro e escuro">
                     <span id="theme-toggle-icon"><i data-lucide="moon" class="w-3.5 h-3.5 inline-block text-amber-300"></i></span>
-                    <span id="theme-toggle-text">Modo Escuro</span>
+                    <span id="theme-toggle-text" class="hidden md:inline">Modo Escuro</span>
                 </button>
+
+                <!-- Botão Sair (Logout) -->
+                <a href="/logout"
+                   class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-700 active:scale-95 text-white transition shadow-xs cursor-pointer"
+                   title="Encerrar sessão com segurança">
+                    <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+                    <span class="hidden md:inline">Sair</span>
+                </a>
             </div>
         </div>
     </header>
@@ -638,17 +861,32 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
     <!-- Modal de Configuração de Alertas Automáticos -->
     {% include "partials/alerts_modal.html" %}
 
+    <!-- Modal de Auditoria Completa -->
+    {% include "partials/audit_modal.html" %}
+
+    <!-- Modal de Gestão de Usuários -->
+    {% include "partials/users_modal.html" %}
+
+    <!-- Modal de Troca Rápida de Operador -->
+    {% include "partials/switch_operator_modal.html" %}
+
+    <!-- Modal de Edição de Lote -->
+    {% include "partials/edit_lot_modal.html" %}
+
+    <!-- Modal de Edição de Perfil do Usuário -->
+    {% include "partials/profile_modal.html" %}
+
     <!-- Barra de Navegação Inferior Fixa para Mobile (Bottom Navigation Bar) -->
     <nav class="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200/90 dark:border-gray-800 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] py-1.5 px-3 flex items-center justify-around safe-bottom">
         <button type="button"
                 onclick="window.scrollTo({top: 0, behavior: 'smooth'})"
-                class="flex flex-col items-center justify-center py-1 px-3 text-indigo-600 dark:text-indigo-400 active:scale-95 transition cursor-pointer">
+                class="flex flex-col items-center justify-center py-1 px-2 text-indigo-600 dark:text-indigo-400 active:scale-95 transition cursor-pointer">
             <i data-lucide="package" class="w-5 h-5"></i>
             <span class="text-[10px] font-semibold mt-0.5">Lotes</span>
         </button>
         <button type="button"
                 onclick="if(typeof focusMobileSearch === 'function') focusMobileSearch(); else { document.getElementById('current-busca').focus(); }"
-                class="flex flex-col items-center justify-center py-1 px-3 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
+                class="flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
             <i data-lucide="search" class="w-5 h-5"></i>
             <span class="text-[10px] font-semibold mt-0.5">Buscar</span>
         </button>
@@ -659,15 +897,23 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
                 title="Cadastrar Lote Rápido">
             <i data-lucide="plus" class="w-6 h-6 stroke-[2.5]"></i>
         </button>
-        <button type="button"
-                onclick="openAlertsModal()"
-                class="flex flex-col items-center justify-center py-1 px-3 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
-            <i data-lucide="bell" class="w-5 h-5"></i>
-            <span class="text-[10px] font-semibold mt-0.5">Alertas</span>
+        <button id="bottom-nav-audit"
+                type="button"
+                onclick="openAuditModal()"
+                class="{% if not is_admin %}hidden {% endif %}flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
+            <i data-lucide="shield-alert" class="w-5 h-5"></i>
+            <span class="text-[10px] font-semibold mt-0.5">Auditoria</span>
+        </button>
+        <button id="bottom-nav-switch-pin"
+                type="button"
+                onclick="openSwitchOperatorModal()"
+                class="{% if is_admin %}hidden {% endif %}flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
+            <i data-lucide="key-round" class="w-5 h-5"></i>
+            <span class="text-[10px] font-semibold mt-0.5">Trocar PIN</span>
         </button>
         <button type="button"
                 onclick="openMobileMenu()"
-                class="flex flex-col items-center justify-center py-1 px-3 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
+                class="flex flex-col items-center justify-center py-1 px-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95 transition cursor-pointer">
             <i data-lucide="menu" class="w-5 h-5"></i>
             <span class="text-[10px] font-semibold mt-0.5">Mais</span>
         </button>
@@ -709,6 +955,229 @@ document.addEventListener('htmx:afterSettle', window.initLotViewMode);
                 }
             }
         });
+
+        // Restaura a interatividade e estados de clique após término de qualquer requisição HTMX
+        function restoreHtmxElementInteractivity(elt, wasFailed) {
+            if (!elt) return;
+            const btn = elt.querySelector('button[type="submit"]') || (elt.tagName === 'BUTTON' ? elt : null);
+            if (btn) {
+                btn.style.opacity = '';
+                btn.style.pointerEvents = '';
+                btn.disabled = false;
+            }
+            const row = elt.closest('.lot-row');
+            if (row && wasFailed) {
+                row.style.opacity = '';
+                row.style.pointerEvents = '';
+            }
+        }
+
+        document.addEventListener('htmx:afterRequest', function(evt) {
+            const failed = evt.detail && (evt.detail.failed || !evt.detail.successful);
+            restoreHtmxElementInteractivity(evt.detail && evt.detail.elt, failed);
+        });
+
+        document.addEventListener('htmx:sendError', function(evt) {
+            restoreHtmxElementInteractivity(evt.detail && evt.detail.elt, true);
+        });
+
+        document.addEventListener('htmx:responseError', function(evt) {
+            restoreHtmxElementInteractivity(evt.detail && evt.detail.elt, true);
+        });
     </script>
+
+    <!-- Notificações Toast Dinâmicas -->
+    <div id="global-toast-container" class="fixed bottom-16 sm:bottom-6 right-3 sm:right-6 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full px-2 sm:px-0"></div>
+
+    <script>
+    // Sistema Global de Notificações Toast Não-Intrusivas
+    function showToastNotification(message, type = 'success') {
+        let container = document.getElementById('global-toast-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'global-toast-container';
+            container.className = 'fixed bottom-16 sm:bottom-6 right-3 sm:right-6 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full px-2 sm:px-0';
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement('div');
+        const isSuccess = type === 'success';
+        toast.className = `pointer-events-auto flex items-center gap-2.5 py-2.5 px-3.5 rounded-xl shadow-xl border text-xs font-semibold transform transition-all duration-300 translate-y-3 opacity-0 ${
+            isSuccess
+                ? 'bg-emerald-600 text-white border-emerald-500'
+                : 'bg-rose-600 text-white border-rose-500'
+        }`;
+        toast.innerHTML = `
+            <i data-lucide="${isSuccess ? 'check-circle-2' : 'alert-circle'}" class="w-4 h-4 shrink-0"></i>
+            <span class="flex-1">${message}</span>
+        `;
+        container.appendChild(toast);
+        if (window.lucide) window.lucide.createIcons({ root: toast });
+
+        requestAnimationFrame(() => {
+            toast.classList.remove('translate-y-3', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+        });
+
+        setTimeout(() => {
+            toast.classList.remove('translate-y-0', 'opacity-100');
+            toast.classList.add('translate-y-3', 'opacity-0');
+            setTimeout(() => toast.remove(), 350);
+        }, 2800);
+    }
+
+    // Atualização Instantânea de Interface de Usuário sem Recarregar (0ms reload)
+    window.updateActiveOperatorUI = function(data) {
+        if (!data || !data.success) return;
+
+        const opName = data.active_operator || data.operator_name || 'Operador';
+        const role = (data.role || 'operador').toLowerCase();
+        const isAdmin = (role === 'admin');
+        const isManagerOrAdmin = (role === 'admin' || role === 'gerente');
+
+        // 1. Atualiza nomes do operador no cabeçalho
+        const desktopOp = document.getElementById('desktop-operator-name');
+        if (desktopOp) desktopOp.textContent = opName;
+
+        const mobileOp = document.getElementById('mobile-operator-name');
+        if (mobileOp) mobileOp.textContent = opName;
+
+        // 2. Atualiza controles de administração no cabeçalho
+        const headerAdminGroup = document.getElementById('header-admin-group');
+        if (headerAdminGroup) {
+            if (isAdmin) {
+                headerAdminGroup.classList.remove('hidden');
+            } else {
+                headerAdminGroup.classList.add('hidden');
+            }
+        }
+
+        const mobileAdminLink = document.getElementById('mobile-header-admin-link');
+        if (mobileAdminLink) {
+            if (isAdmin) {
+                mobileAdminLink.classList.remove('hidden');
+            } else {
+                mobileAdminLink.classList.add('hidden');
+            }
+        }
+
+        // 3. Atualiza barra de navegação inferior mobile (Bottom Nav)
+        const bottomAudit = document.getElementById('bottom-nav-audit');
+        const bottomPin = document.getElementById('bottom-nav-switch-pin');
+        if (bottomAudit && bottomPin) {
+            if (isAdmin) {
+                bottomAudit.classList.remove('hidden');
+                bottomPin.classList.add('hidden');
+            } else {
+                bottomAudit.classList.add('hidden');
+                bottomPin.classList.remove('hidden');
+            }
+        }
+
+        // 4. Atualiza gaveta lateral (Mobile Drawer)
+        const drawerInitials = document.getElementById('drawer-user-initials');
+        if (drawerInitials) drawerInitials.textContent = opName.slice(0, 2).toUpperCase();
+
+        const drawerName = document.getElementById('drawer-user-name');
+        if (drawerName) drawerName.textContent = opName;
+
+        const drawerRole = document.getElementById('drawer-user-role');
+        if (drawerRole) drawerRole.textContent = role;
+
+        const drawerBadge = document.getElementById('drawer-role-badge');
+        if (drawerBadge) {
+            drawerBadge.textContent = role.toUpperCase();
+            if (isAdmin) {
+                drawerBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800";
+            } else if (isManagerOrAdmin) {
+                drawerBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800";
+            } else {
+                drawerBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800";
+            }
+        }
+
+        const drawerOp = document.getElementById('drawer-operator-name');
+        if (drawerOp) drawerOp.textContent = opName;
+
+        const drawerAdminLink = document.getElementById('drawer-admin-panel-link');
+        if (drawerAdminLink) {
+            if (isAdmin) drawerAdminLink.classList.remove('hidden');
+            else drawerAdminLink.classList.add('hidden');
+        }
+
+        const drawerAuditBtn = document.getElementById('drawer-audit-btn');
+        if (drawerAuditBtn) {
+            if (isAdmin) drawerAuditBtn.classList.remove('hidden');
+            else drawerAuditBtn.classList.add('hidden');
+        }
+
+        const drawerUsersBtn = document.getElementById('drawer-users-btn');
+        if (drawerUsersBtn) {
+            if (isAdmin) drawerUsersBtn.classList.remove('hidden');
+            else drawerUsersBtn.classList.add('hidden');
+        }
+
+        // 5. Atualiza card de Valor Estimado no índice
+        const totalPanel = document.getElementById('total-summary-panel');
+        let valCard = document.getElementById('summary-card-valor');
+
+        if (isManagerOrAdmin) {
+            if (valCard) {
+                valCard.classList.remove('hidden');
+            } else if (totalPanel) {
+                // Cria o card se não existia no DOM inicial de operador
+                valCard = document.createElement('div');
+                valCard.id = 'summary-card-valor';
+                valCard.className = 'bg-white dark:bg-gray-800 p-3 sm:p-3.5 rounded-xl border border-amber-100 dark:border-amber-950/60 shadow-xs flex items-center gap-3 animate-in fade-in duration-200';
+                valCard.innerHTML = `
+                    <div class="p-2 sm:p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 shrink-0">
+                        <i data-lucide="circle-dollar-sign" class="w-5 h-5"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 block truncate">Valor Estimado</span>
+                        <span class="text-xs sm:text-sm font-semibold text-gray-500 dark:text-gray-400 mr-0.5">R$</span>
+                        <span id="summary-total-value" class="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-100">${data.total_value_formatted || '0,00'}</span>
+                    </div>
+                `;
+                totalPanel.appendChild(valCard);
+                if (window.lucide) window.lucide.createIcons({ root: valCard });
+            }
+            if (valCard && data.total_value_formatted) {
+                const totalValSpan = document.getElementById('summary-total-value');
+                if (totalValSpan) totalValSpan.textContent = data.total_value_formatted;
+            }
+            if (totalPanel) {
+                totalPanel.classList.remove('lg:grid-cols-3');
+                totalPanel.classList.add('lg:grid-cols-4');
+            }
+        } else {
+            if (valCard) {
+                valCard.classList.add('hidden');
+            }
+            if (totalPanel) {
+                totalPanel.classList.remove('lg:grid-cols-4');
+                totalPanel.classList.add('lg:grid-cols-3');
+            }
+        }
+
+        // 6. Se estiver na página /admin e mudou para operador sem permissão, redireciona suavemente para /
+        if (window.location.pathname.startsWith('/admin') && !isAdmin && !isManagerOrAdmin) {
+            window.location.href = '/';
+            return;
+        }
+
+        // 7. Notificação toast dinâmica (sem recarregar)
+        showToastNotification(`Operador alternado: ${opName} (${role.toUpperCase()})`, 'success');
+
+        // 8. Re-renderiza ícones Lucide
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+
+        // 9. Dispara evento customizado para outros scripts
+        window.dispatchEvent(new CustomEvent('operator-switched', { detail: data }));
+    };
+    </script>
+
 </body>
 </html>

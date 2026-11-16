@@ -155,6 +155,7 @@
         <div class="flex items-center justify-between mt-3">
             <div id="form-add-msg"></div>
             <button type="submit"
+                    id="btn-save-lot"
                     class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs sm:text-sm font-semibold px-4 py-1.5 rounded-lg shadow-sm transition cursor-pointer">
                 <span class="inline-flex items-center gap-1.5"><i data-lucide="check" class="w-4 h-4"></i> Salvar Lote</span>
             </button>
@@ -578,16 +579,9 @@ function initWebSocket(force = false) {
                     }
                     fetch('/api/inventory/summary').then(r => r.json()).then(updateSummaryUI).catch(() => {});
                     fetch('/api/connection/status').then(r => r.json()).then(st => {
-                        const dbBadge = document.getElementById('db-badge');
-                        const dbLabel = document.getElementById('db-label');
-                        if (dbBadge && dbLabel) {
-                            if (st.postgres_online) {
-                                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-800";
-                                dbLabel.innerText = "PostgreSQL";
-                            } else {
-                                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-800";
-                                dbLabel.innerText = "SQLite (Cópia Local)";
-                            }
+                        updateDbBadgeUI(st.postgres_online, st.db_name);
+                        if (!st.postgres_online) {
+                            checkAndAutoPullConnection();
                         }
                     }).catch(() => {});
                 }, 120);
@@ -1015,61 +1009,97 @@ async function purgeAllDeleted() {
     }
 }
 
-async function triggerPullConnection() {
+function updateDbBadgeUI(isPg, label) {
+    const dbBadge = document.getElementById('db-badge');
+    const dbLabel = document.getElementById('db-label');
+    if (!dbBadge || !dbLabel) return;
+    if (isPg) {
+        dbBadge.className = "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-800";
+        dbLabel.innerText = label || "PostgreSQL";
+        dbBadge.setAttribute("title", "Conectado ao banco na nuvem PostgreSQL (Neon)");
+    } else {
+        dbBadge.className = "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-800";
+        dbLabel.innerText = label || "SQLite (Cópia Local)";
+        dbBadge.setAttribute("title", "Operando em modo local resiliente. Tentando reconectar à nuvem...");
+    }
+}
+
+let isPullingConnection = false;
+let autoPullIntervalId = null;
+
+async function triggerPullConnection(isAuto = false) {
+    if (isPullingConnection) return;
+    isPullingConnection = true;
+
     const btn = document.getElementById('btn-pull-db');
     const spinner = document.getElementById('pull-spinner');
     const icon = document.getElementById('pull-icon');
     const text = document.getElementById('pull-text');
-    const dbBadge = document.getElementById('db-badge');
-    const dbLabel = document.getElementById('db-label');
 
     if (spinner) spinner.classList.remove('hidden');
     if (icon) icon.classList.add('hidden');
     if (text) text.innerText = 'Puxando...';
-    if (btn) btn.disabled = true;
+    if (btn && !isAuto) btn.disabled = true;
 
     try {
         const resp = await fetch('/api/connection/pull', { method: 'POST' });
         const data = await resp.json();
+
         if (data.success) {
+            updateDbBadgeUI(true, "PostgreSQL");
             if (text) text.innerText = 'Cópia Puxada!';
-            if (dbBadge && dbLabel) {
-                dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
-                dbLabel.innerText = "PostgreSQL";
-            }
             clientCache.clear();
             performSearch(true);
+            fetch('/api/inventory/summary').then(r => r.json()).then(updateSummaryUI).catch(() => {});
+            setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
+        } else if (data.in_progress) {
+            if (text) text.innerText = 'Sincronizando...';
             setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
         } else {
-            // Se falhou ao puxar, tenta reconectar
+            // Se falhou ao puxar, tenta reconectar diretamente
             const reconResp = await fetch('/api/connection/reconnect', { method: 'POST' });
             const reconData = await reconResp.json();
             if (reconData.postgres_online) {
+                updateDbBadgeUI(true, "PostgreSQL");
                 if (text) text.innerText = 'Reconectado!';
-                if (dbBadge && dbLabel) {
-                    dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200";
-                    dbLabel.innerText = "PostgreSQL";
-                }
                 clientCache.clear();
                 performSearch(true);
+                fetch('/api/inventory/summary').then(r => r.json()).then(updateSummaryUI).catch(() => {});
                 setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
             } else {
+                updateDbBadgeUI(false, "SQLite (Cópia Local)");
                 if (text) text.innerText = 'Modo Local (SQLite)';
-                if (dbBadge && dbLabel) {
-                    dbBadge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200";
-                    dbLabel.innerText = "SQLite (Cópia Local)";
+                if (!isAuto && data.error) {
+                    console.warn("Aviso ao puxar conexão:", data.error);
                 }
                 setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3500);
             }
         }
     } catch (err) {
+        console.error("Erro ao puxar conexão:", err);
         if (text) text.innerText = 'Erro ao puxar';
         setTimeout(() => { if (text) text.innerText = 'Puxar Conexão'; }, 3000);
     } finally {
         if (spinner) spinner.classList.add('hidden');
         if (icon) icon.classList.remove('hidden');
         if (btn) btn.disabled = false;
+        isPullingConnection = false;
     }
+}
+
+function checkAndAutoPullConnection() {
+    const dbLabel = document.getElementById('db-label');
+    const isLocal = dbLabel && dbLabel.innerText.toLowerCase().includes('sqlite');
+    if (isLocal && !isPullingConnection) {
+        console.log("Banco em modo local SQLite detectado: tentando puxar conexão com o PostgreSQL...");
+        triggerPullConnection(true);
+    }
+}
+
+function startAutoPullWatchdog() {
+    if (autoPullIntervalId) clearInterval(autoPullIntervalId);
+    // Checa a cada 20 segundos se o banco está em modo local; se estiver, tenta puxar a conexão automaticamente
+    autoPullIntervalId = setInterval(checkAndAutoPullConnection, 20000);
 }
 
 let currentSpreadsheetFile = null;
@@ -1807,12 +1837,36 @@ function clearAddLotSelection() {
 function onAddLotBeforeRequest(evt) {
     const ni = document.getElementById('input-add-lot-name');
     if (ni) ni.value = ni.value.trim().toUpperCase();
+    const btn = document.getElementById('btn-save-lot');
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-75', 'cursor-wait');
+        const span = btn.querySelector('span');
+        if (span) {
+            span.innerHTML = '<svg class="animate-spin -ml-0.5 mr-1.5 h-3.5 w-3.5 text-white inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg> Salvando...';
+        }
+    }
 }
 
 function onAddLotAfterRequest(evt) {
     const msgDiv = document.getElementById('form-add-msg');
+    const btn = document.getElementById('btn-save-lot');
+
+    // 1. Reabilita o botão imediatamente, independente de sucesso ou erro
+    if (btn) {
+        btn.disabled = false;
+        btn.style.opacity = '';
+        btn.style.pointerEvents = '';
+        btn.classList.remove('opacity-75', 'cursor-wait');
+        const span = btn.querySelector('span');
+        if (span) {
+            span.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Salvar Lote';
+        }
+        if (window.refreshIcons) window.refreshIcons(btn);
+    }
+
     if (evt.detail && evt.detail.successful) {
-        // 1. Limpa todos os inputs do formulário
+        // 2. Limpa todos os inputs do formulário para o próximo lote
         const form = document.getElementById('form-add-lot');
         if (form) form.reset();
         clearAddLotSelection();
@@ -1829,10 +1883,10 @@ function onAddLotAfterRequest(evt) {
         const dateInput = document.getElementById('input-add-lot-date');
         if (dateInput) dateInput.value = '';
 
-        // 2. Exibe confirmação visual de sucesso destacada
+        // 3. Exibe confirmação visual de sucesso destacada
         if (msgDiv) {
             msgDiv.innerHTML = '<span class="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300 text-xs sm:text-sm font-semibold bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-700 px-3 py-1.5 rounded-lg shadow-xs"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i> Lote cadastrado com sucesso!</span>';
-            if (window.refreshIcons) window.refreshIcons();
+            if (window.refreshIcons) window.refreshIcons(msgDiv);
             setTimeout(() => {
                 if (msgDiv) msgDiv.innerHTML = '';
             }, 5000);
@@ -1841,7 +1895,7 @@ function onAddLotAfterRequest(evt) {
         const errorText = (evt.detail && evt.detail.xhr && evt.detail.xhr.responseText) ? evt.detail.xhr.responseText : 'Erro ao cadastrar lote.';
         if (msgDiv) {
             msgDiv.innerHTML = `<span class="inline-flex items-center gap-1.5 text-rose-700 dark:text-rose-300 text-xs sm:text-sm font-semibold bg-rose-50 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-700 px-3 py-1.5 rounded-lg shadow-xs"><i data-lucide="alert-circle" class="w-4 h-4 text-rose-500"></i> ${errorText}</span>`;
-            if (window.refreshIcons) window.refreshIcons();
+            if (window.refreshIcons) window.refreshIcons(msgDiv);
             setTimeout(() => {
                 if (msgDiv) msgDiv.innerHTML = '';
             }, 6000);
@@ -1862,6 +1916,8 @@ document.addEventListener('click', function(e) {
 function bootstrapApp() {
     initWebSocket();
     initFilterDragScroll();
+    startAutoPullWatchdog();
+    setTimeout(checkAndAutoPullConnection, 2500);
     setTimeout(() => {
         const currentFiltro = document.getElementById('current-filtro')?.value || 'todos';
         const activeBtn = document.querySelector(`.filter-btn[data-filtro="${currentFiltro}"]`);

@@ -1,6 +1,7 @@
 <!-- Modal de Configuração de Alertas Automáticos (DateLimit / Reality) -->
 <div id="modal-alerts"
-     class="hidden fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs transition-opacity duration-200">
+     onclick="if(event.target === this) closeAlertsModal()"
+     class="hidden fixed inset-0 z-50 items-center justify-center p-3 bg-black/60 backdrop-blur-xs transition-opacity duration-200">
     
     <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         
@@ -184,14 +185,28 @@ function openAlertsModal() {
     const modal = document.getElementById('modal-alerts');
     if (!modal) return;
     modal.classList.remove('hidden');
+    modal.classList.add('flex');
     loadAlertSettings();
-    if (window.refreshIcons) window.refreshIcons();
+    if (window.refreshIcons) window.refreshIcons(modal);
+    else if (window.lucide) window.lucide.createIcons();
 }
 
 function closeAlertsModal() {
     const modal = document.getElementById('modal-alerts');
-    if (modal) modal.classList.add('hidden');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
 }
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const modal = document.getElementById('modal-alerts');
+        if (modal && !modal.classList.contains('hidden')) {
+            closeAlertsModal();
+        }
+    }
+});
 
 function setAlertChannel(ch) {
     currentAlertChannel = ch;
@@ -215,26 +230,57 @@ function setAlertChannel(ch) {
 }
 
 async function loadAlertSettings() {
+    const statusEl = document.getElementById('alert-last-status');
+    const fb = document.getElementById('alert-feedback-msg');
+    if (statusEl) statusEl.textContent = 'Carregando configurações...';
+
     try {
         const resp = await fetch('/api/alerts/settings');
-        if (!resp.ok) return;
+        if (!resp.ok) {
+            let errorMsg = `Erro ${resp.status}`;
+            try {
+                const err = await resp.json();
+                if (err && err.error) errorMsg = err.error;
+            } catch (_) {}
+            if (statusEl) statusEl.textContent = `Aviso: ${errorMsg}`;
+            if (fb) {
+                fb.className = "text-xs font-semibold p-2.5 rounded-lg border bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800";
+                fb.innerHTML = `⚠️ Não foi possível carregar as configurações: ${errorMsg}`;
+                fb.classList.remove('hidden');
+            }
+            return;
+        }
+
         const st = await resp.json();
 
-        document.getElementById('alert-enabled').checked = !!st.enabled;
-        document.getElementById('alert-daily-time').value = st.daily_time || '07:30';
-        document.getElementById('alert-telegram-token').value = st.telegram_token || '';
-        document.getElementById('alert-telegram-chat-id').value = st.telegram_chat_id || '';
-        document.getElementById('alert-webhook-url').value = st.webhook_url || '';
-        document.getElementById('alert-inc-vencidos').checked = st.include_vencidos !== false;
-        document.getElementById('alert-inc-criticos').checked = st.include_criticos !== false;
-        document.getElementById('alert-inc-atencao').checked = !!st.include_atencao;
+        const elEnabled = document.getElementById('alert-enabled');
+        if (elEnabled) elEnabled.checked = !!st.enabled;
+        const elTime = document.getElementById('alert-daily-time');
+        if (elTime) elTime.value = st.daily_time || '07:30';
+        const elTgTok = document.getElementById('alert-telegram-token');
+        if (elTgTok) elTgTok.value = st.telegram_token || '';
+        const elTgChat = document.getElementById('alert-telegram-chat-id');
+        if (elTgChat) elTgChat.value = st.telegram_chat_id || '';
+        const elWh = document.getElementById('alert-webhook-url');
+        if (elWh) elWh.value = st.webhook_url || '';
+        const elVenc = document.getElementById('alert-inc-vencidos');
+        if (elVenc) elVenc.checked = st.include_vencidos !== false;
+        const elCrit = document.getElementById('alert-inc-criticos');
+        if (elCrit) elCrit.checked = st.include_criticos !== false;
+        const elAtenc = document.getElementById('alert-inc-atencao');
+        if (elAtenc) elAtenc.checked = !!st.include_atencao;
 
-        const statusEl = document.getElementById('alert-last-status');
         if (statusEl) statusEl.textContent = st.last_status || 'Nenhum envio realizado ainda.';
-
         setAlertChannel(st.channel || 'telegram');
+        if (fb) fb.classList.add('hidden');
     } catch (e) {
         console.error("Erro ao carregar configurações de alertas:", e);
+        if (statusEl) statusEl.textContent = `Erro de conexão: ${e.message}`;
+        if (fb) {
+            fb.className = "text-xs font-semibold p-2.5 rounded-lg border bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800";
+            fb.innerHTML = `⚠️ Falha de rede ao consultar configurações de alerta: ${e.message}`;
+            fb.classList.remove('hidden');
+        }
     }
 }
 
