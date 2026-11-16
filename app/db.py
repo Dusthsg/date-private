@@ -49,9 +49,18 @@ def set_test_db(path: Optional[str] = None):
     SQLITE_PATH = get_sqlite_path()
     init_sqlite_db()
 
+DEFAULT_NEON_DATABASE_URL = "postgresql://neondb_owner:npg_HbchzmSIT1j8@ep-blue-hall-b5r5f35z-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require"
+
 def get_database_url() -> str:
     """Retorna a URL de conexão do PostgreSQL limpa, normalizada e dinâmica."""
     url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        try:
+            from dotenv import dotenv_values
+            env_dict = dotenv_values(BASE_DIR / ".env.local")
+            url = (env_dict.get("DATABASE_URL") or "").strip()
+        except Exception:
+            pass
     if not url:
         try:
             from dotenv import dotenv_values
@@ -59,6 +68,10 @@ def get_database_url() -> str:
             url = (env_dict.get("DATABASE_URL") or "").strip()
         except Exception:
             pass
+    if not url:
+        # Fallback resiliente para celular / execução direta
+        url = DEFAULT_NEON_DATABASE_URL
+
     if url.startswith("postgres://"):
         url = "postgresql://" + url[11:]
     return url
@@ -85,10 +98,11 @@ except ImportError:
     PG8000_AVAILABLE = False
 
 
-def _connect_pg_direct(timeout=10):
+def _connect_pg_direct(timeout=25):
     """
-    Estabelece uma conexão direta com o PostgreSQL com statement_timeout de proteção (10s)
+    Estabelece uma conexão direta com o PostgreSQL com statement_timeout de proteção (25s)
     e keepalives TCP agressivos para evitar travamentos em oscilações de rede.
+    Compatível com psycopg2 (PC/Linux) e pg8000 puro Python (Termux/Celular).
     """
     db_url = get_database_url()
     if not db_url:
@@ -105,9 +119,11 @@ def _connect_pg_direct(timeout=10):
     elif PG8000_AVAILABLE:
         p = urllib.parse.urlparse(db_url)
         ssl_ctx = ssl.create_default_context()
+        username = urllib.parse.unquote(p.username or "")
+        password = urllib.parse.unquote(p.password or "")
         return pg8000.dbapi.connect(
-            user=p.username,
-            password=p.password,
+            user=username,
+            password=password,
             host=p.hostname,
             port=p.port or 5432,
             database=p.path.lstrip("/"),
@@ -337,7 +353,7 @@ def reconnect_postgres() -> bool:
         return False
     try:
         reset_pg_pool()
-        test_conn = _connect_pg_direct(timeout=10)
+        test_conn = _connect_pg_direct(timeout=25)
         test_cur = test_conn.cursor()
         test_cur.execute("SELECT 1;")
         test_cur.close()
@@ -351,6 +367,13 @@ def reconnect_postgres() -> bool:
         _start_neon_keepalive()
         clear_query_cache()
         pull_cloud_to_sqlite()
+
+        if _on_reconnect_callback:
+            try:
+                _on_reconnect_callback()
+            except Exception:
+                pass
+
         return True
     except Exception as e:
         with _status_lock:
@@ -903,7 +926,7 @@ def init_pg_db():
         if pool_inst:
             conn, is_from_pool = _checkout_valid_pg_conn(pool_inst)
         else:
-            conn = _connect_pg_direct(timeout=8)
+            conn = _connect_pg_direct(timeout=25)
             is_from_pool = False
         cur = conn.cursor()
 
@@ -953,21 +976,23 @@ def init_pg_db():
 
         cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
         cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-        cur.execute("""
-            UPDATE products
-            SET price = COALESCE((
-                SELECT l.price 
-                FROM product_lots l 
-                WHERE l.product_id = products.id AND l.price > 0
-                ORDER BY l.id DESC 
-                LIMIT 1
-            ), 0.0)
-            WHERE EXISTS (
-                SELECT 1 
-                FROM product_lots l 
-                WHERE l.product_id = products.id AND l.price > 0
-            ) AND (price IS NULL OR price = 0.0);
-        """)
+        cur.execute("SELECT 1 FROM products WHERE (price IS NULL OR price = 0.0) AND EXISTS (SELECT 1 FROM product_lots l WHERE l.product_id = products.id AND l.price > 0) LIMIT 1;")
+        if cur.fetchone():
+            cur.execute("""
+                UPDATE products
+                SET price = COALESCE((
+                    SELECT l.price 
+                    FROM product_lots l 
+                    WHERE l.product_id = products.id AND l.price > 0
+                    ORDER BY l.id DESC 
+                    LIMIT 1
+                ), 0.0)
+                WHERE EXISTS (
+                    SELECT 1 
+                    FROM product_lots l 
+                    WHERE l.product_id = products.id AND l.price > 0
+                ) AND (price IS NULL OR price = 0.0);
+            """)
         cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0.0;")
         cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS origin VARCHAR(20) DEFAULT 'MANUAL';")
         cur.execute("ALTER TABLE product_lots ADD COLUMN IF NOT EXISTS created_at DATE DEFAULT CURRENT_DATE;")
@@ -1187,7 +1212,8 @@ def pull_cloud_to_sqlite() -> dict:
                 COALESCE((SELECT json_agg(l) FROM (SELECT id, product_id, quant, price, date_valid::TEXT, location, status, origin, created_at::TEXT, updated_at::TEXT FROM product_lots) l), '[]'::json) AS lots,
                 COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves,
                 COALESCE((SELECT json_agg(u) FROM (SELECT id, username, name, password_hash, pin, role, active, COALESCE(api_token, '') AS api_token, created_at::TEXT, updated_at::TEXT FROM users) u), '[]'::json) AS users_data,
-                COALESCE((SELECT json_agg(a) FROM (SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at::TEXT FROM audit_logs ORDER BY id DESC LIMIT 500) a), '[]'::json) AS audit_data;
+                COALESCE((SELECT json_agg(a) FROM (SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at::TEXT FROM audit_logs ORDER BY id DESC LIMIT 500) a), '[]'::json) AS audit_data,
+                COALESCE((SELECT json_agg(alt) FROM (SELECT id, enabled, channel, daily_time, telegram_token, telegram_chat_id, webhook_url, last_sent_date, last_status, include_vencidos, include_criticos, include_atencao FROM alert_settings WHERE id = 1) alt), '[]'::json) AS alert_data;
         """)
         raw_row = pg_cur.fetchone()
 
@@ -1209,6 +1235,7 @@ def pull_cloud_to_sqlite() -> dict:
         pg_moves = {m["id"]: m for m in _parse_json_col(raw_row[2])} if raw_row else {}
         pg_users = {u["id"]: u for u in (_parse_json_col(raw_row[3]) if raw_row and len(raw_row) > 3 else [])}
         pg_audit = {a["id"]: a for a in (_parse_json_col(raw_row[4]) if raw_row and len(raw_row) > 4 else [])}
+        pg_alerts = _parse_json_col(raw_row[5]) if raw_row and len(raw_row) > 5 else []
 
         # 2. Lê snapshot local do SQLite
         with sqlite3.connect(str(SQLITE_PATH), timeout=5.0) as s_conn:
@@ -1235,6 +1262,15 @@ def pull_cloud_to_sqlite() -> dict:
             try:
                 s_cur.execute("SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at FROM audit_logs")
                 sq_audit = {r["id"]: dict(r) for r in s_cur.fetchall()}
+            except Exception:
+                pass
+
+            sq_alerts = {}
+            try:
+                s_cur.execute("SELECT id, enabled, channel, daily_time, telegram_token, telegram_chat_id, webhook_url, last_sent_date, last_status, include_vencidos, include_criticos, include_atencao FROM alert_settings WHERE id = 1")
+                row_alt = s_cur.fetchone()
+                if row_alt:
+                    sq_alerts = dict(row_alt)
             except Exception:
                 pass
 
@@ -1340,6 +1376,33 @@ def pull_cloud_to_sqlite() -> dict:
                 )
                 uploaded_audits += 1
 
+        # 7.1 CONCILIAÇÃO DE ALERTAS: Se local possui token/webhook configurado e Neon não possui, envia para o Neon
+        if sq_alerts and (sq_alerts.get("telegram_token") or sq_alerts.get("webhook_url") or sq_alerts.get("enabled")):
+            pg_alt = pg_alerts[0] if pg_alerts else None
+            if not pg_alt or (not pg_alt.get("telegram_token") and not pg_alt.get("webhook_url")):
+                try:
+                    pg_cur.execute("""
+                        INSERT INTO alert_settings (id, enabled, channel, daily_time, telegram_token, telegram_chat_id, webhook_url, include_vencidos, include_criticos, include_atencao)
+                        VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET
+                            enabled = EXCLUDED.enabled, channel = EXCLUDED.channel, daily_time = EXCLUDED.daily_time,
+                            telegram_token = EXCLUDED.telegram_token, telegram_chat_id = EXCLUDED.telegram_chat_id,
+                            webhook_url = EXCLUDED.webhook_url, include_vencidos = EXCLUDED.include_vencidos,
+                            include_criticos = EXCLUDED.include_criticos, include_atencao = EXCLUDED.include_atencao
+                    """, (
+                        bool(sq_alerts.get("enabled")),
+                        sq_alerts.get("channel", "telegram"),
+                        sq_alerts.get("daily_time", "07:30"),
+                        sq_alerts.get("telegram_token", ""),
+                        sq_alerts.get("telegram_chat_id", ""),
+                        sq_alerts.get("webhook_url", ""),
+                        bool(sq_alerts.get("include_vencidos", 1)),
+                        bool(sq_alerts.get("include_criticos", 1)),
+                        bool(sq_alerts.get("include_atencao", 0))
+                    ))
+                except Exception as e:
+                    print(f"⚠️ Aviso ao conciliar alert_settings no Postgres: {e}")
+
         # 8. Sincroniza sequences do PostgreSQL
         pg_cur.execute("SELECT setval('products_id_seq', (SELECT COALESCE(MAX(id), 1) FROM products));")
         pg_cur.execute("SELECT setval('product_lots_id_seq', (SELECT COALESCE(MAX(id), 1) FROM product_lots));")
@@ -1362,7 +1425,8 @@ def pull_cloud_to_sqlite() -> dict:
                 COALESCE((SELECT json_agg(l) FROM (SELECT id, product_id, quant, price, date_valid::TEXT, location, status, origin, created_at::TEXT, updated_at::TEXT FROM product_lots) l), '[]'::json) AS lots,
                 COALESCE((SELECT json_agg(m) FROM (SELECT id, product_id, lot_id, action, quant, date_valid::TEXT, created_at::TEXT FROM stock_movements) m), '[]'::json) AS moves,
                 COALESCE((SELECT json_agg(u) FROM (SELECT id, username, name, password_hash, pin, role, active, COALESCE(api_token, '') AS api_token, created_at::TEXT, updated_at::TEXT FROM users) u), '[]'::json) AS users_data,
-                COALESCE((SELECT json_agg(a) FROM (SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at::TEXT FROM audit_logs ORDER BY id DESC LIMIT 500) a), '[]'::json) AS audit_data;
+                COALESCE((SELECT json_agg(a) FROM (SELECT id, user_id, username, action, target_id, product_name, details, ip_address, created_at::TEXT FROM audit_logs ORDER BY id DESC LIMIT 500) a), '[]'::json) AS audit_data,
+                COALESCE((SELECT json_agg(alt) FROM (SELECT id, enabled, channel, daily_time, telegram_token, telegram_chat_id, webhook_url, last_sent_date, last_status, include_vencidos, include_criticos, include_atencao FROM alert_settings WHERE id = 1) alt), '[]'::json) AS alert_data;
         """)
         fresh_row = pg_cur.fetchone()
         products = _parse_json_col(fresh_row[0]) if fresh_row else []
@@ -1370,6 +1434,7 @@ def pull_cloud_to_sqlite() -> dict:
         movements = _parse_json_col(fresh_row[2]) if fresh_row else []
         users_list = _parse_json_col(fresh_row[3]) if fresh_row and len(fresh_row) > 3 else []
         audit_list = _parse_json_col(fresh_row[4]) if fresh_row and len(fresh_row) > 4 else []
+        alert_list = _parse_json_col(fresh_row[5]) if fresh_row and len(fresh_row) > 5 else []
 
         pg_cur.close()
         if is_from_pool and pool_inst:
@@ -1480,6 +1545,27 @@ def pull_cloud_to_sqlite() -> dict:
                 for a in audit_list
             ])
 
+        if alert_list:
+            alt = alert_list[0]
+            sqlite_cur.execute("""
+                INSERT OR REPLACE INTO alert_settings (id, enabled, channel, daily_time, telegram_token, telegram_chat_id, webhook_url, last_sent_date, last_status, include_vencidos, include_criticos, include_atencao)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, (
+                1 if alt.get("enabled") else 0,
+                alt.get("channel", "telegram"),
+                alt.get("daily_time", "07:30"),
+                alt.get("telegram_token", ""),
+                alt.get("telegram_chat_id", ""),
+                alt.get("webhook_url", ""),
+                alt.get("last_sent_date", ""),
+                alt.get("last_status", ""),
+                1 if alt.get("include_vencidos", True) else 0,
+                1 if alt.get("include_criticos", True) else 0,
+                1 if alt.get("include_atencao", False) else 0
+            ))
+        else:
+            sqlite_cur.execute("INSERT OR IGNORE INTO alert_settings (id, enabled, channel, daily_time) VALUES (1, 0, 'telegram', '07:30');")
+
         sqlite_conn.commit()
         sqlite_conn.close()
         sqlite_conn = None
@@ -1582,8 +1668,16 @@ def init_db():
                     _db_status["postgres_online"] = True
                     _db_status["last_error"] = None
                 print("🚀 PostgreSQL conectado com sucesso!")
-                threading.Thread(target=pull_cloud_to_sqlite, daemon=True).start()
+                try:
+                    pull_cloud_to_sqlite()
+                except Exception as e:
+                    print(f"⚠️ Erro no pull inicial: {e}")
                 _start_neon_keepalive()
+                if _on_reconnect_callback:
+                    try:
+                        _on_reconnect_callback()
+                    except Exception:
+                        pass
             else:
                 with _status_lock:
                     _db_status["postgres_online"] = False
@@ -2581,35 +2675,58 @@ def get_alert_settings() -> dict:
         "include_atencao": False
     }
 
-    # 1. Tenta SQLite local instantâneo (< 0.1ms)
+    # 1. Tenta SQLite local instantâneo via conexão thread-local (< 0.1ms)
     try:
-        with sqlite3.connect(str(SQLITE_PATH), timeout=2.0) as s_conn:
-            s_conn.row_factory = sqlite3.Row
-            s_cur = s_conn.cursor()
-            s_cur.execute("""
-                SELECT enabled, channel, daily_time, telegram_token, telegram_chat_id,
-                       webhook_url, last_sent_date, last_status, include_vencidos,
-                       include_criticos, include_atencao
-                FROM alert_settings
-                WHERE id = 1
-            """)
-            r = s_cur.fetchone()
-            if r:
-                return {
-                    "enabled": bool(r["enabled"]),
-                    "channel": str(r["channel"] or "telegram"),
-                    "daily_time": str(r["daily_time"] or "07:30"),
-                    "telegram_token": str(r["telegram_token"] or ""),
-                    "telegram_chat_id": str(r["telegram_chat_id"] or ""),
-                    "webhook_url": str(r["webhook_url"] or ""),
-                    "last_sent_date": str(r["last_sent_date"] or ""),
-                    "last_status": str(r["last_status"] or "Nenhum envio realizado ainda."),
-                    "include_vencidos": bool(r["include_vencidos"]),
-                    "include_criticos": bool(r["include_criticos"]),
-                    "include_atencao": bool(r["include_atencao"])
-                }
+        s_conn = _get_thread_sqlite_conn()
+        s_cur = s_conn.cursor()
+        s_cur.execute("""
+            SELECT enabled, channel, daily_time, telegram_token, telegram_chat_id,
+                   webhook_url, last_sent_date, last_status, include_vencidos,
+                   include_criticos, include_atencao
+            FROM alert_settings
+            WHERE id = 1
+        """)
+        r = s_cur.fetchone()
+        if r:
+            return {
+                "enabled": bool(r["enabled"]),
+                "channel": str(r["channel"] or "telegram"),
+                "daily_time": str(r["daily_time"] or "07:30"),
+                "telegram_token": str(r["telegram_token"] or ""),
+                "telegram_chat_id": str(r["telegram_chat_id"] or ""),
+                "webhook_url": str(r["webhook_url"] or ""),
+                "last_sent_date": str(r["last_sent_date"] or ""),
+                "last_status": str(r["last_status"] or "Nenhum envio realizado ainda."),
+                "include_vencidos": bool(r["include_vencidos"]),
+                "include_criticos": bool(r["include_criticos"]),
+                "include_atencao": bool(r["include_atencao"])
+            }
+        else:
+            s_conn.execute("INSERT OR IGNORE INTO alert_settings (id, enabled, channel, daily_time) VALUES (1, 0, 'telegram', '07:30')")
     except Exception as e:
-        pass
+        print(f"⚠️ Erro ao consultar alert_settings no SQLite: {e}")
+        if "no such table" in str(e).lower():
+            try:
+                s_conn.execute("""
+                    CREATE TABLE IF NOT EXISTS alert_settings (
+                        id INTEGER PRIMARY KEY,
+                        enabled INTEGER DEFAULT 0,
+                        channel TEXT DEFAULT 'telegram',
+                        daily_time TEXT DEFAULT '07:30',
+                        telegram_token TEXT DEFAULT '',
+                        telegram_chat_id TEXT DEFAULT '',
+                        webhook_url TEXT DEFAULT '',
+                        last_sent_date TEXT DEFAULT '',
+                        last_status TEXT DEFAULT '',
+                        include_vencidos INTEGER DEFAULT 1,
+                        include_criticos INTEGER DEFAULT 1,
+                        include_atencao INTEGER DEFAULT 0
+                    );
+                """)
+                s_conn.execute("INSERT OR IGNORE INTO alert_settings (id, enabled, channel, daily_time) VALUES (1, 0, 'telegram', '07:30');")
+                s_conn.commit()
+            except Exception:
+                pass
 
     # 2. Fallback para PostgreSQL
     if is_postgres():
@@ -2639,17 +2756,17 @@ def get_alert_settings() -> dict:
                             "include_atencao": bool(row[10])
                         }
                         try:
-                            with sqlite3.connect(str(SQLITE_PATH), timeout=2.0) as s_conn:
-                                s_conn.execute("""
-                                    INSERT OR REPLACE INTO alert_settings (id, enabled, channel, daily_time, telegram_token, telegram_chat_id, webhook_url, last_sent_date, last_status, include_vencidos, include_criticos, include_atencao)
-                                    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (
-                                    1 if res["enabled"] else 0, res["channel"], res["daily_time"],
-                                    res["telegram_token"], res["telegram_chat_id"], res["webhook_url"],
-                                    res["last_sent_date"], res["last_status"],
-                                    1 if res["include_vencidos"] else 0, 1 if res["include_criticos"] else 0, 1 if res["include_atencao"] else 0
-                                ))
-                                s_conn.commit()
+                            s_conn = _get_thread_sqlite_conn()
+                            s_conn.execute("""
+                                INSERT OR REPLACE INTO alert_settings (id, enabled, channel, daily_time, telegram_token, telegram_chat_id, webhook_url, last_sent_date, last_status, include_vencidos, include_criticos, include_atencao)
+                                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                1 if res["enabled"] else 0, res["channel"], res["daily_time"],
+                                res["telegram_token"], res["telegram_chat_id"], res["webhook_url"],
+                                res["last_sent_date"], res["last_status"],
+                                1 if res["include_vencidos"] else 0, 1 if res["include_criticos"] else 0, 1 if res["include_atencao"] else 0
+                            ))
+                            s_conn.commit()
                         except Exception:
                             pass
                         return res
@@ -2674,19 +2791,19 @@ def save_alert_settings(data: dict) -> bool:
     sqlite_ok = False
     # 1. Persiste imediatamente no SQLite local (< 0.5ms)
     try:
-        with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
-            s_conn.execute("""
-                INSERT OR REPLACE INTO alert_settings (
-                    id, enabled, channel, daily_time, telegram_token, telegram_chat_id,
-                    webhook_url, include_vencidos, include_criticos, include_atencao
-                )
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                1 if enabled else 0, channel, daily_time, telegram_token, telegram_chat_id,
-                webhook_url, 1 if include_vencidos else 0, 1 if include_criticos else 0, 1 if include_atencao else 0
-            ))
-            s_conn.commit()
-            sqlite_ok = True
+        s_conn = _get_thread_sqlite_conn()
+        s_conn.execute("""
+            INSERT OR REPLACE INTO alert_settings (
+                id, enabled, channel, daily_time, telegram_token, telegram_chat_id,
+                webhook_url, include_vencidos, include_criticos, include_atencao
+            )
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            1 if enabled else 0, channel, daily_time, telegram_token, telegram_chat_id,
+            webhook_url, 1 if include_vencidos else 0, 1 if include_criticos else 0, 1 if include_atencao else 0
+        ))
+        s_conn.commit()
+        sqlite_ok = True
     except Exception as e:
         print(f"⚠️ Erro ao salvar alert_settings no SQLite: {e}")
 
@@ -2718,15 +2835,15 @@ def save_alert_settings(data: dict) -> bool:
         except Exception as e:
             print(f"⚠️ Aviso: Postgres offline/erro ao sincronizar alert_settings: {e}")
 
-    return sqlite_ok
+    return sqlite_ok or is_postgres()
 
 
 def update_alert_sent_status(last_date: str, status_msg: str):
     """Atualiza a data do último envio e o log de status (Local-First com sync)."""
     try:
-        with sqlite3.connect(str(SQLITE_PATH), timeout=3.0) as s_conn:
-            s_conn.execute("UPDATE alert_settings SET last_sent_date = ?, last_status = ? WHERE id = 1", (last_date, status_msg))
-            s_conn.commit()
+        s_conn = _get_thread_sqlite_conn()
+        s_conn.execute("UPDATE alert_settings SET last_sent_date = ?, last_status = ? WHERE id = 1", (last_date, status_msg))
+        s_conn.commit()
     except Exception:
         pass
 

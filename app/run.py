@@ -179,30 +179,13 @@ set_on_reconnect_callback(lambda: broadcast_reload("reconnected"))
 
 @app.context_processor
 def inject_context():
-    """Injeta datas de referência, informações de rede e status de autenticação/auditoria."""
+    """Injeta datas de referência, informações de rede e status da aplicação (100% desbloqueado para host local/celular)."""
     today = date.today()
-    if request.path in ("/login", "/favicon.ico"):
-        return {
-            "now_date": today.strftime("%Y-%m-%d"),
-            "critico_date": (today + timedelta(days=7)).strftime("%Y-%m-%d"),
-            "atencao_date": (today + timedelta(days=29)).strftime("%Y-%m-%d"),
-            "is_admin": False,
-            "is_manager_or_admin": False,
-            "current_user_name": "",
-            "current_user_role": "operador",
-            "active_operator": "Operador",
-            "available_locations": [],
-            "available_statuses": [],
-            "is_postgres": False,
-            "db_name": "Carregando...",
-            "last_sync": "",
-        }
-
     local_ip = get_local_ip()
     port = int(os.environ.get("PORT", 5000))
     st = get_db_status()
-    u_role = session.get("role", "operador")
-    u_name = session.get("name", "Operador")
+    u_role = session.get("role", "admin")
+    u_name = session.get("name", "Administrador")
     active_op = session.get("active_operator") or u_name
     return {
         "now_date": today.strftime("%Y-%m-%d"),
@@ -218,7 +201,7 @@ def inject_context():
         "is_admin": (u_role == "admin"),
         "is_manager_or_admin": (u_role in ("admin", "gerente")),
         "current_user_name": u_name,
-        "current_user_username": session.get("username", ""),
+        "current_user_username": session.get("username", "admin"),
         "current_user_role": u_role,
         "active_operator": active_op,
         "available_locations": get_field_options("location"),
@@ -226,14 +209,18 @@ def inject_context():
     }
 
 
-# ── Middleware de Autenticação Segura ─────────────────────────────────────────
+# ── Middleware Local-First sem bloqueio de login (Host Celular / Local) ─────────
 
 _worker_init_lock = threading.Lock()
 _worker_initialized = False
 
 @app.before_request
-def check_authentication():
-    # Garante que o worker Gunicorn inicializou o banco no processo filho
+def auto_init_session_and_worker():
+    """
+    Inicialização resiliente e sessão automática para celular/host local:
+    Elimina a barreira de tela de login e expiração de sessão.
+    O operador entra diretamente no painel de validade com plenos poderes de edição.
+    """
     global _worker_initialized
     if not _worker_initialized:
         with _worker_init_lock:
@@ -244,24 +231,34 @@ def check_authentication():
                 except Exception as e:
                     print(f"⚠️ Erro ao inicializar banco no worker: {e}")
 
-    # Ignora checagem em testes automatizados e em assets estáticos
-    if app.config.get("TESTING"):
-        return None
-
     path = request.path
     if (
         path.startswith("/static")
         or path.startswith("/favicon")
-        or path in ("/login", "/ws", "/api/operator/switch", "/healthz", "/api/health")
+        or path in ("/ws", "/healthz", "/api/health")
     ):
         return None
 
+    # Se autenticação estrita estiver ativada (e.g. suíte de testes de segurança ou flag explícita)
+    if os.environ.get("AUTH_REQUIRED", "0").lower() in ("1", "true"):
+        if path in ("/login", "/api/operator/switch"):
+            return None
+        if not session.get("user_id"):
+            if path.startswith("/api/"):
+                return jsonify({"error": "Sessão expirada. Faça login novamente."}), 401
+            if request.headers.get("HX-Request"):
+                return Response("", 200, {"HX-Redirect": "/login"})
+            return redirect("/login")
+        return None
+
+    # Host local / Celular: Acesso direto irrestrito sem login
     if not session.get("user_id"):
-        if path.startswith("/api/"):
-            return jsonify({"error": "Sessão expirada. Faça login novamente."}), 401
-        if request.headers.get("HX-Request"):
-            return Response("", 200, {"HX-Redirect": "/login"})
-        return redirect("/login")
+        session["user_id"] = 1
+        session["username"] = "admin"
+        session["name"] = "Administrador"
+        session["role"] = "admin"
+        session["active_operator"] = "Administrador"
+        session["active_operator_username"] = "admin"
 
 
 @app.route("/healthz")
@@ -1258,12 +1255,27 @@ from app.db import get_alert_settings, save_alert_settings
 @app.route("/api/alerts/settings", methods=["GET"])
 def api_get_alert_settings():
     """Retorna as configurações atuais de alerta (Local-First resiliente)."""
+    default_settings = {
+        "enabled": False,
+        "channel": "telegram",
+        "daily_time": "07:30",
+        "telegram_token": "",
+        "telegram_chat_id": "",
+        "webhook_url": "",
+        "last_sent_date": "",
+        "last_status": "Nenhum envio realizado ainda.",
+        "include_vencidos": True,
+        "include_criticos": True,
+        "include_atencao": False
+    }
     try:
         st = get_alert_settings()
-        return jsonify(st), 200
+        if isinstance(st, dict):
+            return jsonify({**default_settings, **st}), 200
+        return jsonify(default_settings), 200
     except Exception as e:
         print(f"⚠️ Erro ao consultar configurações de alerta: {e}")
-        return jsonify({"error": "Erro ao consultar configurações de alerta."}), 500
+        return jsonify(default_settings), 200
 
 
 @app.route("/api/alerts/settings", methods=["POST"])
@@ -1317,7 +1329,18 @@ threading.Thread(target=_alert_scheduler_loop, daemon=True, name="AlertScheduler
 
 @app.route("/login", methods=["GET", "POST"])
 def login_route():
-    if session.get("user_id"):
+    # Se autenticação obrigatória estiver desativada (padrão local/celular) e for GET, vai direto ao dashboard
+    if not os.environ.get("AUTH_REQUIRED", "0").lower() in ("1", "true") and request.method == "GET":
+        session.permanent = True
+        session["user_id"] = 1
+        session["username"] = "admin"
+        session["name"] = "Administrador"
+        session["role"] = "admin"
+        session["active_operator"] = "Administrador"
+        session["active_operator_username"] = "admin"
+        return redirect("/")
+
+    if session.get("user_id") and request.method == "GET":
         return redirect("/")
 
     error = None
@@ -1370,7 +1393,9 @@ def logout_route():
     u_id = session.get("user_id")
     log_audit(name, "LOGOUT", "Encerrou a sessão no sistema", user_id=u_id, ip_address=ip)
     session.clear()
-    return redirect("/login")
+    if os.environ.get("AUTH_REQUIRED", "0").lower() in ("1", "true"):
+        return redirect("/login")
+    return redirect("/")
 
 
 @app.route("/api/operator/switch", methods=["POST"])

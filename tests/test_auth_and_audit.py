@@ -30,7 +30,12 @@ class TestAuthAndAudit(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        cls._old_auth = os.environ.get("AUTH_REQUIRED")
+        os.environ["AUTH_REQUIRED"] = "1"
         set_test_db()
+        with sqlite3.connect(str(SQLITE_PATH)) as conn:
+            conn.execute("DELETE FROM users WHERE username != 'admin';")
+            conn.commit()
         admin = get_user_by_username("admin")
         if admin:
             update_user(admin["id"], name="Administrador", password="admin123", pin="1234", role="admin", active=True)
@@ -39,6 +44,10 @@ class TestAuthAndAudit(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        if cls._old_auth is None:
+            os.environ.pop("AUTH_REQUIRED", None)
+        else:
+            os.environ["AUTH_REQUIRED"] = cls._old_auth
         admin = get_user_by_username("admin")
         if admin:
             update_user(admin["id"], name="Administrador", password="admin123", pin="1234", role="admin", active=True)
@@ -46,6 +55,9 @@ class TestAuthAndAudit(unittest.TestCase):
     def setUp(self):
         app.config['TESTING'] = True
         self.client = app.test_client()
+        with sqlite3.connect(str(SQLITE_PATH)) as conn:
+            conn.execute("DELETE FROM users WHERE username != 'admin';")
+            conn.commit()
 
     def test_01_default_admin_exists(self):
         """Verifica se o usuário default admin foi criado com sucesso."""
@@ -128,7 +140,7 @@ class TestAuthAndAudit(unittest.TestCase):
         """Apenas administradores podem ver o endpoint de logs de auditoria."""
         # Sem login
         res_anon = self.client.get("/api/audit/logs")
-        self.assertEqual(res_anon.status_code, 403)
+        self.assertIn(res_anon.status_code, [401, 403])
 
         # Logado como operador comum
         with self.client.session_transaction() as sess:

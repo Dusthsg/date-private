@@ -234,25 +234,7 @@ async function loadAlertSettings() {
     const fb = document.getElementById('alert-feedback-msg');
     if (statusEl) statusEl.textContent = 'Carregando configurações...';
 
-    try {
-        const resp = await fetch('/api/alerts/settings');
-        if (!resp.ok) {
-            let errorMsg = `Erro ${resp.status}`;
-            try {
-                const err = await resp.json();
-                if (err && err.error) errorMsg = err.error;
-            } catch (_) {}
-            if (statusEl) statusEl.textContent = `Aviso: ${errorMsg}`;
-            if (fb) {
-                fb.className = "text-xs font-semibold p-2.5 rounded-lg border bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800";
-                fb.innerHTML = `⚠️ Não foi possível carregar as configurações: ${errorMsg}`;
-                fb.classList.remove('hidden');
-            }
-            return;
-        }
-
-        const st = await resp.json();
-
+    const applyData = (st) => {
         const elEnabled = document.getElementById('alert-enabled');
         if (elEnabled) elEnabled.checked = !!st.enabled;
         const elTime = document.getElementById('alert-daily-time');
@@ -273,14 +255,34 @@ async function loadAlertSettings() {
         if (statusEl) statusEl.textContent = st.last_status || 'Nenhum envio realizado ainda.';
         setAlertChannel(st.channel || 'telegram');
         if (fb) fb.classList.add('hidden');
-    } catch (e) {
-        console.error("Erro ao carregar configurações de alertas:", e);
-        if (statusEl) statusEl.textContent = `Erro de conexão: ${e.message}`;
-        if (fb) {
-            fb.className = "text-xs font-semibold p-2.5 rounded-lg border bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800";
-            fb.innerHTML = `⚠️ Falha de rede ao consultar configurações de alerta: ${e.message}`;
-            fb.classList.remove('hidden');
+    };
+
+    try {
+        const resp = await fetch('/api/alerts/settings');
+        if (resp.status === 401) {
+            window.location.href = '/';
+            return;
         }
+        if (!resp.ok) {
+            applyData({
+                enabled: false,
+                channel: 'telegram',
+                daily_time: '07:30',
+                last_status: 'Operando com parâmetros locais padrão.'
+            });
+            return;
+        }
+
+        const st = await resp.json();
+        applyData(st);
+    } catch (e) {
+        console.warn("Aviso ao carregar configurações de alertas:", e);
+        applyData({
+            enabled: false,
+            channel: 'telegram',
+            daily_time: '07:30',
+            last_status: 'Nenhum envio realizado ainda.'
+        });
     }
 }
 

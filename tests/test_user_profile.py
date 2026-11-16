@@ -9,8 +9,17 @@ from werkzeug.security import check_password_hash
 class TestUserProfile(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._old_auth = os.environ.get("AUTH_REQUIRED")
+        os.environ["AUTH_REQUIRED"] = "1"
         set_test_db()
         init_db()
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls._old_auth is None:
+            os.environ.pop("AUTH_REQUIRED", None)
+        else:
+            os.environ["AUTH_REQUIRED"] = cls._old_auth
 
     def setUp(self):
         set_test_db()
